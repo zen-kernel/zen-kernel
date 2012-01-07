@@ -69,6 +69,7 @@
 #include <linux/slab.h>
 #include <linux/init_task.h>
 #include <linux/binfmts.h>
+#include <linux/zentune.h>
 
 #include <asm/switch_to.h>
 #include <asm/tlb.h>
@@ -144,14 +145,22 @@ void print_scheduler_version(void)
  * Value is in ms and set to a minimum of 6ms. Scales with number of cpus.
  * Tunable via /proc interface.
  */
+#if defined(CONFIG_ZEN_DEFAULT)
 int rr_interval __read_mostly = 6;
+#elif defined(CONFIG_ZEN_CUSTOM)
+int rr_interval __read_mostly = rr_interval_custom;
+#endif
 
 /*
  * sched_iso_cpu - sysctl which determines the cpu percentage SCHED_ISO tasks
  * are allowed to run five seconds as real time tasks. This is the total over
  * all online cpus.
  */
+#if defined(CONFIG_ZEN_DEFAULT)
 int sched_iso_cpu __read_mostly = 70;
+#elif defined(CONFIG_ZEN_CUSTOM)
+int sched_iso_cpu __read_mostly = sched_iso_cpu_custom;
+#endif
 
 /*
  * The relative length of deadline for each priority(nice) level.
