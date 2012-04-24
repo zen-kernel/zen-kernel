@@ -681,8 +681,9 @@ enum btrfs_compression_type {
 	BTRFS_COMPRESS_ZLIB  = 1,
 	BTRFS_COMPRESS_LZO   = 2,
 	BTRFS_COMPRESS_LZ4   = 3,
-	BTRFS_COMPRESS_TYPES = 4,
-	BTRFS_COMPRESS_LAST  = 4,
+	BTRFS_COMPRESS_LZ4HC = 4,
+	BTRFS_COMPRESS_TYPES = 5,
+	BTRFS_COMPRESS_LAST  = 5,
 };
 
 struct btrfs_inode_item {
