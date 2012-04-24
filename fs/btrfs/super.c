@@ -475,9 +475,6 @@ int btrfs_parse_options(struct btrfs_root *root, char *options)
 				btrfs_clear_opt(info->mount_opt, NODATACOW);
 				btrfs_clear_opt(info->mount_opt, NODATASUM);
 				btrfs_set_fs_incompat(info, COMPRESS_LZ4);
-				/* Remove when enabled */
-				ret = -EINVAL;
-				goto out;
 			} else {
 				ret = -EINVAL;
 				goto out;
