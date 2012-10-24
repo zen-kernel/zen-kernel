@@ -265,8 +265,13 @@ static int zram_read_before_write(struct zram *zram, char *mem, u32 index)
 	}
 
 	cmem = zs_map_object(zram->mem_pool, handle, ZS_MM_RO);
-	ret = lzo1x_decompress_safe(cmem, zram->table[index].size,
-				    mem, &clen);
+	if (zram->table[index].size == PAGE_SIZE) {
+		memcpy(mem, cmem, PAGE_SIZE);
+		ret = LZO_E_OK;
+	} else {
+		ret = lzo1x_decompress_safe(cmem, zram->table[index].size,
+					    mem, &clen);
+	}
 	zs_unmap_object(zram->mem_pool, handle);
 
 	/* Should NEVER happen. Return bio error if it does. */
