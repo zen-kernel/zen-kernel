@@ -1,8 +1,8 @@
 VERSION = 3
 PATCHLEVEL = 7
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Terrified Chipmunk
+EXTRAVERSION = -zen
+NAME = Giggling Gerenuk
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
