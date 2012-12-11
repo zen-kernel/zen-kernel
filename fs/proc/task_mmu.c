@@ -272,6 +272,10 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
 
 	if (file) {
 		struct inode *inode = vma->vm_file->f_path.dentry->d_inode;
+		if (vma->vm_prfile) {
+			file = vma->vm_prfile;
+			inode = file->f_path.dentry->d_inode;
+		}
 		dev = inode->i_sb->s_dev;
 		ino = inode->i_ino;
 		pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
@@ -1232,6 +1236,8 @@ static int show_numa_map(struct seq_file *m, void *v, int is_pid)
 
 	if (file) {
 		seq_printf(m, " file=");
+		if (vma->vm_prfile)
+			file = vma->vm_prfile;
 		seq_path(m, &file->f_path, "\n\t= ");
 	} else if (vma->vm_start <= mm->brk && vma->vm_end >= mm->start_brk) {
 		seq_printf(m, " heap");
