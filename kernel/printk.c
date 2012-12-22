@@ -1273,7 +1273,7 @@ static void call_console_drivers(int level, const char *text, size_t len)
 		if (!cpu_online(smp_processor_id()) &&
 		    !(con->flags & CON_ANYTIME))
 			continue;
-		con->write(con, text, len);
+		con->write(con, text, len, level);
 	}
 }
 
