@@ -396,4 +396,6 @@ struct btrfs_compress_op btrfs_zlib_compress = {
 	.compress_pages		= zlib_compress_pages,
 	.decompress_biovec	= zlib_decompress_biovec,
 	.decompress		= zlib_decompress,
+	.min_compress_thresh    = 64,
+	.max_coompres_thresh    = 128 * 1024,    /* default: 128k */
 };
