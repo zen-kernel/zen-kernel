@@ -32,6 +32,82 @@ config BUILDTIME_EXTABLE_SORT
 
 menu "General setup"
 
+choice
+	prompt "CPU Scheduler"
+	default SCHED_BFS
+	---help---
+	  Select the CPU Scheduler to be used.
+
+config SCHED_BFS
+	bool "Brain Fuck Scheduler (BFS)"
+	---help---
+	  The Brain Fuck CPU Scheduler for excellent interactivity and
+	  responsiveness on the desktop and solid scalability on normal
+          hardware. Not recommended for 4096 CPUs.
+
+	  Currently incompatible with the Group CPU scheduler, and RCU TORTURE
+          TEST so these options are disabled.
+
+          Say Y here.
+
+config SCHED_CFS
+	bool "Completely Fair Scheduler (CFS)"
+	---help---
+	This is the default cpu scheduler found in the upstream kernel.
+endchoice
+
+config SCHED_BFS_AUTOISO
+	bool "Automatically use SCHED_ISO policy for X"
+	depends on SCHED_BFS
+	default n
+	---help---
+	  Selecting this option will automatically use the SCHED_ISO scheduling
+	  policy for X, resulting in an interactivity boost. This *may* cause
+	  things like skipping sound on audio applications that are not run
+	  as SCHED_ISO.
+
+	  Tasks (including X) can be run as sched_iso manually using schedtool.
+
+
+choice
+	prompt "Zen-Tune Profile"
+	default ZEN_CUSTOM
+	---help---
+	  Select the tunable profile to be used.
+
+config ZEN_DEFAULT
+	bool "Default"
+	---help---
+	  This option sets tunables to default.
+
+	    DIRTY_RATIO: 20
+	    BACKGROUND_DIRTY_RATIO: 10
+	   *BFS ONLY*
+	    ISO_CPU: 70
+	    RR_INTERVAL: 6
+	   *CFS ONLY*
+	    SCHED LATENCY: 6 ms
+	    SCHED LATENCY GRANULARITY: 0.75 ms
+
+
+config ZEN_CUSTOM
+	bool "Custom"
+	---help---
+	  This option sets tunables to optimal desktop values.
+	  Changes to these values can be adjusted in include/linux/zentune.h
+
+	    DIRTY_RATIO: 50
+	    BACKGROUND_DIRTY_RATIO: 20
+	   *BFS ONLY*
+	    ISO_CPU: 25
+	    RR_INTERVAL: 3
+	   *CFS ONLY*
+	    SCHED LATENCY: 3 ms
+	    SCHED LATENCY GRANULARITY: 0.3 ms
+
+
+endchoice
+
 config EXPERIMENTAL
 	bool "Prompt for development and/or incomplete code/drivers"
 	---help---
@@ -353,19 +429,11 @@ config VIRT_CPU_ACCOUNTING
 	  small performance impact.  In the case of s390 or IBM POWER > 5,
 	  this also enables accounting of stolen time on logically-partitioned
 	  systems.
+endchoice
 
 config IRQ_TIME_ACCOUNTING
-	bool "Fine granularity task level IRQ time accounting"
-	depends on HAVE_IRQ_TIME_ACCOUNTING
-	help
-	  Select this option to enable fine granularity task irq time
-	  accounting. This is done by reading a timestamp on each
-	  transitions between softirq and hardirq state, so there can be a
-	  small performance impact.
+	def_bool y
 
-	  If in doubt, say N here.
-
-endchoice
 
 config BSD_PROCESS_ACCT
 	bool "BSD Process Accounting"
@@ -751,6 +819,7 @@ config PROC_PID_CPUSET
 
 config CGROUP_CPUACCT
 	bool "Simple CPU accounting cgroup subsystem"
+	depends on !SCHED_BFS
 	help
 	  Provides a simple Resource Controller for monitoring the
 	  total CPU consumed by the tasks in a cgroup.
@@ -853,6 +922,7 @@ config CGROUP_PERF
 
 menuconfig CGROUP_SCHED
 	bool "Group CPU scheduler"
+	depends on !SCHED_BFS
 	default n
 	help
 	  This feature lets CPU scheduler recognize task groups and control CPU
@@ -1028,6 +1098,7 @@ config UIDGID_STRICT_TYPE_CHECKS
 
 config SCHED_AUTOGROUP
 	bool "Automatic process group scheduling"
+	depends on !SCHED_BFS
 	select EVENTFD
 	select CGROUPS
 	select CGROUP_SCHED
@@ -1415,38 +1486,8 @@ config COMPAT_BRK
 
 	  On non-ancient distros (post-2000 ones) N is usually a safe choice.
 
-choice
-	prompt "Choose SLAB allocator"
-	default SLUB
-	help
-	   This option allows to select a slab allocator.
-
-config SLAB
-	bool "SLAB"
-	help
-	  The regular slab allocator that is established and known to work
-	  well in all environments. It organizes cache hot objects in
-	  per cpu and per node queues.
-
 config SLUB
-	bool "SLUB (Unqueued Allocator)"
-	help
-	   SLUB is a slab allocator that minimizes cache line usage
-	   instead of managing queues of cached objects (SLAB approach).
-	   Per cpu caching is realized using slabs of objects instead
-	   of queues of objects. SLUB can use memory efficiently
-	   and has enhanced diagnostics. SLUB is the default choice for
-	   a slab allocator.
-
-config SLOB
-	depends on EXPERT
-	bool "SLOB (Simple Allocator)"
-	help
-	   SLOB replaces the stock allocator with a drastically simpler
-	   allocator. SLOB is generally more space efficient but
-	   does not perform as well on large systems.
-
-endchoice
+	def_bool y
 
 config MMAP_ALLOW_UNINITIALIZED
 	bool "Allow mmapped anonymous memory to be uninitialized"
