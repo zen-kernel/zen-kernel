@@ -75,9 +75,16 @@ struct btrfs_compress_op {
 			  struct page *dest_page,
 			  unsigned long start_byte,
 			  size_t srclen, size_t destlen);
+
+	/* skip compression under threshold */
+	u32 min_compress_thresh;
+	/* compress a chunk of given size */
+	u32 max_coompres_thresh;
 };
 
 extern struct btrfs_compress_op btrfs_zlib_compress;
 extern struct btrfs_compress_op btrfs_lzo_compress;
+extern struct btrfs_compress_op btrfs_lz4_compress;
+extern struct btrfs_compress_op btrfs_lz4hc_compress;
 
 #endif
