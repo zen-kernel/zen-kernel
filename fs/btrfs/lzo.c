@@ -424,4 +424,6 @@ struct btrfs_compress_op btrfs_lzo_compress = {
 	.compress_pages		= lzo_compress_pages,
 	.decompress_biovec	= lzo_decompress_biovec,
 	.decompress		= lzo_decompress,
+	.min_compress_thresh    = 256,
+	.max_coompres_thresh    = 128 * 1024,    /* default: 128k */
 };
