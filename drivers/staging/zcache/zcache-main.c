@@ -711,7 +711,7 @@ static unsigned long zv_create(struct zs_pool *pool, uint32_t pool_id,
 
 	BUG_ON(!irqs_disabled());
 	BUG_ON(chunks >= NCHUNKS);
-	handle = zs_malloc(pool, size);
+	handle = zs_malloc(pool, size, ZCACHE_GFP_MASK);
 	if (!handle)
 		goto out;
 	atomic_inc(&zv_curr_dist_counts[chunks]);
@@ -982,7 +982,7 @@ int zcache_new_client(uint16_t cli_id)
 		goto out;
 	cli->allocated = 1;
 #ifdef CONFIG_FRONTSWAP
-	cli->zspool = zs_create_pool("zcache", ZCACHE_GFP_MASK);
+	cli->zspool = zs_create_pool("zcache", GFP_KERNEL);
 	if (cli->zspool == NULL)
 		goto out;
 	idr_init(&cli->tmem_pools);
