@@ -14,6 +14,7 @@
 #define _ZS_MALLOC_H_
 
 #include <linux/types.h>
+#include <linux/mm_types.h>
 
 /*
  * zsmalloc mapping modes
@@ -26,9 +27,14 @@ enum zs_mapmode {
 	ZS_MM_WO /* write-only (no copy-in at map time) */
 };
 
+struct zs_ops {
+	struct page * (*alloc)(gfp_t);
+	void (*free)(struct page *);
+};
+
 struct zs_pool;
 
-struct zs_pool *zs_create_pool(gfp_t flags);
+struct zs_pool *zs_create_pool(gfp_t flags, struct zs_ops *ops);
 void zs_destroy_pool(struct zs_pool *pool);
 
 unsigned long zs_malloc(struct zs_pool *pool, size_t size, gfp_t flags);
