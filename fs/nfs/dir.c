@@ -1156,11 +1156,14 @@ static int nfs_dentry_delete(const struct dentry *dentry)
 
 }
 
+/* Ensure that we revalidate inode->i_nlink */
 static void nfs_drop_nlink(struct inode *inode)
 {
 	spin_lock(&inode->i_lock);
-	if (inode->i_nlink > 0)
-		drop_nlink(inode);
+	/* drop the inode if we're reasonably sure this is the last link */
+	if (inode->i_nlink == 1)
+		clear_nlink(inode);
+	NFS_I(inode)->cache_validity |= NFS_INO_INVALID_ATTR;
 	spin_unlock(&inode->i_lock);
 }
 
@@ -1175,8 +1178,8 @@ static void nfs_dentry_iput(struct dentry *dentry, struct inode *inode)
 		NFS_I(inode)->cache_validity |= NFS_INO_INVALID_DATA;
 
 	if (dentry->d_flags & DCACHE_NFSFS_RENAMED) {
-		drop_nlink(inode);
 		nfs_complete_unlink(dentry, inode);
+		nfs_drop_nlink(inode);
 	}
 	iput(inode);
 }
@@ -1647,10 +1650,8 @@ static int nfs_safe_remove(struct dentry *dentry)
 	if (inode != NULL) {
 		NFS_PROTO(inode)->return_delegation(inode);
 		error = NFS_PROTO(dir)->remove(dir, &dentry->d_name);
-		/* The VFS may want to delete this inode */
 		if (error == 0)
 			nfs_drop_nlink(inode);
-		nfs_mark_for_revalidate(inode);
 	} else
 		error = NFS_PROTO(dir)->remove(dir, &dentry->d_name);
 	if (error == -ENOENT)
@@ -2147,12 +2148,16 @@ static int nfs_open_permission_mask(int openflags)
 {
 	int mask = 0;
 
-	if ((openflags & O_ACCMODE) != O_WRONLY)
-		mask |= MAY_READ;
-	if ((openflags & O_ACCMODE) != O_RDONLY)
-		mask |= MAY_WRITE;
-	if (openflags & __FMODE_EXEC)
-		mask |= MAY_EXEC;
+	if (openflags & __FMODE_EXEC) {
+		/* ONLY check exec rights */
+		mask = MAY_EXEC;
+	} else {
+		if ((openflags & O_ACCMODE) != O_WRONLY)
+			mask |= MAY_READ;
+		if ((openflags & O_ACCMODE) != O_RDONLY)
+			mask |= MAY_WRITE;
+	}
+
 	return mask;
 }
 

@@ -126,12 +126,16 @@ void nfs_writedata_release(struct nfs_write_data *wdata)
 	put_nfs_open_context(wdata->args.context);
 	if (wdata->pages.pagevec != wdata->pages.page_array)
 		kfree(wdata->pages.pagevec);
-	if (wdata != &write_header->rpc_data)
-		kfree(wdata);
-	else
+	if (wdata == &write_header->rpc_data) {
 		wdata->header = NULL;
+		wdata = NULL;
+	}
 	if (atomic_dec_and_test(&hdr->refcnt))
 		hdr->completion_ops->completion(hdr);
+	/* Note: we only free the rpc_task after callbacks are done.
+	 * See the comment in rpc_free_task() for why
+	 */
+	kfree(wdata);
 }
 EXPORT_SYMBOL_GPL(nfs_writedata_release);
 
@@ -202,7 +206,6 @@ out:
 /* A writeback failed: mark the page as bad, and invalidate the page cache */
 static void nfs_set_pageerror(struct page *page)
 {
-	SetPageError(page);
 	nfs_zap_mapping(page_file_mapping(page)->host, page_file_mapping(page));
 }
 
@@ -884,7 +887,7 @@ static bool nfs_write_pageuptodate(struct page *page, struct inode *inode)
 {
 	if (nfs_have_delegated_attributes(inode))
 		goto out;
-	if (NFS_I(inode)->cache_validity & NFS_INO_REVAL_PAGECACHE)
+	if (NFS_I(inode)->cache_validity & (NFS_INO_INVALID_DATA|NFS_INO_REVAL_PAGECACHE))
 		return false;
 out:
 	return PageUptodate(page) != 0;
