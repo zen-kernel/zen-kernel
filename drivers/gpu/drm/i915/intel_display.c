@@ -2302,18 +2302,6 @@ static void intel_fdi_normal_train(struct drm_crtc *crtc)
 			   FDI_FE_ERRC_ENABLE);
 }
 
-static void cpt_phase_pointer_enable(struct drm_device *dev, int pipe)
-{
-	struct drm_i915_private *dev_priv = dev->dev_private;
-	u32 flags = I915_READ(SOUTH_CHICKEN1);
-
-	flags |= FDI_PHASE_SYNC_OVR(pipe);
-	I915_WRITE(SOUTH_CHICKEN1, flags); /* once to unlock... */
-	flags |= FDI_PHASE_SYNC_EN(pipe);
-	I915_WRITE(SOUTH_CHICKEN1, flags); /* then again to enable */
-	POSTING_READ(SOUTH_CHICKEN1);
-}
-
 /* The FDI link training functions for ILK/Ibexpeak. */
 static void ironlake_fdi_link_train(struct drm_crtc *crtc)
 {
@@ -2464,9 +2452,6 @@ static void gen6_fdi_link_train(struct drm_crtc *crtc)
 	POSTING_READ(reg);
 	udelay(150);
 
-	if (HAS_PCH_CPT(dev))
-		cpt_phase_pointer_enable(dev, pipe);
-
 	for (i = 0; i < 4; i++) {
 		reg = FDI_TX_CTL(pipe);
 		temp = I915_READ(reg);
@@ -2592,9 +2577,6 @@ static void ivb_manual_fdi_link_train(struct drm_crtc *crtc)
 
 	POSTING_READ(reg);
 	udelay(150);
-
-	if (HAS_PCH_CPT(dev))
-		cpt_phase_pointer_enable(dev, pipe);
 
 	for (i = 0; i < 4; i++) {
 		reg = FDI_TX_CTL(pipe);
@@ -2737,17 +2719,6 @@ static void ironlake_fdi_pll_disable(struct intel_crtc *intel_crtc)
 	udelay(100);
 }
 
-static void cpt_phase_pointer_disable(struct drm_device *dev, int pipe)
-{
-	struct drm_i915_private *dev_priv = dev->dev_private;
-	u32 flags = I915_READ(SOUTH_CHICKEN1);
-
-	flags &= ~(FDI_PHASE_SYNC_EN(pipe));
-	I915_WRITE(SOUTH_CHICKEN1, flags); /* once to disable... */
-	flags &= ~(FDI_PHASE_SYNC_OVR(pipe));
-	I915_WRITE(SOUTH_CHICKEN1, flags); /* then again to lock */
-	POSTING_READ(SOUTH_CHICKEN1);
-}
 static void ironlake_fdi_disable(struct drm_crtc *crtc)
 {
 	struct drm_device *dev = crtc->dev;
@@ -2777,8 +2748,6 @@ static void ironlake_fdi_disable(struct drm_crtc *crtc)
 		I915_WRITE(FDI_RX_CHICKEN(pipe),
 			   I915_READ(FDI_RX_CHICKEN(pipe) &
 				     ~FDI_RX_PHASE_SYNC_POINTER_EN));
-	} else if (HAS_PCH_CPT(dev)) {
-		cpt_phase_pointer_disable(dev, pipe);
 	}
 
 	/* still set train pattern 1 */
@@ -3225,7 +3194,11 @@ static void ironlake_crtc_enable(struct drm_crtc *crtc)
 		 * as some pre-programmed values are broken,
 		 * e.g. x201.
 		 */
-		I915_WRITE(PF_CTL(pipe), PF_ENABLE | PF_FILTER_MED_3x3);
+		if (IS_IVYBRIDGE(dev))
+			I915_WRITE(PF_CTL(pipe), PF_ENABLE | PF_FILTER_MED_3x3 |
+						 PF_PIPE_SEL_IVB(pipe));
+		else
+			I915_WRITE(PF_CTL(pipe), PF_ENABLE | PF_FILTER_MED_3x3);
 		I915_WRITE(PF_WIN_POS(pipe), dev_priv->pch_pf_pos);
 		I915_WRITE(PF_WIN_SZ(pipe), dev_priv->pch_pf_size);
 	}
@@ -6183,14 +6156,19 @@ static void intel_unpin_work_fn(struct work_struct *__work)
 {
 	struct intel_unpin_work *work =
 		container_of(__work, struct intel_unpin_work, work);
+	struct drm_device *dev = work->crtc->dev;
 
-	mutex_lock(&work->dev->struct_mutex);
+	mutex_lock(&dev->struct_mutex);
 	intel_unpin_fb_obj(work->old_fb_obj);
 	drm_gem_object_unreference(&work->pending_flip_obj->base);
 	drm_gem_object_unreference(&work->old_fb_obj->base);
 
-	intel_update_fbc(work->dev);
-	mutex_unlock(&work->dev->struct_mutex);
+	intel_update_fbc(dev);
+	mutex_unlock(&dev->struct_mutex);
+
+	BUG_ON(atomic_read(&to_intel_crtc(work->crtc)->unpin_work_count) == 0);
+	atomic_dec(&to_intel_crtc(work->crtc)->unpin_work_count);
+
 	kfree(work);
 }
 
@@ -6211,10 +6189,17 @@ static void do_intel_finish_page_flip(struct drm_device *dev,
 
 	spin_lock_irqsave(&dev->event_lock, flags);
 	work = intel_crtc->unpin_work;
-	if (work == NULL || !work->pending) {
+
+	/* Ensure we don't miss a work->pending update ... */
+	smp_rmb();
+
+	if (work == NULL || atomic_read(&work->pending) < INTEL_FLIP_COMPLETE) {
 		spin_unlock_irqrestore(&dev->event_lock, flags);
 		return;
 	}
+
+	/* and that the unpin work is consistent wrt ->pending. */
+	smp_rmb();
 
 	intel_crtc->unpin_work = NULL;
 
@@ -6238,9 +6223,9 @@ static void do_intel_finish_page_flip(struct drm_device *dev,
 
 	atomic_clear_mask(1 << intel_crtc->plane,
 			  &obj->pending_flip.counter);
-
 	wake_up(&dev_priv->pending_flip_queue);
-	schedule_work(&work->work);
+
+	queue_work(dev_priv->wq, &work->work);
 
 	trace_i915_flip_complete(intel_crtc->plane, work->pending_flip_obj);
 }
@@ -6268,14 +6253,23 @@ void intel_prepare_page_flip(struct drm_device *dev, int plane)
 		to_intel_crtc(dev_priv->plane_to_crtc_mapping[plane]);
 	unsigned long flags;
 
+	/* NB: An MMIO update of the plane base pointer will also
+	 * generate a page-flip completion irq, i.e. every modeset
+	 * is also accompanied by a spurious intel_prepare_page_flip().
+	 */
 	spin_lock_irqsave(&dev->event_lock, flags);
-	if (intel_crtc->unpin_work) {
-		if ((++intel_crtc->unpin_work->pending) > 1)
-			DRM_ERROR("Prepared flip multiple times\n");
-	} else {
-		DRM_DEBUG_DRIVER("preparing flip with no unpin work?\n");
-	}
+	if (intel_crtc->unpin_work)
+		atomic_inc_not_zero(&intel_crtc->unpin_work->pending);
 	spin_unlock_irqrestore(&dev->event_lock, flags);
+}
+
+inline static void intel_mark_page_flip_active(struct intel_crtc *intel_crtc)
+{
+	/* Ensure that the work item is consistent when activating it ... */
+	smp_wmb();
+	atomic_set(&intel_crtc->unpin_work->pending, INTEL_FLIP_PENDING);
+	/* and that it is marked active as soon as the irq could fire. */
+	smp_wmb();
 }
 
 static int intel_gen2_queue_flip(struct drm_device *dev,
@@ -6311,6 +6305,8 @@ static int intel_gen2_queue_flip(struct drm_device *dev,
 	intel_ring_emit(ring, fb->pitches[0]);
 	intel_ring_emit(ring, obj->gtt_offset + intel_crtc->dspaddr_offset);
 	intel_ring_emit(ring, 0); /* aux display base address, unused */
+
+	intel_mark_page_flip_active(intel_crtc);
 	intel_ring_advance(ring);
 	return 0;
 
@@ -6351,6 +6347,7 @@ static int intel_gen3_queue_flip(struct drm_device *dev,
 	intel_ring_emit(ring, obj->gtt_offset + intel_crtc->dspaddr_offset);
 	intel_ring_emit(ring, MI_NOOP);
 
+	intel_mark_page_flip_active(intel_crtc);
 	intel_ring_advance(ring);
 	return 0;
 
@@ -6397,6 +6394,8 @@ static int intel_gen4_queue_flip(struct drm_device *dev,
 	pf = 0;
 	pipesrc = I915_READ(PIPESRC(intel_crtc->pipe)) & 0x0fff0fff;
 	intel_ring_emit(ring, pf | pipesrc);
+
+	intel_mark_page_flip_active(intel_crtc);
 	intel_ring_advance(ring);
 	return 0;
 
@@ -6439,6 +6438,8 @@ static int intel_gen6_queue_flip(struct drm_device *dev,
 	pf = 0;
 	pipesrc = I915_READ(PIPESRC(intel_crtc->pipe)) & 0x0fff0fff;
 	intel_ring_emit(ring, pf | pipesrc);
+
+	intel_mark_page_flip_active(intel_crtc);
 	intel_ring_advance(ring);
 	return 0;
 
@@ -6493,6 +6494,8 @@ static int intel_gen7_queue_flip(struct drm_device *dev,
 	intel_ring_emit(ring, (fb->pitches[0] | obj->tiling_mode));
 	intel_ring_emit(ring, obj->gtt_offset + intel_crtc->dspaddr_offset);
 	intel_ring_emit(ring, (MI_NOOP));
+
+	intel_mark_page_flip_active(intel_crtc);
 	intel_ring_advance(ring);
 	return 0;
 
@@ -6541,7 +6544,7 @@ static int intel_crtc_page_flip(struct drm_crtc *crtc,
 		return -ENOMEM;
 
 	work->event = event;
-	work->dev = crtc->dev;
+	work->crtc = crtc;
 	intel_fb = to_intel_framebuffer(crtc->fb);
 	work->old_fb_obj = intel_fb->obj;
 	INIT_WORK(&work->work, intel_unpin_work_fn);
@@ -6566,6 +6569,9 @@ static int intel_crtc_page_flip(struct drm_crtc *crtc,
 	intel_fb = to_intel_framebuffer(fb);
 	obj = intel_fb->obj;
 
+	if (atomic_read(&intel_crtc->unpin_work_count) >= 2)
+		flush_workqueue(dev_priv->wq);
+
 	ret = i915_mutex_lock_interruptible(dev);
 	if (ret)
 		goto cleanup;
@@ -6584,6 +6590,7 @@ static int intel_crtc_page_flip(struct drm_crtc *crtc,
 	 * the flip occurs and the object is no longer visible.
 	 */
 	atomic_add(1 << intel_crtc->plane, &work->old_fb_obj->pending_flip);
+	atomic_inc(&intel_crtc->unpin_work_count);
 
 	ret = dev_priv->display.queue_flip(dev, crtc, fb, obj);
 	if (ret)
@@ -6598,6 +6605,7 @@ static int intel_crtc_page_flip(struct drm_crtc *crtc,
 	return 0;
 
 cleanup_pending:
+	atomic_dec(&intel_crtc->unpin_work_count);
 	atomic_sub(1 << intel_crtc->plane, &work->old_fb_obj->pending_flip);
 	drm_gem_object_unreference(&work->old_fb_obj->base);
 	drm_gem_object_unreference(&obj->base);
@@ -7259,10 +7267,6 @@ intel_modeset_stage_output_state(struct drm_device *dev,
 			DRM_DEBUG_KMS("encoder changed, full mode switch\n");
 			config->mode_changed = true;
 		}
-
-		/* Disable all disconnected encoders. */
-		if (connector->base.status == connector_status_disconnected)
-			connector->new_encoder = NULL;
 	}
 	/* connector->new_encoder is now updated for all connectors. */
 
@@ -8244,9 +8248,27 @@ static void intel_sanitize_encoder(struct intel_encoder *encoder)
 	 * the crtc fixup. */
 }
 
+static void i915_redisable_vga(struct drm_device *dev)
+{
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	u32 vga_reg;
+
+	if (HAS_PCH_SPLIT(dev))
+		vga_reg = CPU_VGACNTRL;
+	else
+		vga_reg = VGACNTRL;
+
+	if (I915_READ(vga_reg) != VGA_DISP_DISABLE) {
+		DRM_DEBUG_KMS("Something enabled VGA plane, disabling it\n");
+		I915_WRITE(vga_reg, VGA_DISP_DISABLE);
+		POSTING_READ(vga_reg);
+	}
+}
+
 /* Scan out the current hw modeset state, sanitizes it and maps it into the drm
  * and i915 state tracking structures. */
-void intel_modeset_setup_hw_state(struct drm_device *dev)
+void intel_modeset_setup_hw_state(struct drm_device *dev,
+				  bool force_restore)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	enum pipe pipe;
@@ -8317,7 +8339,17 @@ void intel_modeset_setup_hw_state(struct drm_device *dev)
 		intel_sanitize_crtc(crtc);
 	}
 
-	intel_modeset_update_staged_output_state(dev);
+	if (force_restore) {
+		for_each_pipe(pipe) {
+			crtc = to_intel_crtc(dev_priv->pipe_to_crtc_mapping[pipe]);
+			intel_set_mode(&crtc->base, &crtc->base.mode,
+				       crtc->base.x, crtc->base.y, crtc->base.fb);
+		}
+
+		i915_redisable_vga(dev);
+	} else {
+		intel_modeset_update_staged_output_state(dev);
+	}
 
 	intel_modeset_check_state(dev);
 }
@@ -8328,7 +8360,7 @@ void intel_modeset_gem_init(struct drm_device *dev)
 
 	intel_setup_overlay(dev);
 
-	intel_modeset_setup_hw_state(dev);
+	intel_modeset_setup_hw_state(dev, false);
 }
 
 void intel_modeset_cleanup(struct drm_device *dev)

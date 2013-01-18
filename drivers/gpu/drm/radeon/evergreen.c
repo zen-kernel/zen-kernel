@@ -1821,7 +1821,7 @@ static void evergreen_gpu_init(struct radeon_device *rdev)
 	case CHIP_SUMO:
 		rdev->config.evergreen.num_ses = 1;
 		rdev->config.evergreen.max_pipes = 4;
-		rdev->config.evergreen.max_tile_pipes = 2;
+		rdev->config.evergreen.max_tile_pipes = 4;
 		if (rdev->pdev->device == 0x9648)
 			rdev->config.evergreen.max_simds = 3;
 		else if ((rdev->pdev->device == 0x9647) ||
@@ -1844,7 +1844,7 @@ static void evergreen_gpu_init(struct radeon_device *rdev)
 		rdev->config.evergreen.sc_prim_fifo_size = 0x40;
 		rdev->config.evergreen.sc_hiz_tile_fifo_size = 0x30;
 		rdev->config.evergreen.sc_earlyz_tile_fifo_size = 0x130;
-		gb_addr_config = REDWOOD_GB_ADDR_CONFIG_GOLDEN;
+		gb_addr_config = SUMO_GB_ADDR_CONFIG_GOLDEN;
 		break;
 	case CHIP_SUMO2:
 		rdev->config.evergreen.num_ses = 1;
@@ -1866,7 +1866,7 @@ static void evergreen_gpu_init(struct radeon_device *rdev)
 		rdev->config.evergreen.sc_prim_fifo_size = 0x40;
 		rdev->config.evergreen.sc_hiz_tile_fifo_size = 0x30;
 		rdev->config.evergreen.sc_earlyz_tile_fifo_size = 0x130;
-		gb_addr_config = REDWOOD_GB_ADDR_CONFIG_GOLDEN;
+		gb_addr_config = SUMO2_GB_ADDR_CONFIG_GOLDEN;
 		break;
 	case CHIP_BARTS:
 		rdev->config.evergreen.num_ses = 2;
@@ -1914,7 +1914,7 @@ static void evergreen_gpu_init(struct radeon_device *rdev)
 		break;
 	case CHIP_CAICOS:
 		rdev->config.evergreen.num_ses = 1;
-		rdev->config.evergreen.max_pipes = 4;
+		rdev->config.evergreen.max_pipes = 2;
 		rdev->config.evergreen.max_tile_pipes = 2;
 		rdev->config.evergreen.max_simds = 2;
 		rdev->config.evergreen.max_backends = 1 * rdev->config.evergreen.num_ses;
@@ -3092,6 +3092,16 @@ restart_ih:
 				DRM_ERROR("Unhandled interrupt: %d %d\n", src_id, src_data);
 				break;
 			}
+			break;
+		case 146:
+		case 147:
+			dev_err(rdev->dev, "GPU fault detected: %d 0x%08x\n", src_id, src_data);
+			dev_err(rdev->dev, "  VM_CONTEXT1_PROTECTION_FAULT_ADDR   0x%08X\n",
+				RREG32(VM_CONTEXT1_PROTECTION_FAULT_ADDR));
+			dev_err(rdev->dev, "  VM_CONTEXT1_PROTECTION_FAULT_STATUS 0x%08X\n",
+				RREG32(VM_CONTEXT1_PROTECTION_FAULT_STATUS));
+			/* reset addr and status */
+			WREG32_P(VM_CONTEXT1_CNTL2, 1, ~1);
 			break;
 		case 176: /* CP_INT in ring buffer */
 		case 177: /* CP_INT in IB1 */

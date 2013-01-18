@@ -730,6 +730,10 @@ struct ieee80211_sub_if_data {
 		u32 mntr_flags;
 	} u;
 
+	spinlock_t cleanup_stations_lock;
+	struct list_head cleanup_stations;
+	struct work_struct cleanup_stations_wk;
+
 #ifdef CONFIG_MAC80211_DEBUGFS
 	struct {
 		struct dentry *dir;
@@ -1247,9 +1251,9 @@ void ieee80211_mesh_rx_queued_mgmt(struct ieee80211_sub_if_data *sdata,
 
 /* scan/BSS handling */
 void ieee80211_scan_work(struct work_struct *work);
-int ieee80211_request_internal_scan(struct ieee80211_sub_if_data *sdata,
-				    const u8 *ssid, u8 ssid_len,
-				    struct ieee80211_channel *chan);
+int ieee80211_request_ibss_scan(struct ieee80211_sub_if_data *sdata,
+				const u8 *ssid, u8 ssid_len,
+				struct ieee80211_channel *chan);
 int ieee80211_request_scan(struct ieee80211_sub_if_data *sdata,
 			   struct cfg80211_scan_request *req);
 void ieee80211_scan_cancel(struct ieee80211_local *local);
