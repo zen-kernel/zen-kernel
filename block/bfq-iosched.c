@@ -1241,6 +1241,9 @@ static int bfq_update_peak_rate(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 	ktime_t delta;
 	int update = 0;
 
+	if (bfqq->entity.service == 0)
+		return 0;
+
 	if (!bfq_bfqq_sync(bfqq) || bfq_bfqq_budget_new(bfqq))
 		return 0;
 

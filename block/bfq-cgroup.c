@@ -694,7 +694,7 @@ static struct cgroup_subsys_state *bfqio_create(struct cgroup *cgroup)
 }
 
 /*
- * We cannot support shared io contexts, as we have no mean to support
+ * We cannot support shared io contexts, as we have no means to support
  * two tasks with the same ioc in two different groups without major rework
  * of the main bic/bfqq data structures.  By now we allow a task to change
  * its cgroup only if it's the only owner of its ioc; the drawback of this
