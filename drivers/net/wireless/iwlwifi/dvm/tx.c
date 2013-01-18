@@ -1080,6 +1080,8 @@ static void iwlagn_set_tx_status(struct iwl_priv *priv,
 {
 	u16  status = le16_to_cpu(tx_resp->status.status);
 
+	info->flags &= ~IEEE80211_TX_CTL_AMPDU;
+
 	info->status.rates[0].count = tx_resp->failure_frame + 1;
 	if (is_agg)
 		info->flags &= ~IEEE80211_TX_CTL_AMPDU;
