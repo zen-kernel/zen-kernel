@@ -1568,7 +1568,6 @@ static int sc_init(struct raid_set *rs, unsigned stripes)
 	disk = dm_disk(md);
 	snprintf(sc->kc.name, sizeof(sc->kc.name), "%s-%d.%d", TARGET,
 		 disk->first_minor, atomic_inc_return(&_stripe_sc_nr));
-	dm_put(md);
 	sc->kc.cache = kmem_cache_create(sc->kc.name, stripe_size(rs),
 					 0, 0, NULL);
 	if (!sc->kc.cache)
@@ -3982,8 +3981,6 @@ static void rs_set_read_ahead(struct raid_set *rs,
 			q->backing_dev_info.ra_pages = ra_pages;
 		}
 	}
-
-	dm_put(md);
 }
 
 /* Set congested function. */
@@ -3995,7 +3992,6 @@ static void rs_set_congested_fn(struct raid_set *rs)
 	/* Set congested function and data. */
 	bdi->congested_fn = rs_congested;
 	bdi->congested_data = rs;
-	dm_put(md);
 }
 
 /*
