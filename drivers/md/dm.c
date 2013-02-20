@@ -333,16 +333,25 @@ int dm_deleting_md(struct mapped_device *md)
 static int dm_blk_open(struct block_device *bdev, fmode_t mode)
 {
 	struct mapped_device *md;
+	int retval = 0;
 
 	spin_lock(&_minor_lock);
 
 	md = bdev->bd_disk->private_data;
-	if (!md)
+	if (!md) {
+		retval = -ENXIO;
 		goto out;
+	}
 
 	if (test_bit(DMF_FREEING, &md->flags) ||
 	    dm_deleting_md(md)) {
 		md = NULL;
+		retval = -ENXIO;
+		goto out;
+	}
+	if (get_disk_ro(md->disk) && (mode & FMODE_WRITE)) {
+		md = NULL;
+		retval = -EROFS;
 		goto out;
 	}
 
@@ -352,7 +361,7 @@ static int dm_blk_open(struct block_device *bdev, fmode_t mode)
 out:
 	spin_unlock(&_minor_lock);
 
-	return md ? 0 : -ENXIO;
+	return retval;
 }
 
 static int dm_blk_close(struct gendisk *disk, fmode_t mode)
@@ -2135,6 +2144,10 @@ static struct dm_table *__bind(struct mapped_device *md, struct dm_table *t,
 		set_bit(DMF_MERGE_IS_OPTIONAL, &md->flags);
 	else
 		clear_bit(DMF_MERGE_IS_OPTIONAL, &md->flags);
+	if (!(dm_table_get_mode(t) & FMODE_WRITE))
+		set_disk_ro(md->disk, 1);
+	else
+		set_disk_ro(md->disk, 0);
 	write_unlock_irqrestore(&md->map_lock, flags);
 
 	return old_map;
