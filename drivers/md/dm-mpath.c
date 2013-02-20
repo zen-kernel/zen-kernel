@@ -57,6 +57,8 @@ struct priority_group {
 	struct list_head pgpaths;
 };
 
+#define FEATURE_NO_PARTITIONS 1
+
 /* Multipath context */
 struct multipath {
 	struct list_head list;
@@ -90,6 +92,7 @@ struct multipath {
 	unsigned pg_init_retries;	/* Number of times to retry pg_init */
 	unsigned pg_init_count;		/* Number of times pg_init called */
 	unsigned pg_init_delay_msecs;	/* Number of msecs before pg_init retry */
+	unsigned features;		/* Additional selected features */
 
 	unsigned queue_size;
 	struct work_struct process_queued_ios;
@@ -811,6 +814,10 @@ static int parse_features(struct dm_arg_set *as, struct multipath *m)
 			continue;
 		}
 
+		if (!strcasecmp(arg_name, "no_partitions")) {
+			m->features |= FEATURE_NO_PARTITIONS;
+			continue;
+		}
 		if (!strcasecmp(arg_name, "pg_init_retries") &&
 		    (argc >= 1)) {
 			r = dm_read_arg(_args + 1, as, &m->pg_init_retries, &ti->error);
@@ -1402,11 +1409,14 @@ static int multipath_status(struct dm_target *ti, status_type_t type,
 		DMEMIT("%u ", m->queue_if_no_path +
 			      (m->pg_init_retries > 0) * 2 +
 			      (m->pg_init_delay_msecs != DM_PG_INIT_DELAY_DEFAULT) * 2 +
-			      m->retain_attached_hw_handler);
+			      m->retain_attached_hw_handler +
+			      (m->features & FEATURE_NO_PARTITIONS));
 		if (m->queue_if_no_path)
 			DMEMIT("queue_if_no_path ");
 		if (m->pg_init_retries)
 			DMEMIT("pg_init_retries %u ", m->pg_init_retries);
+		if (m->features & FEATURE_NO_PARTITIONS)
+			DMEMIT("no_partitions ");
 		if (m->pg_init_delay_msecs != DM_PG_INIT_DELAY_DEFAULT)
 			DMEMIT("pg_init_delay_msecs %u ", m->pg_init_delay_msecs);
 		if (m->retain_attached_hw_handler)
