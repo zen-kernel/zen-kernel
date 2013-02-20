@@ -197,10 +197,6 @@ enum chunk_flags {
 	CHUNK_UPTODATE,		/* Chunk pages are uptodate. */
 };
 
-#if READ != 0 || WRITE != 1
-#error dm-raid45: READ/WRITE != 0/1 used as index!!!
-#endif
-
 enum bl_type {
 	WRITE_QUEUED = WRITE + 1,
 	WRITE_MERGED,
@@ -3277,7 +3273,7 @@ static void do_ios(struct raid_set *rs, struct bio_list *ios)
 		 * the input queue unless all work queues are empty
 		 * and the stripe cache is inactive.
 		 */
-		if (unlikely(bio_empty_barrier(bio))) {
+		if (bio->bi_rw & REQ_FLUSH) {
 			/* REMOVEME: statistics. */
 			atomic_inc(rs->stats + S_BARRIER);
 			if (delay ||
