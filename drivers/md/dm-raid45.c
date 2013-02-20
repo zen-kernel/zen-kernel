@@ -1585,18 +1585,13 @@ static int sc_init(struct raid_set *rs, unsigned stripes)
 		return PTR_ERR(rec->mem_cache_client);
 
 	/* Create dm-io client context for IO stripes. */
-	sc->dm_io_client =
-		dm_io_client_create((stripes > 32 ? 32 : stripes) *
-				    rs->set.raid_devs *
-				    chunk_pages(rs->set.io_size));
+	sc->dm_io_client = dm_io_client_create();
 	if (IS_ERR(sc->dm_io_client))
 		return PTR_ERR(sc->dm_io_client);
 
 	/* FIXME: intermingeled with stripe cache initialization. */
 	/* Create dm-io client context for recovery stripes. */
-	rec->dm_io_client =
-		dm_io_client_create(rstripes * rs->set.raid_devs *
-				    chunk_pages(rec->io_size));
+	rec->dm_io_client = dm_io_client_create();
 	if (IS_ERR(rec->dm_io_client))
 		return PTR_ERR(rec->dm_io_client);
 
