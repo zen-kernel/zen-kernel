@@ -165,7 +165,6 @@ static struct priority_group *alloc_priority_group(void)
 static void free_pgpaths(struct list_head *pgpaths, struct dm_target *ti)
 {
 	struct pgpath *pgpath, *tmp;
-	struct multipath *m = ti->private;
 
 	list_for_each_entry_safe(pgpath, tmp, pgpaths, list) {
 		list_del(&pgpath->list);
@@ -1196,7 +1195,7 @@ static void pg_init_done(void *data, int errors)
 			break;
 		}
 		DMERR("Count not failover device %s: Handler scsi_dh_%s "
-		      "was not loaded.", pgpath->path.pdev,
+		      "was not loaded.", pgpath->path.dev->name,
 		      m->hw_handler_name);
 		/*
 		 * Fail path for now, so we do not ping pong
@@ -1211,7 +1210,7 @@ static void pg_init_done(void *data, int errors)
 		bypass_pg(m, pg, 1);
 		break;
 	case SCSI_DH_DEV_OFFLINED:
-		DMWARN("Device %s offlined.", pgpath->path.pdev);
+		DMWARN("Device %s offlined.", pgpath->path.dev->name);
 		errors = 0;
 		break;
 	case SCSI_DH_RETRY:
@@ -1236,7 +1235,7 @@ static void pg_init_done(void *data, int errors)
 	if (errors) {
 		if (pgpath == m->current_pgpath) {
 			DMERR("Could not failover device %s, error %d.",
-			      pgpath->path.pdev, errors);
+			      pgpath->path.dev->name, errors);
 			m->current_pgpath = NULL;
 			m->current_pg = NULL;
 		}
