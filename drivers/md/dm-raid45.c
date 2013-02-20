@@ -3599,7 +3599,7 @@ context_alloc(struct raid_type *raid_type, struct variable_parms *p,
 	 */
 	ti_len = ti->len;
 	ti->len = sectors_per_dev;
-	dl = dm_dirty_log_create(argv[0], ti, dl_parms, argv + 2);
+	dl = dm_dirty_log_create(argv[0], ti, NULL, dl_parms, argv + 2);
 	ti->len = ti_len;
 	if (!dl)
 		goto bad_dirty_log;
