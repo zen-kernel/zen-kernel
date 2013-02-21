@@ -49,6 +49,7 @@ struct dm_dirty_log *dm_rh_dirty_log(struct dm_region_hash *rh);
  */
 region_t dm_rh_bio_to_region(struct dm_region_hash *rh, struct bio *bio);
 sector_t dm_rh_region_to_sector(struct dm_region_hash *rh, region_t region);
+region_t dm_rh_sector_to_region(struct dm_region_hash *rh, sector_t sector);
 void *dm_rh_region_context(struct dm_region *reg);
 
 /*
@@ -72,11 +73,14 @@ void dm_rh_update_states(struct dm_region_hash *rh, int errors_handled);
 int dm_rh_flush(struct dm_region_hash *rh);
 
 /* Inc/dec pending count on regions. */
+void dm_rh_inc(struct dm_region_hash *rh, region_t region);
 void dm_rh_inc_pending(struct dm_region_hash *rh, struct bio_list *bios);
 void dm_rh_dec(struct dm_region_hash *rh, region_t region);
 
 /* Delay bios on regions. */
 void dm_rh_delay(struct dm_region_hash *rh, struct bio *bio);
+void dm_rh_delay_by_region(struct dm_region_hash *rh, struct bio *bio,
+			   region_t region);
 
 void dm_rh_mark_nosync(struct dm_region_hash *rh, struct bio *bio);
 

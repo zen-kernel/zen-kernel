@@ -333,16 +333,25 @@ int dm_deleting_md(struct mapped_device *md)
 static int dm_blk_open(struct block_device *bdev, fmode_t mode)
 {
 	struct mapped_device *md;
+	int retval = 0;
 
 	spin_lock(&_minor_lock);
 
 	md = bdev->bd_disk->private_data;
-	if (!md)
+	if (!md) {
+		retval = -ENXIO;
 		goto out;
+	}
 
 	if (test_bit(DMF_FREEING, &md->flags) ||
 	    dm_deleting_md(md)) {
 		md = NULL;
+		retval = -ENXIO;
+		goto out;
+	}
+	if (get_disk_ro(md->disk) && (mode & FMODE_WRITE)) {
+		md = NULL;
+		retval = -EROFS;
 		goto out;
 	}
 
@@ -352,7 +361,7 @@ static int dm_blk_open(struct block_device *bdev, fmode_t mode)
 out:
 	spin_unlock(&_minor_lock);
 
-	return md ? 0 : -ENXIO;
+	return retval;
 }
 
 static int dm_blk_close(struct gendisk *disk, fmode_t mode)
@@ -411,19 +420,25 @@ static int dm_blk_ioctl(struct block_device *bdev, fmode_t mode,
 	if (!map || !dm_table_get_size(map))
 		goto out;
 
-	/* We only support devices that have a single target */
-	if (dm_table_get_num_targets(map) != 1)
-		goto out;
-
-	tgt = dm_table_get_target(map, 0);
-
 	if (dm_suspended_md(md)) {
 		r = -EAGAIN;
 		goto out;
 	}
 
-	if (tgt->type->ioctl)
-		r = tgt->type->ioctl(tgt, cmd, arg);
+	if (cmd == BLKRRPART) {
+		/* Emulate Re-read partitions table */
+		kobject_uevent(&disk_to_dev(md->disk)->kobj, KOBJ_CHANGE);
+		r = 0;
+	} else {
+		/* We only support devices that have a single target */
+		if (dm_table_get_num_targets(map) != 1)
+			goto out;
+
+		tgt = dm_table_get_target(map, 0);
+
+		if (tgt->type->ioctl)
+			r = tgt->type->ioctl(tgt, cmd, arg);
+	}
 
 out:
 	dm_table_put(map);
@@ -2131,6 +2146,13 @@ static struct dm_table *__bind(struct mapped_device *md, struct dm_table *t,
 		clear_bit(DMF_MERGE_IS_OPTIONAL, &md->flags);
 	write_unlock_irqrestore(&md->map_lock, flags);
 
+	dm_table_get(md->map);
+	if (!(dm_table_get_mode(t) & FMODE_WRITE))
+		set_disk_ro(md->disk, 1);
+	else
+		set_disk_ro(md->disk, 0);
+	dm_table_put(md->map);
+
 	return old_map;
 }
 
@@ -2700,6 +2722,7 @@ struct gendisk *dm_disk(struct mapped_device *md)
 {
 	return md->disk;
 }
+EXPORT_SYMBOL_GPL(dm_disk);
 
 struct kobject *dm_kobject(struct mapped_device *md)
 {
