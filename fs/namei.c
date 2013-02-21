@@ -2091,6 +2091,7 @@ static struct dentry *lookup_hash(struct nameidata *nd)
 {
 	return __lookup_hash(&nd->last, nd->path.dentry, nd->flags);
 }
+EXPORT_SYMBOL(lookup_hash);
 
 /**
  * lookup_one_len - filesystem helper to lookup single pathname component
