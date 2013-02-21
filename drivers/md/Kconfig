@@ -271,6 +271,7 @@ config DM_DEBUG_BLOCK_STACK_TRACING
 config DM_MIRROR
        tristate "Mirror target"
        depends on BLK_DEV_DM
+	select DM_REGION_HASH_LOG
        ---help---
          Allow volume managers to mirror logical volumes, also
          needed for live data migration tools such as 'pvmove'.
@@ -355,6 +356,20 @@ config DM_DELAY
 	---help---
 	A target that delays reads and/or writes and can send
 	them to different devices.  Useful for testing.
+
+	If unsure, say N.
+
+config DM_REGION_HASH_LOG
+	tristate
+	default n
+
+config DM_RAID45
+	tristate "RAID 4/5 target (EXPERIMENTAL)"
+	depends on BLK_DEV_DM && EXPERIMENTAL
+	select ASYNC_XOR
+	select DM_REGION_HASH_LOG
+	---help---
+	A target that supports RAID4 and RAID5 mappings.
 
 	If unsure, say N.
 
