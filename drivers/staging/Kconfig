@@ -142,4 +142,6 @@ source "drivers/staging/sb105x/Kconfig"
 
 source "drivers/staging/fwserial/Kconfig"
 
+source "drivers/staging/vhba/Kconfig"
+
 endif # STAGING
