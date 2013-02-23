@@ -1081,8 +1081,6 @@ static void iwlagn_set_tx_status(struct iwl_priv *priv,
 
 	info->flags &= ~IEEE80211_TX_CTL_AMPDU;
 
-	info->flags &= ~IEEE80211_TX_CTL_AMPDU;
-
 	info->status.rates[0].count = tx_resp->failure_frame + 1;
 	info->flags |= iwl_tx_status_to_mac80211(status);
 	iwlagn_hwrate_to_tx_control(priv, le32_to_cpu(tx_resp->rate_n_flags),
