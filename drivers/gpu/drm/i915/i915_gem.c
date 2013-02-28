@@ -1918,9 +1918,6 @@ i915_gem_object_move_to_inactive(struct drm_i915_gem_object *obj)
 	BUG_ON(obj->base.write_domain & ~I915_GEM_GPU_DOMAINS);
 	BUG_ON(!obj->active);
 
-	if (obj->pin_count) /* are we a framebuffer? */
-		intel_mark_fb_idle(obj);
-
 	list_move_tail(&obj->mm_list, &dev_priv->mm.inactive_list);
 
 	list_del_init(&obj->ring_list);
@@ -3848,7 +3845,7 @@ void i915_gem_l3_remap(struct drm_device *dev)
 	u32 misccpctl;
 	int i;
 
-	if (!IS_IVYBRIDGE(dev))
+	if (!HAS_L3_GPU_CACHE(dev))
 		return;
 
 	if (!dev_priv->l3_parity.remap_info)
