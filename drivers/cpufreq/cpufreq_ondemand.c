@@ -23,13 +23,25 @@
 #include <linux/sysfs.h>
 #include <linux/tick.h>
 #include <linux/types.h>
+#include <linux/zentune.h>
 
 #include "cpufreq_governor.h"
 
 /* On-demand governor macors */
-#define DEF_FREQUENCY_DOWN_DIFFERENTIAL		(10)
-#define DEF_FREQUENCY_UP_THRESHOLD		(80)
+#ifdef CONFIG_SCHED_BFS
+#  define DEF_FREQUENCY_DOWN_DIFFERENTIAL		(26)
+#  define DEF_FREQUENCY_UP_THRESHOLD		(63)
+#else
+#  define DEF_FREQUENCY_DOWN_DIFFERENTIAL		(10)
+#  define DEF_FREQUENCY_UP_THRESHOLD		(80)
+#endif
+
+#if defined(CONFIG_ZEN_DEFAULT)
 #define DEF_SAMPLING_DOWN_FACTOR		(1)
+#elif defined(CONFIG_ZEN_CUSTOM)
+#define DEF_SAMPLING_DOWN_FACTOR		(DEF_SAMPLING_DOWN_FACTOR_CUSTOM)
+#endif
+
 #define MAX_SAMPLING_DOWN_FACTOR		(100000)
 #define MICRO_FREQUENCY_DOWN_DIFFERENTIAL	(3)
 #define MICRO_FREQUENCY_UP_THRESHOLD		(95)
