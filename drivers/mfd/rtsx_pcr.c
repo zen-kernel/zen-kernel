@@ -713,6 +713,25 @@ int rtsx_pci_card_power_off(struct rtsx_pcr *pcr, int card)
 }
 EXPORT_SYMBOL_GPL(rtsx_pci_card_power_off);
 
+int rtsx_pci_card_exclusive_check(struct rtsx_pcr *pcr, int card)
+{
+	unsigned int cd_mask[] = {
+		[RTSX_SD_CARD] = SD_EXIST,
+		[RTSX_MS_CARD] = MS_EXIST
+	};
+
+	if (!pcr->ms_pmos) {
+		/* When using single PMOS, accessing card is not permitted
+		 * if the existing card is not the designated one.
+		 */
+		if (pcr->card_exist & (~cd_mask[card]))
+			return -EIO;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(rtsx_pci_card_exclusive_check);
+
 int rtsx_pci_switch_output_voltage(struct rtsx_pcr *pcr, u8 voltage)
 {
 	if (pcr->ops->switch_output_voltage)
@@ -758,7 +777,7 @@ static void rtsx_pci_card_detect(struct work_struct *work)
 	struct delayed_work *dwork;
 	struct rtsx_pcr *pcr;
 	unsigned long flags;
-	unsigned int card_detect = 0;
+	unsigned int card_detect = 0, card_inserted, card_removed;
 	u32 irq_status;
 
 	dwork = to_delayed_work(work);
@@ -766,25 +785,35 @@ static void rtsx_pci_card_detect(struct work_struct *work)
 
 	dev_dbg(&(pcr->pci->dev), "--> %s\n", __func__);
 
+	mutex_lock(&pcr->pcr_mutex);
 	spin_lock_irqsave(&pcr->lock, flags);
 
 	irq_status = rtsx_pci_readl(pcr, RTSX_BIPR);
 	dev_dbg(&(pcr->pci->dev), "irq_status: 0x%08x\n", irq_status);
 
-	if (pcr->card_inserted || pcr->card_removed) {
-		dev_dbg(&(pcr->pci->dev),
-				"card_inserted: 0x%x, card_removed: 0x%x\n",
-				pcr->card_inserted, pcr->card_removed);
-
-		if (pcr->ops->cd_deglitch)
-			pcr->card_inserted = pcr->ops->cd_deglitch(pcr);
-
-		card_detect = pcr->card_inserted | pcr->card_removed;
-		pcr->card_inserted = 0;
-		pcr->card_removed = 0;
-	}
+	irq_status &= CARD_EXIST;
+	card_inserted = pcr->card_inserted & irq_status;
+	card_removed = pcr->card_removed;
+	pcr->card_inserted = 0;
+	pcr->card_removed = 0;
 
 	spin_unlock_irqrestore(&pcr->lock, flags);
+
+	if (card_inserted || card_removed) {
+		dev_dbg(&(pcr->pci->dev),
+				"card_inserted: 0x%x, card_removed: 0x%x\n",
+				card_inserted, card_removed);
+
+		if (pcr->ops->cd_deglitch)
+			card_inserted = pcr->ops->cd_deglitch(pcr);
+
+		card_detect = card_inserted | card_removed;
+
+		pcr->card_exist |= card_inserted;
+		pcr->card_exist &= ~card_removed;
+	}
+
+	mutex_unlock(&pcr->pcr_mutex);
 
 	if ((card_detect & SD_EXIST) && pcr->slots[RTSX_SD_CARD].card_event)
 		pcr->slots[RTSX_SD_CARD].card_event(
@@ -836,10 +865,6 @@ static irqreturn_t rtsx_pci_isr(int irq, void *dev_id)
 		}
 	}
 
-	if (pcr->card_inserted || pcr->card_removed)
-		schedule_delayed_work(&pcr->carddet_work,
-				msecs_to_jiffies(200));
-
 	if (int_reg & (NEED_COMPLETE_INT | DELINK_INT)) {
 		if (int_reg & (TRANS_FAIL_INT | DELINK_INT)) {
 			pcr->trans_result = TRANS_RESULT_FAIL;
@@ -851,6 +876,10 @@ static irqreturn_t rtsx_pci_isr(int irq, void *dev_id)
 				complete(pcr->done);
 		}
 	}
+
+	if (pcr->card_inserted || pcr->card_removed)
+		schedule_delayed_work(&pcr->carddet_work,
+				msecs_to_jiffies(200));
 
 	spin_unlock(&pcr->lock);
 	return IRQ_HANDLED;
@@ -973,6 +1002,14 @@ static int rtsx_pci_init_hw(struct rtsx_pcr *pcr)
 		if (err < 0)
 			return err;
 	}
+
+	/* No CD interrupt if probing driver with card inserted.
+	 * So we need to initialize pcr->card_exist here.
+	 */
+	if (pcr->ops->cd_deglitch)
+		pcr->card_exist = pcr->ops->cd_deglitch(pcr);
+	else
+		pcr->card_exist = rtsx_pci_readl(pcr, RTSX_BIPR) & CARD_EXIST;
 
 	return 0;
 }
