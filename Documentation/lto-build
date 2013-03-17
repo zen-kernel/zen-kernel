@@ -108,7 +108,7 @@ cd obj-lto
 make -C ../linux-lto O=$(pwd)  oldconfig
 ./source/scripts/config --disable function_tracer --disable function_graph_tracer \
 			 --disable stack_tracer --enable lto_menu \
-                         --disable lto_disable --disable lto_debug --disable lto_slim
+                         --disable lto_disable --disable lto_debug
 export TMPDIR=$(pwd) 
 # this lowers memory usage with /tmp=tmpfs
 # note the special ar is only needed if CONFIG_LTO_SLIM is enabled
@@ -117,5 +117,18 @@ export TMPDIR=$(pwd)
 # it is not needed
 PATH=/opt/binutils-VERSION:$PATH nice -n20 make CC=gcc47 LD=ld-plugin AR=gcc-ar47 \
 -j $(getconf _NPROCESSORS_ONLN)
+
+If you don't use gcc 4.8 you need the following ar wrapper and specify
+(make sure it invokes the correct gcc binary matching the one used
+to build the main kernel and a new enough ar that supports --plugin)
+
+#!/bin/sh
+ar "$@" --plugin $(gcc -print-prog-name=liblto_plugin.so.0)
+
+In gcc 4.8 this is handled by gcc-ar. gcc-ar may have some trouble
+finding the system ar however, if that happens set a symlink
+from the real ar to the bin/ directory the compiler is installed in.
+If you get lots of missing symbols in library functions you likely
+specified the AR wrapper wrong.
 
 Andi Kleen
