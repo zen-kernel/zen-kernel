@@ -754,21 +754,18 @@ static void dwc3_prepare_one_trb(struct dwc3_ep *dep,
 	struct dwc3		*dwc = dep->dwc;
 	struct dwc3_trb		*trb;
 
-	unsigned int		cur_slot;
-
 	dev_vdbg(dwc->dev, "%s: req %p dma %08llx length %d%s%s\n",
 			dep->name, req, (unsigned long long) dma,
 			length, last ? " last" : "",
 			chain ? " chain" : "");
 
-	trb = &dep->trb_pool[dep->free_slot & DWC3_TRB_MASK];
-	cur_slot = dep->free_slot;
-	dep->free_slot++;
-
 	/* Skip the LINK-TRB on ISOC */
-	if (((cur_slot & DWC3_TRB_MASK) == DWC3_TRB_NUM - 1) &&
+	if (((dep->free_slot & DWC3_TRB_MASK) == DWC3_TRB_NUM - 1) &&
 			usb_endpoint_xfer_isoc(dep->endpoint.desc))
-		return;
+		dep->free_slot++;
+
+	trb = &dep->trb_pool[dep->free_slot & DWC3_TRB_MASK];
+	dep->free_slot++;
 
 	if (!req->trb) {
 		dwc3_gadget_move_request_queued(req);
@@ -1091,7 +1088,10 @@ static int __dwc3_gadget_ep_queue(struct dwc3_ep *dep, struct dwc3_request *req)
 		 * notion of current microframe.
 		 */
 		if (usb_endpoint_xfer_isoc(dep->endpoint.desc)) {
-			dwc3_stop_active_transfer(dwc, dep->number);
+			if (list_empty(&dep->req_queued)) {
+				dwc3_stop_active_transfer(dwc, dep->number);
+				dep->flags = DWC3_EP_ENABLED;
+			}
 			return 0;
 		}
 
@@ -1115,16 +1115,6 @@ static int __dwc3_gadget_ep_queue(struct dwc3_ep *dep, struct dwc3_request *req)
 		if (ret && ret != -EBUSY)
 			dev_dbg(dwc->dev, "%s: failed to kick transfers\n",
 					dep->name);
-	}
-
-	/*
-	 * 3. Missed ISOC Handling. We need to start isoc transfer on the saved
-	 * uframe number.
-	 */
-	if (usb_endpoint_xfer_isoc(dep->endpoint.desc) &&
-		(dep->flags & DWC3_EP_MISSED_ISOC)) {
-			__dwc3_gadget_start_isoc(dwc, dep, dep->current_uf);
-			dep->flags &= ~DWC3_EP_MISSED_ISOC;
 	}
 
 	return 0;
@@ -1689,14 +1679,29 @@ static int dwc3_cleanup_done_reqs(struct dwc3 *dwc, struct dwc3_ep *dep,
 				if (trb_status == DWC3_TRBSTS_MISSED_ISOC) {
 					dev_dbg(dwc->dev, "incomplete IN transfer %s\n",
 							dep->name);
-					dep->current_uf = event->parameters &
-						~(dep->interval - 1);
+					/*
+					 * If missed isoc occurred and there is
+					 * no request queued then issue END
+					 * TRANSFER, so that core generates
+					 * next xfernotready and we will issue
+					 * a fresh START TRANSFER.
+					 * If there are still queued request
+					 * then wait, do not issue either END
+					 * or UPDATE TRANSFER, just attach next
+					 * request in request_list during
+					 * giveback.If any future queued request
+					 * is successfully transferred then we
+					 * will issue UPDATE TRANSFER for all
+					 * request in the request_list.
+					 */
 					dep->flags |= DWC3_EP_MISSED_ISOC;
 				} else {
 					dev_err(dwc->dev, "incomplete IN transfer %s\n",
 							dep->name);
 					status = -ECONNRESET;
 				}
+			} else {
+				dep->flags &= ~DWC3_EP_MISSED_ISOC;
 			}
 		} else {
 			if (count && (event->status & DEPEVT_STATUS_SHORT))
@@ -1722,6 +1727,23 @@ static int dwc3_cleanup_done_reqs(struct dwc3 *dwc, struct dwc3_ep *dep,
 				(trb->ctrl & DWC3_TRB_CTRL_IOC))
 			break;
 	} while (1);
+
+	if (usb_endpoint_xfer_isoc(dep->endpoint.desc) &&
+			list_empty(&dep->req_queued)) {
+		if (list_empty(&dep->request_list)) {
+			/*
+			 * If there is no entry in request list then do
+			 * not issue END TRANSFER now. Just set PENDING
+			 * flag, so that END TRANSFER is issued when an
+			 * entry is added into request list.
+			 */
+			dep->flags = DWC3_EP_PENDING_REQUEST;
+		} else {
+			dwc3_stop_active_transfer(dwc, dep->number);
+			dep->flags = DWC3_EP_ENABLED;
+		}
+		return 1;
+	}
 
 	if ((event->status & DEPEVT_STATUS_IOC) &&
 			(trb->ctrl & DWC3_TRB_CTRL_IOC))
@@ -2157,6 +2179,26 @@ static void dwc3_gadget_conndone_interrupt(struct dwc3 *dwc)
 		break;
 	}
 
+	/* Enable USB2 LPM Capability */
+
+	if ((dwc->revision > DWC3_REVISION_194A)
+			&& (speed != DWC3_DCFG_SUPERSPEED)) {
+		reg = dwc3_readl(dwc->regs, DWC3_DCFG);
+		reg |= DWC3_DCFG_LPM_CAP;
+		dwc3_writel(dwc->regs, DWC3_DCFG, reg);
+
+		reg = dwc3_readl(dwc->regs, DWC3_DCTL);
+		reg &= ~(DWC3_DCTL_HIRD_THRES_MASK | DWC3_DCTL_L1_HIBER_EN);
+
+		/*
+		 * TODO: This should be configurable. For now using
+		 * maximum allowed HIRD threshold value of 0b1100
+		 */
+		reg |= DWC3_DCTL_HIRD_THRES(12);
+
+		dwc3_writel(dwc->regs, DWC3_DCTL, reg);
+	}
+
 	/* Recent versions support automatic phy suspend and don't need this */
 	if (dwc->revision < DWC3_REVISION_194A) {
 		/* Suspend unneeded PHY */
@@ -2463,20 +2505,8 @@ int dwc3_gadget_init(struct dwc3 *dwc)
 			DWC3_DEVTEN_DISCONNEVTEN);
 	dwc3_writel(dwc->regs, DWC3_DEVTEN, reg);
 
-	/* Enable USB2 LPM and automatic phy suspend only on recent versions */
+	/* automatic phy suspend only on recent versions */
 	if (dwc->revision >= DWC3_REVISION_194A) {
-		reg = dwc3_readl(dwc->regs, DWC3_DCFG);
-		reg |= DWC3_DCFG_LPM_CAP;
-		dwc3_writel(dwc->regs, DWC3_DCFG, reg);
-
-		reg = dwc3_readl(dwc->regs, DWC3_DCTL);
-		reg &= ~(DWC3_DCTL_HIRD_THRES_MASK | DWC3_DCTL_L1_HIBER_EN);
-
-		/* TODO: This should be configurable */
-		reg |= DWC3_DCTL_HIRD_THRES(28);
-
-		dwc3_writel(dwc->regs, DWC3_DCTL, reg);
-
 		dwc3_gadget_usb2_phy_suspend(dwc, false);
 		dwc3_gadget_usb3_phy_suspend(dwc, false);
 	}

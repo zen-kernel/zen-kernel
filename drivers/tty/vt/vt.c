@@ -71,6 +71,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/types.h>
 #include <linux/sched.h>
 #include <linux/tty.h>
@@ -539,7 +540,7 @@ static void insert_char(struct vc_data *vc, unsigned int nr)
 {
 	unsigned short *p = (unsigned short *) vc->vc_pos;
 
-	scr_memmovew(p + nr, p, (vc->vc_cols - vc->vc_x) * 2);
+	scr_memmovew(p + nr, p, (vc->vc_cols - vc->vc_x - nr) * 2);
 	scr_memsetw(p, vc->vc_video_erase_char, nr * 2);
 	vc->vc_need_wrap = 0;
 	if (DO_UPDATE(vc))
@@ -638,7 +639,7 @@ static inline void save_screen(struct vc_data *vc)
  *	Redrawing of screen
  */
 
-static void clear_buffer_attributes(struct vc_data *vc)
+void clear_buffer_attributes(struct vc_data *vc)
 {
 	unsigned short *p = (unsigned short *)vc->vc_origin;
 	int count = vc->vc_screenbuf_size / 2;
@@ -2423,16 +2424,44 @@ int vt_kmsg_redirect(int new)
 		return kmsg_con;
 }
 
+#ifdef CONFIG_VT_CKO
+static unsigned int printk_color[8] __read_mostly = {
+	CONFIG_VT_PRINTK_EMERG_COLOR,	/* KERN_EMERG */
+	CONFIG_VT_PRINTK_ALERT_COLOR,	/* KERN_ALERT */
+	CONFIG_VT_PRINTK_CRIT_COLOR,	/* KERN_CRIT */
+	CONFIG_VT_PRINTK_ERR_COLOR,	/* KERN_ERR */
+	CONFIG_VT_PRINTK_WARNING_COLOR,	/* KERN_WARNING */
+	CONFIG_VT_PRINTK_NOTICE_COLOR,	/* KERN_NOTICE */
+	CONFIG_VT_PRINTK_INFO_COLOR,	/* KERN_INFO */
+	CONFIG_VT_PRINTK_DEBUG_COLOR,	/* KERN_DEBUG */
+};
+module_param_array(printk_color, uint, NULL, S_IRUGO | S_IWUSR);
+
+static inline void vc_set_color(struct vc_data *vc, unsigned char color)
+{
+	vc->vc_color = color_table[color & 0xF] |
+	               (color_table[(color >> 4) & 0x7] << 4) |
+	               (color & 0x80);
+	update_attr(vc);
+}
+#else
+static unsigned int printk_color[8];
+static inline void vc_set_color(const struct vc_data *vc, unsigned char c)
+{
+}
+#endif
+
 /*
  *	Console on virtual terminal
  *
  * The console must be locked when we get here.
  */
 
-static void vt_console_print(struct console *co, const char *b, unsigned count)
+static void vt_console_print(struct console *co, const char *b, unsigned count,
+			     unsigned int loglevel)
 {
 	struct vc_data *vc = vc_cons[fg_console].d;
-	unsigned char c;
+	unsigned char current_color, c;
 	static DEFINE_SPINLOCK(printing_lock);
 	const ushort *start;
 	ushort cnt = 0;
@@ -2468,11 +2497,20 @@ static void vt_console_print(struct console *co, const char *b, unsigned count)
 
 	start = (ushort *)vc->vc_pos;
 
+	/*
+	 * We always get a valid loglevel - <8> and "no level" is transformed
+	 * to <4> in the typical kernel.
+	 */
+	current_color = printk_color[loglevel];
+	vc_set_color(vc, current_color);
+
+
 	/* Contrived structure to try to emulate original need_wrap behaviour
 	 * Problems caused when we have need_wrap set on '\n' character */
 	while (count--) {
 		c = *b++;
 		if (c == 10 || c == 13 || c == 8 || vc->vc_need_wrap) {
+			vc_set_color(vc, vc->vc_def_color);
 			if (cnt > 0) {
 				if (CON_IS_VISIBLE(vc))
 					vc->vc_sw->con_putcs(vc, start, cnt, vc->vc_y, vc->vc_x);
@@ -2485,6 +2523,7 @@ static void vt_console_print(struct console *co, const char *b, unsigned count)
 				bs(vc);
 				start = (ushort *)vc->vc_pos;
 				myx = vc->vc_x;
+				vc_set_color(vc, current_color);
 				continue;
 			}
 			if (c != 13)
@@ -2492,6 +2531,7 @@ static void vt_console_print(struct console *co, const char *b, unsigned count)
 			cr(vc);
 			start = (ushort *)vc->vc_pos;
 			myx = vc->vc_x;
+			vc_set_color(vc, current_color);
 			if (c == 10 || c == 13)
 				continue;
 		}
@@ -2514,6 +2554,7 @@ static void vt_console_print(struct console *co, const char *b, unsigned count)
 			vc->vc_need_wrap = 1;
 		}
 	}
+	vc_set_color(vc, vc->vc_def_color);
 	set_cursor(vc);
 	notify_update(vc);
 
@@ -2987,7 +3028,7 @@ int __init vty_init(const struct file_operations *console_fops)
 
 static struct class *vtconsole_class;
 
-static int bind_con_driver(const struct consw *csw, int first, int last,
+static int do_bind_con_driver(const struct consw *csw, int first, int last,
 			   int deflt)
 {
 	struct module *owner = csw->owner;
@@ -2998,7 +3039,7 @@ static int bind_con_driver(const struct consw *csw, int first, int last,
 	if (!try_module_get(owner))
 		return -ENODEV;
 
-	console_lock();
+	WARN_CONSOLE_UNLOCKED();
 
 	/* check if driver is registered */
 	for (i = 0; i < MAX_NR_CON_DRIVER; i++) {
@@ -3083,10 +3124,21 @@ static int bind_con_driver(const struct consw *csw, int first, int last,
 
 	retval = 0;
 err:
-	console_unlock();
 	module_put(owner);
 	return retval;
 };
+
+
+static int bind_con_driver(const struct consw *csw, int first, int last,
+			   int deflt)
+{
+	int ret;
+
+	console_lock();
+	ret = do_bind_con_driver(csw, first, last, deflt);
+	console_unlock();
+	return ret;
+}
 
 #ifdef CONFIG_VT_HW_CONSOLE_BINDING
 static int con_is_graphics(const struct consw *csw, int first, int last)
@@ -3124,6 +3176,18 @@ static int con_is_graphics(const struct consw *csw, int first, int last)
  */
 int unbind_con_driver(const struct consw *csw, int first, int last, int deflt)
 {
+	int retval;
+
+	console_lock();
+	retval = do_unbind_con_driver(csw, first, last, deflt);
+	console_unlock();
+	return retval;
+}
+EXPORT_SYMBOL(unbind_con_driver);
+
+/* unlocked version of unbind_con_driver() */
+int do_unbind_con_driver(const struct consw *csw, int first, int last, int deflt)
+{
 	struct module *owner = csw->owner;
 	const struct consw *defcsw = NULL;
 	struct con_driver *con_driver = NULL, *con_back = NULL;
@@ -3132,7 +3196,7 @@ int unbind_con_driver(const struct consw *csw, int first, int last, int deflt)
 	if (!try_module_get(owner))
 		return -ENODEV;
 
-	console_lock();
+	WARN_CONSOLE_UNLOCKED();
 
 	/* check if driver is registered and if it is unbindable */
 	for (i = 0; i < MAX_NR_CON_DRIVER; i++) {
@@ -3145,10 +3209,8 @@ int unbind_con_driver(const struct consw *csw, int first, int last, int deflt)
 		}
 	}
 
-	if (retval) {
-		console_unlock();
+	if (retval)
 		goto err;
-	}
 
 	retval = -ENODEV;
 
@@ -3164,15 +3226,11 @@ int unbind_con_driver(const struct consw *csw, int first, int last, int deflt)
 		}
 	}
 
-	if (retval) {
-		console_unlock();
+	if (retval)
 		goto err;
-	}
 
-	if (!con_is_bound(csw)) {
-		console_unlock();
+	if (!con_is_bound(csw))
 		goto err;
-	}
 
 	first = max(first, con_driver->first);
 	last = min(last, con_driver->last);
@@ -3199,15 +3257,14 @@ int unbind_con_driver(const struct consw *csw, int first, int last, int deflt)
 	if (!con_is_bound(csw))
 		con_driver->flag &= ~CON_DRIVER_FLAG_INIT;
 
-	console_unlock();
 	/* ignore return value, binding should not fail */
-	bind_con_driver(defcsw, first, last, deflt);
+	do_bind_con_driver(defcsw, first, last, deflt);
 err:
 	module_put(owner);
 	return retval;
 
 }
-EXPORT_SYMBOL(unbind_con_driver);
+EXPORT_SYMBOL_GPL(do_unbind_con_driver);
 
 static int vt_bind(struct con_driver *con)
 {
@@ -3492,27 +3549,17 @@ int con_debug_leave(void)
 }
 EXPORT_SYMBOL_GPL(con_debug_leave);
 
-/**
- * register_con_driver - register console driver to console layer
- * @csw: console driver
- * @first: the first console to take over, minimum value is 0
- * @last: the last console to take over, maximum value is MAX_NR_CONSOLES -1
- *
- * DESCRIPTION: This function registers a console driver which can later
- * bind to a range of consoles specified by @first and @last. It will
- * also initialize the console driver by calling con_startup().
- */
-int register_con_driver(const struct consw *csw, int first, int last)
+static int do_register_con_driver(const struct consw *csw, int first, int last)
 {
 	struct module *owner = csw->owner;
 	struct con_driver *con_driver;
 	const char *desc;
 	int i, retval = 0;
 
+	WARN_CONSOLE_UNLOCKED();
+
 	if (!try_module_get(owner))
 		return -ENODEV;
-
-	console_lock();
 
 	for (i = 0; i < MAX_NR_CON_DRIVER; i++) {
 		con_driver = &registered_con_driver[i];
@@ -3566,8 +3613,27 @@ int register_con_driver(const struct consw *csw, int first, int last)
 	}
 
 err:
-	console_unlock();
 	module_put(owner);
+	return retval;
+}
+
+/**
+ * register_con_driver - register console driver to console layer
+ * @csw: console driver
+ * @first: the first console to take over, minimum value is 0
+ * @last: the last console to take over, maximum value is MAX_NR_CONSOLES -1
+ *
+ * DESCRIPTION: This function registers a console driver which can later
+ * bind to a range of consoles specified by @first and @last. It will
+ * also initialize the console driver by calling con_startup().
+ */
+int register_con_driver(const struct consw *csw, int first, int last)
+{
+	int retval;
+
+	console_lock();
+	retval = do_register_con_driver(csw, first, last);
+	console_unlock();
 	return retval;
 }
 EXPORT_SYMBOL(register_con_driver);
@@ -3585,9 +3651,18 @@ EXPORT_SYMBOL(register_con_driver);
  */
 int unregister_con_driver(const struct consw *csw)
 {
-	int i, retval = -ENODEV;
+	int retval;
 
 	console_lock();
+	retval = do_unregister_con_driver(csw);
+	console_unlock();
+	return retval;
+}
+EXPORT_SYMBOL(unregister_con_driver);
+
+int do_unregister_con_driver(const struct consw *csw)
+{
+	int i, retval = -ENODEV;
 
 	/* cannot unregister a bound driver */
 	if (con_is_bound(csw))
@@ -3613,27 +3688,53 @@ int unregister_con_driver(const struct consw *csw)
 		}
 	}
 err:
-	console_unlock();
 	return retval;
 }
-EXPORT_SYMBOL(unregister_con_driver);
+EXPORT_SYMBOL_GPL(do_unregister_con_driver);
 
 /*
  *	If we support more console drivers, this function is used
  *	when a driver wants to take over some existing consoles
  *	and become default driver for newly opened ones.
  *
- *      take_over_console is basically a register followed by unbind
+ *	take_over_console is basically a register followed by unbind
+ */
+int do_take_over_console(const struct consw *csw, int first, int last, int deflt)
+{
+	int err;
+
+	err = do_register_con_driver(csw, first, last);
+	/*
+	 * If we get an busy error we still want to bind the console driver
+	 * and return success, as we may have unbound the console driver
+	 * but not unregistered it.
+	 */
+	if (err == -EBUSY)
+		err = 0;
+	if (!err)
+		do_bind_con_driver(csw, first, last, deflt);
+
+	return err;
+}
+EXPORT_SYMBOL_GPL(do_take_over_console);
+
+/*
+ *	If we support more console drivers, this function is used
+ *	when a driver wants to take over some existing consoles
+ *	and become default driver for newly opened ones.
+ *
+ *	take_over_console is basically a register followed by unbind
  */
 int take_over_console(const struct consw *csw, int first, int last, int deflt)
 {
 	int err;
 
 	err = register_con_driver(csw, first, last);
-	/* if we get an busy error we still want to bind the console driver
+	/*
+	 * If we get an busy error we still want to bind the console driver
 	 * and return success, as we may have unbound the console driver
-	 * but not unregistered it.
-	*/
+	 * but not unregistered it.
+	 */
 	if (err == -EBUSY)
 		err = 0;
 	if (!err)

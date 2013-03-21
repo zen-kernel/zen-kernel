@@ -88,7 +88,7 @@ static void intel_disable_crt(struct intel_encoder *encoder)
 	u32 temp;
 
 	temp = I915_READ(crt->adpa_reg);
-	temp &= ~(ADPA_HSYNC_CNTL_DISABLE | ADPA_VSYNC_CNTL_DISABLE);
+	temp |= ADPA_HSYNC_CNTL_DISABLE | ADPA_VSYNC_CNTL_DISABLE;
 	temp &= ~ADPA_DAC_ENABLE;
 	I915_WRITE(crt->adpa_reg, temp);
 }
@@ -800,10 +800,14 @@ void intel_crt_init(struct drm_device *dev)
 	dev_priv->hotplug_supported_mask |= CRT_HOTPLUG_INT_STATUS;
 
 	/*
-	 * TODO: find a proper way to discover whether we need to set the
-	 * polarity reversal bit or not, instead of relying on the BIOS.
+	 * TODO: find a proper way to discover whether we need to set the the
+	 * polarity and link reversal bits or not, instead of relying on the
+	 * BIOS.
 	 */
-	if (HAS_PCH_LPT(dev))
-		dev_priv->fdi_rx_polarity_reversed =
-		     !!(I915_READ(_FDI_RXA_CTL) & FDI_RX_POLARITY_REVERSED_LPT);
+	if (HAS_PCH_LPT(dev)) {
+		u32 fdi_config = FDI_RX_POLARITY_REVERSED_LPT |
+				 FDI_RX_LINK_REVERSAL_OVERRIDE;
+
+		dev_priv->fdi_rx_config = I915_READ(_FDI_RXA_CTL) & fdi_config;
+	}
 }

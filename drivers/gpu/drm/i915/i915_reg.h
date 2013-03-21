@@ -3927,7 +3927,7 @@
 #define  FDI_10BPC                      (1<<16)
 #define  FDI_6BPC                       (2<<16)
 #define  FDI_12BPC                      (3<<16)
-#define  FDI_LINK_REVERSE_OVERWRITE     (1<<15)
+#define  FDI_RX_LINK_REVERSAL_OVERRIDE  (1<<15)
 #define  FDI_DMI_LINK_REVERSE_MASK      (1<<14)
 #define  FDI_RX_PLL_ENABLE              (1<<13)
 #define  FDI_FS_ERR_CORRECT_ENABLE      (1<<11)
@@ -4211,7 +4211,9 @@
 #define GEN6_RP_INTERRUPT_LIMITS		0xA014
 #define GEN6_RPSTAT1				0xA01C
 #define   GEN6_CAGF_SHIFT			8
+#define   HSW_CAGF_SHIFT			7
 #define   GEN6_CAGF_MASK			(0x7f << GEN6_CAGF_SHIFT)
+#define   HSW_CAGF_MASK				(0x7f << HSW_CAGF_SHIFT)
 #define GEN6_RP_CONTROL				0xA024
 #define   GEN6_RP_MEDIA_TURBO			(1<<11)
 #define   GEN6_RP_MEDIA_MODE_MASK		(3<<9)
@@ -4280,8 +4282,8 @@
 #define   GEN6_PCODE_READ_MIN_FREQ_TABLE	0x9
 #define	  GEN6_PCODE_WRITE_RC6VIDS		0x4
 #define	  GEN6_PCODE_READ_RC6VIDS		0x5
-#define   GEN6_ENCODE_RC6_VID(mv)		(((mv) / 5) - 245) < 0 ?: 0
-#define   GEN6_DECODE_RC6_VID(vids)		(((vids) * 5) > 0 ? ((vids) * 5) + 245 : 0)
+#define   GEN6_ENCODE_RC6_VID(mv)		(((mv) - 245) / 5)
+#define   GEN6_DECODE_RC6_VID(vids)		(((vids) * 5) + 245)
 #define GEN6_PCODE_DATA				0x138128
 #define   GEN6_PCODE_FREQ_IA_RATIO_SHIFT	8
 
@@ -4524,6 +4526,7 @@
 #define  DDI_BUF_EMP_800MV_0DB_HSW		(7<<24)   /* Sel7 */
 #define  DDI_BUF_EMP_800MV_3_5DB_HSW		(8<<24)   /* Sel8 */
 #define  DDI_BUF_EMP_MASK			(0xf<<24)
+#define  DDI_BUF_PORT_REVERSAL			(1<<16)
 #define  DDI_BUF_IS_IDLE			(1<<7)
 #define  DDI_A_4_LANES				(1<<4)
 #define  DDI_PORT_WIDTH_X1			(0<<1)

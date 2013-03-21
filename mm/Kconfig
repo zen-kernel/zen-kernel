@@ -446,3 +446,18 @@ config FRONTSWAP
 	  and swap data is stored as normal on the matching swap device.
 
 	  If unsure, say Y to enable frontswap.
+
+config ZSWAP
+	bool "In-kernel swap page compression"
+	depends on FRONTSWAP && CRYPTO
+	select CRYPTO_LZO
+	select ZSMALLOC
+	default n
+	help
+	  Zswap is a backend for the frontswap mechanism in the VMM.
+	  It receives pages from frontswap and attempts to store them
+	  in a compressed memory pool, resulting in an effective
+	  partial memory reclaim.  In addition, pages and be retrieved
+	  from this compressed store much faster than most tradition
+	  swap devices resulting in reduced I/O and faster performance
+	  for many workloads.

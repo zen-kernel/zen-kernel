@@ -219,6 +219,24 @@ config DECOMPRESS_LZO
 config GENERIC_ALLOCATOR
 	boolean
 
+config ZSMALLOC
+	tristate "Memory allocator for compressed pages"
+	default n
+	help
+	  zsmalloc is a slab-based memory allocator designed to store
+	  compressed RAM pages.  zsmalloc uses a memory pool that combines
+	  single pages into higher order pages by linking them together
+	  using the fields of the struct page. Allocations are then
+	  mapped through copy buffers or VM mapping, in order to reduce
+	  memory pool fragmentation and increase allocation success rate under
+	  memory pressure.
+
+	  This results in a non-standard allocator interface where
+	  a handle, not a pointer, is returned by the allocation function.
+	  This handle must be mapped in order to access the allocated space.
+
+	  If unsure, say N.
+
 #
 # reed solomon support is select'ed if needed
 #

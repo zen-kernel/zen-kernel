@@ -333,16 +333,25 @@ int dm_deleting_md(struct mapped_device *md)
 static int dm_blk_open(struct block_device *bdev, fmode_t mode)
 {
 	struct mapped_device *md;
+	int retval = 0;
 
 	spin_lock(&_minor_lock);
 
 	md = bdev->bd_disk->private_data;
-	if (!md)
+	if (!md) {
+		retval = -ENXIO;
 		goto out;
+	}
 
 	if (test_bit(DMF_FREEING, &md->flags) ||
 	    dm_deleting_md(md)) {
 		md = NULL;
+		retval = -ENXIO;
+		goto out;
+	}
+	if (get_disk_ro(md->disk) && (mode & FMODE_WRITE)) {
+		md = NULL;
+		retval = -EROFS;
 		goto out;
 	}
 
@@ -352,7 +361,7 @@ static int dm_blk_open(struct block_device *bdev, fmode_t mode)
 out:
 	spin_unlock(&_minor_lock);
 
-	return md ? 0 : -ENXIO;
+	return retval;
 }
 
 static int dm_blk_close(struct gendisk *disk, fmode_t mode)
@@ -411,19 +420,25 @@ static int dm_blk_ioctl(struct block_device *bdev, fmode_t mode,
 	if (!map || !dm_table_get_size(map))
 		goto out;
 
-	/* We only support devices that have a single target */
-	if (dm_table_get_num_targets(map) != 1)
-		goto out;
-
-	tgt = dm_table_get_target(map, 0);
-
 	if (dm_suspended_md(md)) {
 		r = -EAGAIN;
 		goto out;
 	}
 
-	if (tgt->type->ioctl)
-		r = tgt->type->ioctl(tgt, cmd, arg);
+	if (cmd == BLKRRPART) {
+		/* Emulate Re-read partitions table */
+		kobject_uevent(&disk_to_dev(md->disk)->kobj, KOBJ_CHANGE);
+		r = 0;
+	} else {
+		/* We only support devices that have a single target */
+		if (dm_table_get_num_targets(map) != 1)
+			goto out;
+
+		tgt = dm_table_get_target(map, 0);
+
+		if (tgt->type->ioctl)
+			r = tgt->type->ioctl(tgt, cmd, arg);
+	}
 
 out:
 	dm_table_put(map);
@@ -1973,15 +1988,27 @@ static void __bind_mempools(struct mapped_device *md, struct dm_table *t)
 {
 	struct dm_md_mempools *p = dm_table_get_md_mempools(t);
 
-	if (md->io_pool && (md->tio_pool || dm_table_get_type(t) == DM_TYPE_BIO_BASED) && md->bs) {
-		/*
-		 * The md already has necessary mempools. Reload just the
-		 * bioset because front_pad may have changed because
-		 * a different table was loaded.
-		 */
-		bioset_free(md->bs);
-		md->bs = p->bs;
-		p->bs = NULL;
+	if (md->io_pool && md->bs) {
+		/* The md already has necessary mempools. */
+		if (dm_table_get_type(t) == DM_TYPE_BIO_BASED) {
+			/*
+			 * Reload bioset because front_pad may have changed
+			 * because a different table was loaded.
+			 */
+			bioset_free(md->bs);
+			md->bs = p->bs;
+			p->bs = NULL;
+		} else if (dm_table_get_type(t) == DM_TYPE_REQUEST_BASED) {
+			BUG_ON(!md->tio_pool);
+			/*
+			 * There's no need to reload with request-based dm
+			 * because the size of front_pad doesn't change.
+			 * Note for future: If you are to reload bioset,
+			 * prep-ed requests in the queue may refer
+			 * to bio from the old bioset, so you must walk
+			 * through the queue to unprep.
+			 */
+		}
 		goto out;
 	}
 
@@ -2130,6 +2157,13 @@ static struct dm_table *__bind(struct mapped_device *md, struct dm_table *t,
 	else
 		clear_bit(DMF_MERGE_IS_OPTIONAL, &md->flags);
 	write_unlock_irqrestore(&md->map_lock, flags);
+
+	dm_table_get(md->map);
+	if (!(dm_table_get_mode(t) & FMODE_WRITE))
+		set_disk_ro(md->disk, 1);
+	else
+		set_disk_ro(md->disk, 0);
+	dm_table_put(md->map);
 
 	return old_map;
 }
@@ -2421,7 +2455,7 @@ static void dm_queue_flush(struct mapped_device *md)
  */
 struct dm_table *dm_swap_table(struct mapped_device *md, struct dm_table *table)
 {
-	struct dm_table *live_map, *map = ERR_PTR(-EINVAL);
+	struct dm_table *live_map = NULL, *map = ERR_PTR(-EINVAL);
 	struct queue_limits limits;
 	int r;
 
@@ -2444,10 +2478,12 @@ struct dm_table *dm_swap_table(struct mapped_device *md, struct dm_table *table)
 		dm_table_put(live_map);
 	}
 
-	r = dm_calculate_queue_limits(table, &limits);
-	if (r) {
-		map = ERR_PTR(r);
-		goto out;
+	if (!live_map) {
+		r = dm_calculate_queue_limits(table, &limits);
+		if (r) {
+			map = ERR_PTR(r);
+			goto out;
+		}
 	}
 
 	map = __bind(md, table, &limits);
@@ -2700,6 +2736,7 @@ struct gendisk *dm_disk(struct mapped_device *md)
 {
 	return md->disk;
 }
+EXPORT_SYMBOL_GPL(dm_disk);
 
 struct kobject *dm_kobject(struct mapped_device *md)
 {

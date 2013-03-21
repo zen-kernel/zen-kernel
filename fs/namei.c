@@ -693,8 +693,6 @@ void nd_jump_link(struct nameidata *nd, struct path *path)
 	nd->path = *path;
 	nd->inode = nd->path.dentry->d_inode;
 	nd->flags |= LOOKUP_JUMPED;
-
-	BUG_ON(nd->inode->i_op->follow_link);
 }
 
 static inline void put_link(struct nameidata *nd, struct path *link, void *cookie)
@@ -2091,6 +2089,7 @@ static struct dentry *lookup_hash(struct nameidata *nd)
 {
 	return __lookup_hash(&nd->last, nd->path.dentry, nd->flags);
 }
+EXPORT_SYMBOL(lookup_hash);
 
 /**
  * lookup_one_len - filesystem helper to lookup single pathname component

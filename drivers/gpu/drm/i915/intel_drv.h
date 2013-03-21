@@ -377,6 +377,7 @@ struct intel_dp {
 struct intel_digital_port {
 	struct intel_encoder base;
 	enum port port;
+	u32 port_reversal;
 	struct intel_dp dp;
 	struct intel_hdmi hdmi;
 };
@@ -439,9 +440,8 @@ extern bool intel_sdvo_init(struct drm_device *dev, uint32_t sdvo_reg,
 extern void intel_dvo_init(struct drm_device *dev);
 extern void intel_tv_init(struct drm_device *dev);
 extern void intel_mark_busy(struct drm_device *dev);
-extern void intel_mark_idle(struct drm_device *dev);
 extern void intel_mark_fb_busy(struct drm_i915_gem_object *obj);
-extern void intel_mark_fb_idle(struct drm_i915_gem_object *obj);
+extern void intel_mark_idle(struct drm_device *dev);
 extern bool intel_lvds_init(struct drm_device *dev);
 extern void intel_dp_init(struct drm_device *dev, int output_reg,
 			  enum port port);
@@ -627,9 +627,10 @@ extern void intel_update_sprite_watermarks(struct drm_device *dev, int pipe,
 extern void intel_update_linetime_watermarks(struct drm_device *dev, int pipe,
 			 struct drm_display_mode *mode);
 
-extern unsigned long intel_gen4_compute_offset_xtiled(int *x, int *y,
-						      unsigned int bpp,
-						      unsigned int pitch);
+extern unsigned long intel_gen4_compute_page_offset(int *x, int *y,
+						    unsigned int tiling_mode,
+						    unsigned int bpp,
+						    unsigned int pitch);
 
 extern int intel_sprite_set_colorkey(struct drm_device *dev, void *data,
 				     struct drm_file *file_priv);

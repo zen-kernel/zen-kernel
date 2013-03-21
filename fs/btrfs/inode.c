@@ -265,6 +265,7 @@ static noinline int cow_file_range_inline(struct btrfs_trans_handle *trans,
 		return 1;
 	}
 
+	set_bit(BTRFS_INODE_NEEDS_FULL_SYNC, &BTRFS_I(inode)->runtime_flags);
 	btrfs_delalloc_release_metadata(inode, end + 1 - start);
 	btrfs_drop_extent_cache(inode, start, aligned_end - 1, 0);
 	return 0;
@@ -2469,6 +2470,7 @@ int btrfs_orphan_cleanup(struct btrfs_root *root)
 		 */
 		set_bit(BTRFS_INODE_HAS_ORPHAN_ITEM,
 			&BTRFS_I(inode)->runtime_flags);
+		atomic_inc(&root->orphan_inodes);
 
 		/* if we have links, this was a truncate, lets do that */
 		if (inode->i_nlink) {
@@ -2491,6 +2493,8 @@ int btrfs_orphan_cleanup(struct btrfs_root *root)
 				goto out;
 
 			ret = btrfs_truncate(inode);
+			if (ret)
+				btrfs_orphan_del(NULL, inode);
 		} else {
 			nr_unlink++;
 		}

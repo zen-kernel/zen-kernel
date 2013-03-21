@@ -1177,8 +1177,10 @@ static long do_fb_ioctl(struct fb_info *info, unsigned int cmd,
 		event.data = &con2fb;
 		if (!lock_fb_info(info))
 			return -ENODEV;
+		console_lock();
 		event.info = info;
 		ret = fb_notifier_call_chain(FB_EVENT_SET_CONSOLE_MAP, &event);
+		console_unlock();
 		unlock_fb_info(info);
 		break;
 	case FBIOBLANK:
@@ -1229,15 +1231,6 @@ struct fb_fix_screeninfo32 {
 	u32			mmio_len;
 	u32			accel;
 	u16			reserved[3];
-};
-
-struct fb_cmap32 {
-	u32			start;
-	u32			len;
-	compat_caddr_t	red;
-	compat_caddr_t	green;
-	compat_caddr_t	blue;
-	compat_caddr_t	transp;
 };
 
 static int fb_getput_cmap(struct fb_info *info, unsigned int cmd,
@@ -1650,7 +1643,9 @@ static int do_register_framebuffer(struct fb_info *fb_info)
 	event.info = fb_info;
 	if (!lock_fb_info(fb_info))
 		return -ENODEV;
+	console_lock();
 	fb_notifier_call_chain(FB_EVENT_FB_REGISTERED, &event);
+	console_unlock();
 	unlock_fb_info(fb_info);
 	return 0;
 }
@@ -1666,8 +1661,10 @@ static int do_unregister_framebuffer(struct fb_info *fb_info)
 
 	if (!lock_fb_info(fb_info))
 		return -ENODEV;
+	console_lock();
 	event.info = fb_info;
 	ret = fb_notifier_call_chain(FB_EVENT_FB_UNBIND, &event);
+	console_unlock();
 	unlock_fb_info(fb_info);
 
 	if (ret)
@@ -1682,7 +1679,9 @@ static int do_unregister_framebuffer(struct fb_info *fb_info)
 	num_registered_fb--;
 	fb_cleanup_device(fb_info);
 	event.info = fb_info;
+	console_lock();
 	fb_notifier_call_chain(FB_EVENT_FB_UNREGISTERED, &event);
+	console_unlock();
 
 	/* this may free fb info */
 	put_fb_info(fb_info);
@@ -1853,11 +1852,8 @@ int fb_new_modelist(struct fb_info *info)
 	err = 1;
 
 	if (!list_empty(&info->modelist)) {
-		if (!lock_fb_info(info))
-			return -ENODEV;
 		event.info = info;
 		err = fb_notifier_call_chain(FB_EVENT_NEW_MODELIST, &event);
-		unlock_fb_info(info);
 	}
 
 	return err;

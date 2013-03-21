@@ -1,8 +1,8 @@
 VERSION = 3
 PATCHLEVEL = 8
-SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Unicycling Gorilla
+SUBLEVEL = 4
+EXTRAVERSION = -zen
+NAME = Stochastic Salmon
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
