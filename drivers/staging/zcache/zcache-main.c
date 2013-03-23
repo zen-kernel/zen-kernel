@@ -32,8 +32,9 @@
 #include <linux/crypto.h>
 #include <linux/string.h>
 #include <linux/idr.h>
-#include <linux/zsmalloc.h>
 #include "tmem.h"
+
+#include "../zsmalloc/zsmalloc.h"
 
 #ifdef CONFIG_CLEANCACHE
 #include <linux/cleancache.h>
@@ -710,7 +711,7 @@ static unsigned long zv_create(struct zs_pool *pool, uint32_t pool_id,
 
 	BUG_ON(!irqs_disabled());
 	BUG_ON(chunks >= NCHUNKS);
-	handle = zs_malloc(pool, size, ZCACHE_GFP_MASK);
+	handle = zs_malloc(pool, size);
 	if (!handle)
 		goto out;
 	atomic_inc(&zv_curr_dist_counts[chunks]);
@@ -981,7 +982,7 @@ int zcache_new_client(uint16_t cli_id)
 		goto out;
 	cli->allocated = 1;
 #ifdef CONFIG_FRONTSWAP
-	cli->zspool = zs_create_pool(GFP_KERNEL, NULL);
+	cli->zspool = zs_create_pool("zcache", ZCACHE_GFP_MASK);
 	if (cli->zspool == NULL)
 		goto out;
 	idr_init(&cli->tmem_pools);

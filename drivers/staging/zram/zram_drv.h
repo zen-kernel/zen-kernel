@@ -17,7 +17,8 @@
 
 #include <linux/spinlock.h>
 #include <linux/mutex.h>
-#include <linux/zsmalloc.h>
+
+#include "../zsmalloc/zsmalloc.h"
 
 /*
  * Some arbitrary value. This is just to catch
