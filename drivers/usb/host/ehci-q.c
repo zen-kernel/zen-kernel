@@ -1178,7 +1178,7 @@ static void single_unlink_async(struct ehci_hcd *ehci, struct ehci_qh *qh)
 	struct ehci_qh		*prev;
 
 	/* Add to the end of the list of QHs waiting for the next IAAD */
-	qh->qh_state = QH_STATE_UNLINK;
+	qh->qh_state = QH_STATE_UNLINK_WAIT;
 	if (ehci->async_unlink)
 		ehci->async_unlink_last->unlink_next = qh;
 	else
@@ -1221,9 +1221,19 @@ static void start_iaa_cycle(struct ehci_hcd *ehci, bool nested)
 
 		/* Do only the first waiting QH (nVidia bug?) */
 		qh = ehci->async_unlink;
-		ehci->async_iaa = qh;
-		ehci->async_unlink = qh->unlink_next;
-		qh->unlink_next = NULL;
+
+		/*
+		 * Intel (?) bug: The HC can write back the overlay region
+		 * even after the IAA interrupt occurs.  In self-defense,
+		 * always go through two IAA cycles for each QH.
+		 */
+		if (qh->qh_state == QH_STATE_UNLINK_WAIT) {
+			qh->qh_state = QH_STATE_UNLINK;
+		} else {
+			ehci->async_iaa = qh;
+			ehci->async_unlink = qh->unlink_next;
+			qh->unlink_next = NULL;
+		}
 
 		/* Make sure the unlinks are all visible to the hardware */
 		wmb();
@@ -1304,6 +1314,19 @@ static void unlink_empty_async(struct ehci_hcd *ehci)
 		ehci_enable_event(ehci, EHCI_HRTIMER_ASYNC_UNLINKS, true);
 		++ehci->async_unlink_cycle;
 	}
+}
+
+/* The root hub is suspended; unlink all the async QHs */
+static void unlink_empty_async_suspended(struct ehci_hcd *ehci)
+{
+	struct ehci_qh		*qh;
+
+	while (ehci->async->qh_next.qh) {
+		qh = ehci->async->qh_next.qh;
+		WARN_ON(!list_empty(&qh->qtd_list));
+		single_unlink_async(ehci, qh);
+	}
+	start_iaa_cycle(ehci, false);
 }
 
 /* makes sure the async qh will become idle */
