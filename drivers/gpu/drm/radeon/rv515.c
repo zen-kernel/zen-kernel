@@ -293,6 +293,12 @@ void rv515_mc_stop(struct radeon_device *rdev, struct rv515_mc_save *save)
 	save->vga_render_control = RREG32(R_000300_VGA_RENDER_CONTROL);
 	save->vga_hdp_control = RREG32(R_000328_VGA_HDP_CONTROL);
 
+	if (rdev->family >= CHIP_RV770)
+		save->mc_fb_location = (u64)(RREG32(0x2024) & 0xffff) << 24;
+	else if (rdev->family >= CHIP_R600)
+		save->mc_fb_location = (u64)(RREG32(0x2180) & 0xffff) << 24;
+	else
+		save->mc_fb_location = 0;
 	/* disable VGA render */
 	WREG32(R_000300_VGA_RENDER_CONTROL, 0);
 	/* blank the display controllers */
@@ -305,6 +311,25 @@ void rv515_mc_stop(struct radeon_device *rdev, struct rv515_mc_save *save)
 				radeon_wait_for_vblank(rdev, i);
 				tmp |= AVIVO_CRTC_DISP_READ_REQUEST_DISABLE;
 				WREG32(AVIVO_D1CRTC_CONTROL + crtc_offsets[i], tmp);
+			}
+			if (rdev->family >= CHIP_R600) {
+				save->crtc_mc_paddr[i] =
+					RREG32(R_006110_D1GRPH_PRIMARY_SURFACE_ADDRESS + crtc_offsets[i]);
+				save->crtc_mc_saddr[i] =
+					RREG32(R_006118_D1GRPH_SECONDARY_SURFACE_ADDRESS + crtc_offsets[i]);
+				if (rdev->family >= CHIP_RV770) {
+					if (i == 0) {
+						save->crtc_mc_paddr[i] |=
+							(u64)RREG32(R700_D1GRPH_PRIMARY_SURFACE_ADDRESS_HIGH) << 32;
+						save->crtc_mc_saddr[i] |=
+							(u64)RREG32(R700_D1GRPH_SECONDARY_SURFACE_ADDRESS_HIGH) << 32;
+					} else {
+						save->crtc_mc_paddr[i] |=
+							(u64)RREG32(R700_D2GRPH_PRIMARY_SURFACE_ADDRESS_HIGH) << 32;
+						save->crtc_mc_saddr[i] |=
+							(u64)RREG32(R700_D2GRPH_SECONDARY_SURFACE_ADDRESS_HIGH) << 32;
+					}
+				}
 			}
 			/* wait for the next frame */
 			frame_count = radeon_get_vblank_counter(rdev, i);
@@ -344,26 +369,50 @@ void rv515_mc_resume(struct radeon_device *rdev, struct rv515_mc_save *save)
 {
 	u32 tmp, frame_count;
 	int i, j;
+	u64 mc_fb_location;
+
+	if (rdev->family >= CHIP_RV770)
+		mc_fb_location = (u64)(RREG32(0x2024) & 0xffff) << 24;
+	else if (rdev->family >= CHIP_R600)
+		mc_fb_location = (u64)(RREG32(0x2180) & 0xffff) << 24;
+	else
+		mc_fb_location = rdev->mc.vram_start;
 
 	/* update crtc base addresses */
 	for (i = 0; i < rdev->num_crtc; i++) {
-		if (rdev->family >= CHIP_RV770) {
-			if (i == 1) {
-				WREG32(R700_D1GRPH_PRIMARY_SURFACE_ADDRESS_HIGH,
-				       upper_32_bits(rdev->mc.vram_start));
-				WREG32(R700_D1GRPH_SECONDARY_SURFACE_ADDRESS_HIGH,
-				       upper_32_bits(rdev->mc.vram_start));
-			} else {
-				WREG32(R700_D2GRPH_PRIMARY_SURFACE_ADDRESS_HIGH,
-				       upper_32_bits(rdev->mc.vram_start));
-				WREG32(R700_D2GRPH_SECONDARY_SURFACE_ADDRESS_HIGH,
-				       upper_32_bits(rdev->mc.vram_start));
+		if (rdev->family >= CHIP_R600) {
+			if (save->crtc_enabled[i] &&
+			    (save->mc_fb_location != mc_fb_location)) {
+				if (save->crtc_mc_paddr[i])
+					save->crtc_mc_paddr[i] -= save->mc_fb_location;
+				save->crtc_mc_paddr[i] += mc_fb_location;
+				if (save->crtc_mc_saddr[i])
+					save->crtc_mc_saddr[i] -= save->mc_fb_location;
+				save->crtc_mc_saddr[i] += mc_fb_location;
+				if (rdev->family >= CHIP_RV770) {
+					if (i == 0) {
+						WREG32(R700_D1GRPH_PRIMARY_SURFACE_ADDRESS_HIGH,
+						       upper_32_bits(save->crtc_mc_paddr[i]));
+						WREG32(R700_D1GRPH_SECONDARY_SURFACE_ADDRESS_HIGH,
+						       upper_32_bits(save->crtc_mc_saddr[i]));
+					} else {
+						WREG32(R700_D2GRPH_PRIMARY_SURFACE_ADDRESS_HIGH,
+						       upper_32_bits(save->crtc_mc_paddr[i]));
+						WREG32(R700_D2GRPH_SECONDARY_SURFACE_ADDRESS_HIGH,
+						       upper_32_bits(save->crtc_mc_saddr[i]));
+					}
+				}
+				WREG32(R_006110_D1GRPH_PRIMARY_SURFACE_ADDRESS + crtc_offsets[i],
+				       save->crtc_mc_paddr[i]);
+				WREG32(R_006118_D1GRPH_SECONDARY_SURFACE_ADDRESS + crtc_offsets[i],
+				       save->crtc_mc_saddr[i]);
 			}
+		} else {
+			WREG32(R_006110_D1GRPH_PRIMARY_SURFACE_ADDRESS + crtc_offsets[i],
+			       rdev->mc.vram_start);
+			WREG32(R_006118_D1GRPH_SECONDARY_SURFACE_ADDRESS + crtc_offsets[i],
+			       rdev->mc.vram_start);
 		}
-		WREG32(R_006110_D1GRPH_PRIMARY_SURFACE_ADDRESS + crtc_offsets[i],
-		       (u32)rdev->mc.vram_start);
-		WREG32(R_006118_D1GRPH_SECONDARY_SURFACE_ADDRESS + crtc_offsets[i],
-		       (u32)rdev->mc.vram_start);
 	}
 	WREG32(R_000310_VGA_MEMORY_BASE_ADDRESS, (u32)rdev->mc.vram_start);
 

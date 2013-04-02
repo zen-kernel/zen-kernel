@@ -1316,6 +1316,8 @@ void evergreen_mc_stop(struct radeon_device *rdev, struct evergreen_mc_save *sav
 
 	/* disable VGA render */
 	WREG32(VGA_RENDER_CONTROL, 0);
+
+	save->mc_fb_location = (u64)(RREG32(MC_VM_FB_LOCATION) & 0xffff) << 24;
 	/* blank the display controllers */
 	for (i = 0; i < rdev->num_crtc; i++) {
 		crtc_enabled = RREG32(EVERGREEN_CRTC_CONTROL + crtc_offsets[i]) & EVERGREEN_CRTC_MASTER_EN;
@@ -1340,6 +1342,14 @@ void evergreen_mc_stop(struct radeon_device *rdev, struct evergreen_mc_save *sav
 					WREG32(EVERGREEN_CRTC_UPDATE_LOCK + crtc_offsets[i], 0);
 				}
 			}
+			save->crtc_mc_paddr[i] =
+				RREG32(EVERGREEN_GRPH_PRIMARY_SURFACE_ADDRESS + crtc_offsets[i]);
+			save->crtc_mc_paddr[i] |=
+				(u64)RREG32(EVERGREEN_GRPH_PRIMARY_SURFACE_ADDRESS_HIGH + crtc_offsets[i]) << 32;
+			save->crtc_mc_saddr[i] =
+				RREG32(EVERGREEN_GRPH_SECONDARY_SURFACE_ADDRESS + crtc_offsets[i]);
+			save->crtc_mc_saddr[i] |=
+				(u64)RREG32(EVERGREEN_GRPH_SECONDARY_SURFACE_ADDRESS_HIGH + crtc_offsets[i]) << 32;
 			/* wait for the next frame */
 			frame_count = radeon_get_vblank_counter(rdev, i);
 			for (j = 0; j < rdev->usec_timeout; j++) {
@@ -1370,17 +1380,28 @@ void evergreen_mc_resume(struct radeon_device *rdev, struct evergreen_mc_save *s
 {
 	u32 tmp, frame_count;
 	int i, j;
+	u64 mc_fb_location = (u64)(RREG32(MC_VM_FB_LOCATION) & 0xffff) << 24;
 
 	/* update crtc base addresses */
 	for (i = 0; i < rdev->num_crtc; i++) {
-		WREG32(EVERGREEN_GRPH_PRIMARY_SURFACE_ADDRESS_HIGH + crtc_offsets[i],
-		       upper_32_bits(rdev->mc.vram_start));
-		WREG32(EVERGREEN_GRPH_SECONDARY_SURFACE_ADDRESS_HIGH + crtc_offsets[i],
-		       upper_32_bits(rdev->mc.vram_start));
-		WREG32(EVERGREEN_GRPH_PRIMARY_SURFACE_ADDRESS + crtc_offsets[i],
-		       (u32)rdev->mc.vram_start);
-		WREG32(EVERGREEN_GRPH_SECONDARY_SURFACE_ADDRESS + crtc_offsets[i],
-		       (u32)rdev->mc.vram_start);
+		if (save->crtc_enabled[i] &&
+		    (save->mc_fb_location != mc_fb_location)) {
+			if (save->crtc_mc_paddr[i])
+				save->crtc_mc_paddr[i] -= save->mc_fb_location;
+			save->crtc_mc_paddr[i] += mc_fb_location;
+			if (save->crtc_mc_saddr[i])
+				save->crtc_mc_saddr[i] -= save->mc_fb_location;
+			save->crtc_mc_saddr[i] += mc_fb_location;
+
+			WREG32(EVERGREEN_GRPH_PRIMARY_SURFACE_ADDRESS_HIGH + crtc_offsets[i],
+			       upper_32_bits(save->crtc_mc_paddr[i]));
+			WREG32(EVERGREEN_GRPH_SECONDARY_SURFACE_ADDRESS_HIGH + crtc_offsets[i],
+			       upper_32_bits(save->crtc_mc_saddr[i]));
+			WREG32(EVERGREEN_GRPH_PRIMARY_SURFACE_ADDRESS + crtc_offsets[i],
+			       save->crtc_mc_paddr[i]);
+			WREG32(EVERGREEN_GRPH_SECONDARY_SURFACE_ADDRESS + crtc_offsets[i],
+			       save->crtc_mc_saddr[i]);
+		}
 	}
 	WREG32(EVERGREEN_VGA_MEMORY_BASE_ADDRESS_HIGH, upper_32_bits(rdev->mc.vram_start));
 	WREG32(EVERGREEN_VGA_MEMORY_BASE_ADDRESS, (u32)rdev->mc.vram_start);
@@ -1425,6 +1446,7 @@ void evergreen_mc_resume(struct radeon_device *rdev, struct evergreen_mc_save *s
 void evergreen_mc_program(struct radeon_device *rdev)
 {
 	struct evergreen_mc_save save;
+	u32 mc_vm_fb_location = RREG32(MC_VM_FB_LOCATION);
 	u32 tmp;
 	int i, j;
 
@@ -1477,7 +1499,8 @@ void evergreen_mc_program(struct radeon_device *rdev)
 	}
 	tmp = ((rdev->mc.vram_end >> 24) & 0xFFFF) << 16;
 	tmp |= ((rdev->mc.vram_start >> 24) & 0xFFFF);
-	WREG32(MC_VM_FB_LOCATION, tmp);
+	if (tmp != mc_vm_fb_location)
+		WREG32(MC_VM_FB_LOCATION, tmp);
 	WREG32(HDP_NONSURFACE_BASE, (rdev->mc.vram_start >> 8));
 	WREG32(HDP_NONSURFACE_INFO, (2 << 7) | (1 << 30));
 	WREG32(HDP_NONSURFACE_SIZE, 0x3FFFFFFF);
