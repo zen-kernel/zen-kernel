@@ -10,6 +10,7 @@
 
 /* Disable profiling for userspace code: */
 #define DISABLE_BRANCH_PROFILING
+#define __VVAR_ADDR 1
 
 #include <linux/kernel.h>
 #include <linux/posix-timers.h>

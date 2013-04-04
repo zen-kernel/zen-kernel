@@ -24,27 +24,34 @@
 /* The kernel linker script defines its own magic to put vvars in the
  * right place.
  */
-#define DECLARE_VVAR(offset, type, name) \
-	EMIT_VVAR(name, offset)
+#define DECLARE_VVAR(type, name) \
+	EMIT_VVAR(name, VVAR_OFFSET_ ## name)
+
+#elif defined(__VVAR_ADDR)
+
+#define DECLARE_VVAR(type, name)					\
+	type const * const vvaraddr_ ## name =				\
+	(void *)(VVAR_ADDRESS + (VVAR_OFFSET_ ## name));
 
 #else
 
-#define DECLARE_VVAR(offset, type, name)				\
-	static type const * const vvaraddr_ ## name =			\
-		(void *)(VVAR_ADDRESS + (offset));
+#define DECLARE_VVAR(type, name)					\
+	extern type const * const vvaraddr_ ## name;
 
 #define DEFINE_VVAR(type, name)						\
 	type name							\
-	__attribute__((section(".vvar_" #name), aligned(16)))
+	__attribute__((section(".vvar_" #name), aligned(16))) __visible
+#endif
 
 #define VVAR(name) (*vvaraddr_ ## name)
 
-#endif
-
 /* DECLARE_VVAR(offset, type, name) */
 
-DECLARE_VVAR(0, volatile unsigned long, jiffies)
-DECLARE_VVAR(16, int, vgetcpu_mode)
-DECLARE_VVAR(128, struct vsyscall_gtod_data, vsyscall_gtod_data)
+#define VVAR_OFFSET_jiffies 0
+DECLARE_VVAR(volatile unsigned long, jiffies)
+#define VVAR_OFFSET_vgetcpu_mode 16
+DECLARE_VVAR(int, vgetcpu_mode)
+#define VVAR_OFFSET_vsyscall_gtod_data 128
+DECLARE_VVAR(struct vsyscall_gtod_data, vsyscall_gtod_data)
 
 #undef DECLARE_VVAR

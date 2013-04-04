@@ -27,6 +27,7 @@
 #include <asm/mce.h>
 #include <asm/apic.h>
 #include <asm/nmi.h>
+#include <asm/traps.h>
 
 /* Update fake mce registers on current CPU. */
 static void inject_mce(struct mce *m)

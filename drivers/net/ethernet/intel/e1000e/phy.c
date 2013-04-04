@@ -1771,7 +1771,7 @@ static s32 e1000_wait_autoneg(struct e1000_hw *hw)
  *
  *  Polls the PHY status register for link, 'iterations' number of times.
  **/
-s32 e1000e_phy_has_link_generic(struct e1000_hw *hw, u32 iterations,
+__noclone s32 e1000e_phy_has_link_generic(struct e1000_hw *hw, u32 iterations,
 			       u32 usec_interval, bool *success)
 {
 	s32 ret_val = 0;

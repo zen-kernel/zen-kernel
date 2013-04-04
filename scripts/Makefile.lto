@@ -1,0 +1,77 @@
+#
+# Support for gcc link time optimization
+#
+
+DISABLE_LTO :=
+LTO_CFLAGS :=
+DISABLE_SLIM_LTO :=
+
+export DISABLE_LTO
+export LTO_CFLAGS
+export DISABLE_SLIM_LTO
+
+ifdef CONFIG_LTO
+ifeq ($(call cc-ifversion, -ge, 0407,y),y)
+ifneq ($(call cc-option,${LTO_CFLAGS},n),n)
+# We need HJ Lu's Linux binutils because mainline binutils does not
+# support mixing assembler and LTO code in the same ld -r object.
+# XXX check if the gcc plugin ld is the expected one too
+ifeq ($(call ld-ifversion,-ge,22710001,y),y)
+# should use -flto=jobserver, but we need a fix for http://gcc.gnu.org/PR50639
+        LTO_CFLAGS := -flto -fno-toplevel-reorder
+        LTO_FINAL_CFLAGS := -fuse-linker-plugin -flto=$(shell getconf _NPROCESSORS_ONLN) -fno-toplevel-reorder
+ifdef CONFIG_LTO_SLIM
+	# requires plugin ar passed and very recent HJ binutils
+        LTO_CFLAGS += -fno-fat-lto-objects
+endif
+	DISABLE_LTO := -fno-lto
+
+	LTO_FINAL_CFLAGS += ${LTO_CFLAGS} -fwhole-program  
+
+	# workaround for http://gcc.gnu.org/PR50602
+	LTO_FINAL_CFLAGS += $(filter -freg-struct-return,${KBUILD_CFLAGS})
+
+ifdef CONFIG_LTO_DEBUG
+	LTO_FINAL_CFLAGS += -dH -fdump-ipa-cgraph -fdump-ipa-inline-details # -Wl,-plugin-save-temps -save-temps
+	LTO_CFLAGS += 
+endif
+ifdef CONFIG_LTO_CP_CLONE
+	LTO_FINAL_CFLAGS += -fipa-cp-clone
+	LTO_CFLAGS += -fipa-cp-clone
+endif
+
+	DISABLE_SLIM_LTO := -ffat-lto-objects
+
+	# In principle gcc should pass through options in the object files,
+	# but it doesn't always work. So do it here manually
+	LTO_FINAL_CFLAGS += $(filter -g%,${KBUILD_CFLAGS})
+	LTO_FINAL_CFLAGS += $(filter -O%,${KBUILD_CFLAGS})
+	LTO_FINAL_CFLAGS += $(filter -f%,${KBUILD_CFLAGS})
+	#LTO_FINAL_CFLAGS += $(filter -fno-omit-frame-pointer, ${KBUILD_CFLAGS})
+	#LTO_FINAL_CFLAGS += $(filter -fno-strict-aliasing, ${KBUILD_CFLAGS})
+	#LTO_FINAL_CFLAGS += $(filter -fno-delete-null-pointer-checks, ${KBUILD_CFLAGS})
+	#LTO_FINAL_CFLAGS += $(filter -fno-strict-overflow, ${KBUILD_CFLAGS})
+	LTO_FINAL_CFLAGS += $(filter -m%,${KBUILD_CFLAGS})
+	LTO_FINAL_CFLAGS += $(filter -W%,${KBUILD_CFLAGS})
+
+	KBUILD_CFLAGS += ${LTO_CFLAGS}
+
+	#
+	# Don't pass all flags to the optimization stage
+	# We assume the compiler remembers those in the object files.
+	# Currently gcc is a little dumb in this and uses the flags
+	# from the first file, which implies that setting special
+	# flags on files does not work.
+	LDFINAL := ${CONFIG_SHELL} ${srctree}/scripts/gcc-ld \
+                  ${LTO_FINAL_CFLAGS}
+
+else
+        $(warning "WARNING: Too old linker version $(call ld-version) for kernel LTO. You need Linux binutils. CONFIG_LTO disabled.")
+endif
+else
+        $(warning "WARNING: Compiler/Linker does not support LTO/WHOPR with linker plugin. CONFIG_LTO disabled.")
+endif
+else
+        $(warning "WARNING: GCC $(call cc-version) too old for LTO/WHOPR. CONFIG_LTO disabled")
+endif
+endif

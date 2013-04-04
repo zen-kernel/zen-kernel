@@ -160,7 +160,7 @@ static int  scandone	__initdata = 0;
 static int  num		__initdata = 0;
 
 static unsigned char  rxl_tab[];
-static u32  crc32tab[];
+__visible u32  sbni_crc32tab[];
 
 /* A list of all installed devices, for removing the driver module. */
 static struct net_device  *sbni_cards[ SBNI_MAX_NUM_CARDS ];
@@ -1563,7 +1563,7 @@ calc_crc32( u32  crc,  u8  *p,  u32  len )
 		"xorl	%%ebx, %%ebx\n"
 		"movl	%2, %%esi\n" 
 		"movl	%3, %%ecx\n" 
-		"movl	$crc32tab, %%edi\n"
+		"movl	$sbni_crc32tab, %%edi\n"
 		"shrl	$2, %%ecx\n"
 		"jz	1f\n"
 
@@ -1645,7 +1645,7 @@ calc_crc32( u32  crc,  u8  *p,  u32  len )
 #endif	/* ASM_CRC */
 
 
-static u32  crc32tab[] __attribute__ ((aligned(8))) = {
+__visible u32  sbni_crc32tab[] __attribute__ ((aligned(8))) = {
 	0xD202EF8D,  0xA505DF1B,  0x3C0C8EA1,  0x4B0BBE37,
 	0xD56F2B94,  0xA2681B02,  0x3B614AB8,  0x4C667A2E,
 	0xDCD967BF,  0xABDE5729,  0x32D70693,  0x45D03605,

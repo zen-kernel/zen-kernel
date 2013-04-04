@@ -1278,6 +1278,70 @@ config CC_OPTIMIZE_FOR_SIZE
 
 	  If unsure, say N.
 
+config LTO_MENU
+	bool "Enable gcc link time optimizations"
+	# Only tested on X86 for now. For other architectures you likely
+	# have to fix some things first, like adding asmlinkages etc.
+	depends on X86
+	# lto does not support excluding flags for specific files
+	# right now. Can be removed if that is fixed.
+	depends on !FUNCTION_TRACER
+	help
+	  With this option gcc will do whole program optimizations for
+	  the whole kernel and module. This increases compile time, but can
+	  lead to better code. It allows gcc to inline functions between
+	  different files. It might also trigger bugs due to more
+	  aggressive optimization. It allows gcc to drop unused code.
+	  With this option gcc will also do some global checking over
+	  different source files.
+
+	  This requires a gcc 4.7 or later compiler and
+	  Linux binutils 2.21.51.0.3 or later.  It does not currently
+	  work with a FSF release of binutils or with gold.
+
+	  On larger configurations this may need more than 4GB of RAM.
+	  It will likely not work on those with a 32bit compiler. Also
+	  /tmp in tmpfs may lead to faster running out of RAM
+	  (in this case set the TMPDIR environment variable to a different
+	  directory directly on disk)
+
+	  When the toolchain support is not available this will (hopefully)
+	  be automatically disabled.
+
+	  For more information see Documentation/lto-build
+
+config LTO_DISABLE
+         bool "Disable LTO again"
+         depends on LTO_MENU
+         default n
+         help
+           This option is merely here so that allyesconfig or allmodconfig does
+           not enable LTO. If you want to actually use LTO do not enable.
+
+config LTO
+	bool
+	default y
+	depends on LTO_MENU && !LTO_DISABLE
+
+config LTO_DEBUG
+	bool "Enable LTO compile time debugging"
+	depends on LTO
+
+config LTO_CP_CLONE
+	bool "Allow aggressive cloning for constant specialization"
+	depends on LTO
+	help
+	  Allow the compiler to clone functions for specific arguments.
+	  Experimential. Will increase text size.
+
+config LTO_SLIM
+	#bool "Use slim lto"
+	def_bool y
+	depends on LTO
+	help
+	  Do not generate all code twice. The object files will only contain
+	  LTO information. This lowers build time.
+
 config SYSCTL
 	bool
 
@@ -1713,6 +1777,7 @@ config MODULE_FORCE_UNLOAD
 
 config MODVERSIONS
 	bool "Module versioning support"
+	depends on !LTO
 	help
 	  Usually, you have to use modules compiled with your kernel.
 	  Saying Y here makes it sometimes possible to use modules

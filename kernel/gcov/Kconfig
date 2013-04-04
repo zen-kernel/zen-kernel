@@ -2,7 +2,7 @@ menu "GCOV-based kernel profiling"
 
 config GCOV_KERNEL
 	bool "Enable gcov-based kernel profiling"
-	depends on DEBUG_FS
+	depends on DEBUG_FS && !LTO
 	select CONSTRUCTORS if !UML
 	default n
 	---help---

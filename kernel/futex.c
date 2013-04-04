@@ -2637,7 +2637,7 @@ void exit_robust_list(struct task_struct *curr)
 				   curr, pip);
 }
 
-long do_futex(u32 __user *uaddr, int op, u32 val, ktime_t *timeout,
+noinline long do_futex(u32 __user *uaddr, int op, u32 val, ktime_t *timeout,
 		u32 __user *uaddr2, u32 val2, u32 val3)
 {
 	int cmd = op & FUTEX_CMD_MASK;
