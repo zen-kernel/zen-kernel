@@ -375,7 +375,7 @@ void cpsw_tx_handler(void *token, int len, int status)
 	struct cpsw_priv	*priv = netdev_priv(ndev);
 
 	if (unlikely(netif_queue_stopped(ndev)))
-		netif_start_queue(ndev);
+		netif_wake_queue(ndev);
 	cpts_tx_timestamp(&priv->cpts, skb);
 	priv->stats.tx_packets++;
 	priv->stats.tx_bytes += len;
@@ -1111,7 +1111,7 @@ static int cpsw_probe_dt(struct cpsw_platform_data *data,
 		struct platform_device *mdio;
 
 		parp = of_get_property(slave_node, "phy_id", &lenp);
-		if ((parp == NULL) && (lenp != (sizeof(void *) * 2))) {
+		if ((parp == NULL) || (lenp != (sizeof(void *) * 2))) {
 			pr_err("Missing slave[%d] phy_id property\n", i);
 			ret = -EINVAL;
 			goto error_ret;
