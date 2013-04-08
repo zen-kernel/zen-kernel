@@ -239,6 +239,7 @@ static void rv770_agp_enable(struct radeon_device *rdev)
 static void rv770_mc_program(struct radeon_device *rdev)
 {
 	struct rv515_mc_save save;
+	u32 mc_vm_fb_location = RREG32(MC_VM_FB_LOCATION);
 	u32 tmp;
 	int i, j;
 
@@ -285,7 +286,8 @@ static void rv770_mc_program(struct radeon_device *rdev)
 	WREG32(MC_VM_SYSTEM_APERTURE_DEFAULT_ADDR, rdev->vram_scratch.gpu_addr >> 12);
 	tmp = ((rdev->mc.vram_end >> 24) & 0xFFFF) << 16;
 	tmp |= ((rdev->mc.vram_start >> 24) & 0xFFFF);
-	WREG32(MC_VM_FB_LOCATION, tmp);
+	if (tmp != mc_vm_fb_location)
+		WREG32(MC_VM_FB_LOCATION, tmp);
 	WREG32(HDP_NONSURFACE_BASE, (rdev->mc.vram_start >> 8));
 	WREG32(HDP_NONSURFACE_INFO, (2 << 7));
 	WREG32(HDP_NONSURFACE_SIZE, 0x3FFFFFFF);
@@ -836,7 +838,9 @@ void r700_vram_gtt_location(struct radeon_device *rdev, struct radeon_mc *mc)
 				mc->mc_vram_size >> 20, mc->vram_start,
 				mc->vram_end, mc->real_vram_size >> 20);
 	} else {
-		radeon_vram_location(rdev, &rdev->mc, 0);
+		u64 base = RREG32(MC_VM_FB_LOCATION) & 0xFFFF;
+		base <<= 24;
+		radeon_vram_location(rdev, &rdev->mc, base);
 		rdev->mc.gtt_base_align = 0;
 		radeon_gtt_location(rdev, mc);
 	}
