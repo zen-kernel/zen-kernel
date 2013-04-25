@@ -2451,6 +2451,15 @@ sub process {
 			 "missing space after $1 definition\n" . $herecurr);
 		}
 
+# check for __devinitdata with const or const without __devintconst
+# XXX should scan multiple lines and handle misplaced consts for pointers
+		if ($line =~ /const/ && $line =~ /__(dev)?initdata/) {
+		    ERROR("DEVINITCONST", "const init definition must use __devinitconst");
+		}
+		if ($line =~ /__(dev)?initconst/ && $line !~ /\Wconst\W/) {
+		    ERROR("DEVINITCONST", "__devinitconst must have have const definition");
+		}
+
 # check for spacing round square brackets; allowed:
 #  1. with a type on the left -- int [] a;
 #  2. at the beginning of a line for slice initialisers -- [0...10] = 5,

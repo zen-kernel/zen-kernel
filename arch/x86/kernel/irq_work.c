@@ -9,7 +9,7 @@
 #include <linux/hardirq.h>
 #include <asm/apic.h>
 
-void smp_irq_work_interrupt(struct pt_regs *regs)
+__visible void smp_irq_work_interrupt(struct pt_regs *regs)
 {
 	irq_enter();
 	ack_APIC_irq();

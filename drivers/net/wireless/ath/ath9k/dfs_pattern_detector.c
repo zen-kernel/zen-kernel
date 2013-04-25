@@ -56,7 +56,7 @@ struct radar_types {
 }
 
 /* radar types as defined by ETSI EN-301-893 v1.5.1 */
-static const struct radar_detector_specs etsi_radar_ref_types_v15[] = {
+__visible const struct radar_detector_specs etsi_radar_ref_types_v15[] = {
 	ETSI_PATTERN(0,  0,  1,  700,  700, 1, 18),
 	ETSI_PATTERN(1,  0,  5,  200, 1000, 1, 10),
 	ETSI_PATTERN(2,  0, 15,  200, 1600, 1, 15),

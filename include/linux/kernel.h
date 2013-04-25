@@ -211,7 +211,7 @@ extern void oops_enter(void);
 extern void oops_exit(void);
 void print_oops_end_marker(void);
 extern int oops_may_print(void);
-void do_exit(long error_code)
+asmlinkage void do_exit(long error_code)
 	__noreturn;
 void complete_and_exit(struct completion *, long)
 	__noreturn;

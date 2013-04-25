@@ -182,7 +182,7 @@ void show_stack(struct task_struct *task, unsigned long *sp)
 /*
  * The architecture-independent dump_stack generator
  */
-void dump_stack(void)
+asmlinkage void dump_stack(void)
 {
 	unsigned long bp;
 	unsigned long stack;

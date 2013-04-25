@@ -174,7 +174,7 @@ static inline void setup_log_buf(int early)
 }
 #endif
 
-extern void dump_stack(void) __cold;
+extern asmlinkage void dump_stack(void) __cold;
 
 #ifndef pr_fmt
 #define pr_fmt(fmt) fmt

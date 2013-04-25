@@ -67,8 +67,8 @@ static inline int wrmsrl_amd_safe(unsigned msr, unsigned long long val)
  *	performance at the same time..
  */
 
-extern void vide(void);
-__asm__(".align 4\nvide: ret");
+extern __visible void vide(void);
+__asm__(".globl vide\n\t.align 4\nvide: ret");
 
 static void __cpuinit init_amd_k5(struct cpuinfo_x86 *c)
 {
@@ -116,7 +116,7 @@ static void __cpuinit init_amd_k6(struct cpuinfo_x86 *c)
 		 */
 
 		n = K6_BUG_LOOP;
-		f_vide = vide;
+		asm("" : "=g" (f_vide) : "0" (vide));
 		rdtscl(d);
 		while (n--)
 			f_vide();

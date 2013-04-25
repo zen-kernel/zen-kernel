@@ -40,7 +40,7 @@ asmlinkage void sha1_transform_avx(u32 *digest, const char *data,
 				   unsigned int rounds);
 #endif
 
-static asmlinkage void (*sha1_transform_asm)(u32 *, const char *, unsigned int);
+static void (*sha1_transform_asm)(u32 *, const char *, unsigned int);
 
 
 static int sha1_ssse3_init(struct shash_desc *desc)

@@ -32,7 +32,7 @@ struct routing_scheme {
 	unsigned int cnt;
 };
 
-static const int routing_scheme0[] = {
+__visible const int pvrusb2_routing_scheme0[] = {
 	[PVR2_CVAL_INPUT_TV]        = MSP_INPUT_DEFAULT,
 	[PVR2_CVAL_INPUT_RADIO]     = MSP_INPUT(MSP_IN_SCART2,
 						MSP_IN_TUNER1,
@@ -49,8 +49,8 @@ static const int routing_scheme0[] = {
 };
 
 static const struct routing_scheme routing_def0 = {
-	.def = routing_scheme0,
-	.cnt = ARRAY_SIZE(routing_scheme0),
+	.def = pvrusb2_routing_scheme0,
+	.cnt = ARRAY_SIZE(pvrusb2_routing_scheme0),
 };
 
 static const struct routing_scheme *routing_schemes[] = {

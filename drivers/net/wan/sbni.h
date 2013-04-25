@@ -132,7 +132,7 @@ struct sbni_flags {
 /*
  * CRC-32 stuff
  */
-#define CRC32(c,crc) (crc32tab[((size_t)(crc) ^ (c)) & 0xff] ^ (((crc) >> 8) & 0x00FFFFFF))
+#define CRC32(c,crc) (sbni_crc32tab[((size_t)(crc) ^ (c)) & 0xff] ^ (((crc) >> 8) & 0x00FFFFFF))
       /* CRC generator 0xEDB88320 */
       /* CRC remainder 0x2144DF1C */
       /* CRC initial value 0x00000000 */

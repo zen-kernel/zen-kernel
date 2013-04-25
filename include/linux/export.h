@@ -36,7 +36,7 @@ extern struct module __this_module;
 /* Mark the CRC weak since genksyms apparently decides not to
  * generate a checksums for some symbols */
 #define __CRC_SYMBOL(sym, sec)					\
-	extern void *__crc_##sym __attribute__((weak));		\
+	extern __visible void *__crc_##sym __attribute__((weak));		\
 	static const unsigned long __kcrctab_##sym		\
 	__used							\
 	__attribute__((section("___kcrctab" sec "+" #sym), unused))	\
@@ -47,12 +47,12 @@ extern struct module __this_module;
 
 /* For every exported symbol, place a struct in the __ksymtab section */
 #define __EXPORT_SYMBOL(sym, sec)				\
-	extern typeof(sym) sym;					\
+	extern typeof(sym) sym __visible;			\
 	__CRC_SYMBOL(sym, sec)					\
 	static const char __kstrtab_##sym[]			\
 	__attribute__((section("__ksymtab_strings"), aligned(1))) \
 	= MODULE_SYMBOL_PREFIX #sym;				\
-	static const struct kernel_symbol __ksymtab_##sym	\
+	__visible const struct kernel_symbol __ksymtab_##sym	\
 	__used							\
 	__attribute__((section("___ksymtab" sec "+" #sym), unused))	\
 	= { (unsigned long)&sym, __kstrtab_##sym }
@@ -78,11 +78,13 @@ extern struct module __this_module;
 
 #else /* !CONFIG_MODULES... */
 
-#define EXPORT_SYMBOL(sym)
-#define EXPORT_SYMBOL_GPL(sym)
-#define EXPORT_SYMBOL_GPL_FUTURE(sym)
-#define EXPORT_UNUSED_SYMBOL(sym)
-#define EXPORT_UNUSED_SYMBOL_GPL(sym)
+/* Even without modules keep the __visible side effect */
+
+#define EXPORT_SYMBOL(sym) extern typeof(sym) sym __visible
+#define EXPORT_SYMBOL_GPL(sym) extern typeof(sym) sym __visible
+#define EXPORT_SYMBOL_GPL_FUTURE(sym) extern typeof(sym) sym __visible
+#define EXPORT_UNUSED_SYMBOL(sym) extern typeof(sym) sym __visible
+#define EXPORT_UNUSED_SYMBOL_GPL(sym) extern typeof(sym) sym __visible
 
 #endif /* CONFIG_MODULES */
 

@@ -25,9 +25,14 @@ static inline unsigned int __arch_hweight32(unsigned int w)
 {
 	unsigned int res = 0;
 
+#ifdef CONFIG_LTO
+	res  = __sw_hweight32(w);
+#else
+
 	asm (ALTERNATIVE("call __sw_hweight32", POPCNT32, X86_FEATURE_POPCNT)
 		     : "="REG_OUT (res)
 		     : REG_IN (w));
+#endif
 
 	return res;
 }
@@ -46,6 +51,9 @@ static inline unsigned long __arch_hweight64(__u64 w)
 {
 	unsigned long res = 0;
 
+#ifdef CONFIG_LTO
+	res = __sw_hweight64(w);
+#else
 #ifdef CONFIG_X86_32
 	return  __arch_hweight32((u32)w) +
 		__arch_hweight32((u32)(w >> 32));
@@ -54,6 +62,7 @@ static inline unsigned long __arch_hweight64(__u64 w)
 		     : "="REG_OUT (res)
 		     : REG_IN (w));
 #endif /* CONFIG_X86_32 */
+#endif
 
 	return res;
 }
