@@ -5,6 +5,10 @@ config BTRFS_FS
 	select ZLIB_DEFLATE
 	select LZO_COMPRESS
 	select LZO_DECOMPRESS
+	select LZ4_COMPRESS
+	select LZ4_DECOMPRESS
+	select LZ4HC_COMPRESS
+	select LZ4HC_DECOMPRESS
 	select RAID6_PQ
 	select XOR_BLOCKS
 
