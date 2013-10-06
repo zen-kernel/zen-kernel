@@ -1,0 +1,33 @@
+config REISER4_FS
+	tristate "Reiser4 (EXPERIMENTAL)"
+	select ZLIB_INFLATE
+	select ZLIB_DEFLATE
+	select LZO_COMPRESS
+	select LZO_DECOMPRESS
+	select CRYPTO
+	help
+	  Reiser4 is a filesystem that performs all filesystem operations
+	  as atomic transactions, which means that it either performs a
+	  write, or it does not, and in the event of a crash it does not
+	  partially perform it or corrupt it.
+
+	  It stores files in dancing trees, which are like balanced trees but
+	  faster.  It packs small files together so that they share blocks
+	  without wasting space.  This means you can use it to store really
+	  small files.  It also means that it saves you disk space.  It avoids
+	  hassling you with anachronisms like having a maximum number of
+	  inodes, and wasting space if you use less than that number.
+
+	  Reiser4 is a distinct filesystem type from reiserfs (V3).
+	  It's therefore not possible to use reiserfs file systems
+	  with reiser4.
+
+	  To learn more about reiser4, go to http://www.namesys.com
+
+config REISER4_DEBUG
+	bool "Enable reiser4 debug mode"
+	depends on REISER4_FS
+	help
+	  Don't use this unless you are debugging reiser4.
+
+	  If unsure, say N.

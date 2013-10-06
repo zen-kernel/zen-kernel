@@ -245,7 +245,7 @@ struct iattr {
  */
 #include <linux/quota.h>
 
-/** 
+/**
  * enum positive_aop_returns - aop return codes with specific semantics
  *
  * @AOP_WRITEPAGE_ACTIVATE: Informs the caller that page writeback has
@@ -255,7 +255,7 @@ struct iattr {
  * 			    be a candidate for writeback again in the near
  * 			    future.  Other callers must be careful to unlock
  * 			    the page if they get this return.  Returned by
- * 			    writepage(); 
+ * 			    writepage();
  *
  * @AOP_TRUNCATED_PAGE: The AOP method that was handed a locked page has
  *  			unlocked it and the page might have been truncated.
@@ -288,6 +288,8 @@ enum positive_aop_returns {
 struct page;
 struct address_space;
 struct writeback_control;
+struct wb_writeback_work;
+struct bdi_writeback;
 
 struct iov_iter {
 	const struct iovec *iov;
@@ -1617,6 +1619,14 @@ struct super_operations {
 	int (*remount_fs) (struct super_block *, int *, char *);
 	void (*umount_begin) (struct super_block *);
 
+	long (*writeback_inodes)(struct super_block *sb,
+				 struct bdi_writeback *wb,
+				 struct writeback_control *wbc,
+				 struct wb_writeback_work *work,
+				 bool flush_all);
+	void (*sync_inodes) (struct super_block *sb,
+				struct writeback_control *wbc);
+
 	int (*show_options)(struct seq_file *, struct dentry *);
 	int (*show_devname)(struct seq_file *, struct dentry *);
 	int (*show_path)(struct seq_file *, struct dentry *);
@@ -2196,6 +2206,13 @@ extern int invalidate_inode_pages2(struct address_space *mapping);
 extern int invalidate_inode_pages2_range(struct address_space *mapping,
 					 pgoff_t start, pgoff_t end);
 extern int write_inode_now(struct inode *, int);
+extern void writeback_skip_sb_inodes(struct super_block *sb,
+				     struct bdi_writeback *wb);
+extern long generic_writeback_sb_inodes(struct super_block *sb,
+					struct bdi_writeback *wb,
+					struct writeback_control *wbc,
+					struct wb_writeback_work *work,
+					bool flush_all);
 extern int filemap_fdatawrite(struct address_space *);
 extern int filemap_flush(struct address_space *);
 extern int filemap_fdatawait(struct address_space *);
@@ -2312,7 +2329,7 @@ extern int do_pipe_flags(int *, int);
 extern int kernel_read(struct file *, loff_t, char *, unsigned long);
 extern ssize_t kernel_write(struct file *, const char *, size_t, loff_t);
 extern struct file * open_exec(const char *);
- 
+
 /* fs/dcache.c -- generic fs support functions */
 extern int is_subdir(struct dentry *, struct dentry *);
 extern int path_is_under(struct path *, struct path *);
@@ -2320,6 +2337,8 @@ extern int path_is_under(struct path *, struct path *);
 #include <linux/err.h>
 
 /* needed for stackable file system support */
+extern loff_t default_llseek_unlocked(struct file *file, loff_t offset,
+				      int whence);
 extern loff_t default_llseek(struct file *file, loff_t offset, int whence);
 
 extern loff_t vfs_llseek(struct file *file, loff_t offset, int whence);
