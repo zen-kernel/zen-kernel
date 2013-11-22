@@ -29,6 +29,7 @@ o  module-init-tools      0.9.10                  # depmod -V
 o  e2fsprogs              1.41.4                  # e2fsck -V
 o  jfsutils               1.1.3                   # fsck.jfs -V
 o  reiserfsprogs          3.6.3                   # reiserfsck -V
+o  reiser4progs           1.0.7                   # fsck.reiser4 -V
 o  xfsprogs               2.6.0                   # xfs_db -V
 o  squashfs-tools         4.0                     # mksquashfs -version
 o  btrfs-progs            0.18                    # btrfsck
@@ -149,6 +150,13 @@ The reiserfsprogs package should be used for reiserfs-3.6.x
 (Linux kernels 2.4.x). It is a combined package and contains working
 versions of mkreiserfs, resize_reiserfs, debugreiserfs and
 reiserfsck. These utils work on both i386 and alpha platforms.
+
+Reiser4progs
+------------
+
+The reiser4progs package contains utilities for the reiser4 file system.
+Detailed instructions are provided in the README file located at:
+<ftp://ftp.namesys.com/pub/reiser4progs/README>.
 
 Xfsprogs
 --------
@@ -337,6 +345,10 @@ o  <http://jfs.sourceforge.net/>
 Reiserfsprogs
 -------------
 o  <http://www.kernel.org/pub/linux/utils/fs/reiserfs/>
+
+Reiser4progs
+------------
+o  <ftp://ftp.namesys.com/pub/reiser4progs/>
 
 Xfsprogs
 --------

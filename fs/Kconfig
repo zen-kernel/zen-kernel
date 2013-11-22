@@ -31,6 +31,7 @@ config FS_MBCACHE
 	default y if EXT4_FS=y
 	default m if EXT2_FS_XATTR || EXT3_FS_XATTR || EXT4_FS
 
+source "fs/reiser4/Kconfig"
 source "fs/reiserfs/Kconfig"
 source "fs/jfs/Kconfig"
 

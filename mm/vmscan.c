@@ -2336,6 +2336,9 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 	struct zone *zone;
 	unsigned long writeback_threshold;
 	bool aborted_reclaim;
+	void *save = current->journal_info; /* save journal info */
+
+	current->journal_info = NULL;
 
 	delayacct_freepages_start();
 
@@ -2398,6 +2401,8 @@ static unsigned long do_try_to_free_pages(struct zonelist *zonelist,
 
 out:
 	delayacct_freepages_end();
+	/* restore journal info */
+	current->journal_info = save;
 
 	if (sc->nr_reclaimed)
 		return sc->nr_reclaimed;
