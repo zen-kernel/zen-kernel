@@ -2410,6 +2410,10 @@ int open_ctree(struct super_block *sb,
 	if (tree_root->fs_info->compress_type == BTRFS_COMPRESS_LZO)
 		features |= BTRFS_FEATURE_INCOMPAT_COMPRESS_LZO;
 
+	if (tree_root->fs_info->compress_type == BTRFS_COMPRESS_LZ4 ||
+	    tree_root->fs_info->compress_type == BTRFS_COMPRESS_LZ4HC)
+		features |= BTRFS_FEATURE_INCOMPAT_COMPRESS_LZ4;
+
 	if (features & BTRFS_FEATURE_INCOMPAT_SKINNY_METADATA)
 		printk(KERN_ERR "btrfs: has skinny extents\n");
 
