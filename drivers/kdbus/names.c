@@ -820,8 +820,8 @@ int kdbus_cmd_name_list(struct kdbus_name_registry *reg,
 	if (IS_ERR(cmd_list))
 		return PTR_ERR(cmd_list);
 
-	mutex_lock(&conn->ep->bus->lock);
 	mutex_lock(&reg->entries_lock);
+	mutex_lock(&conn->ep->bus->lock);
 
 	/* size of header */
 	size = sizeof(struct kdbus_name_list);
@@ -858,8 +858,8 @@ exit_pool_free:
 	if (ret < 0)
 		kdbus_pool_free_range(conn->pool, off);
 exit_unlock:
-	mutex_unlock(&reg->entries_lock);
 	mutex_unlock(&conn->ep->bus->lock);
+	mutex_unlock(&reg->entries_lock);
 	kfree(cmd_list);
 
 	return ret;

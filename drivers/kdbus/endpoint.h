@@ -13,7 +13,8 @@
 #ifndef __KDBUS_EP_H
 #define __KDBUS_EP_H
 
-#include "internal.h"
+#include "defaults.h"
+#include "util.h"
 
 /*
  * struct kdbus_endpoint - enpoint to access a bus

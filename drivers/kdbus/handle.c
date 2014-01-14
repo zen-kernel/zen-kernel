@@ -321,14 +321,14 @@ static long kdbus_handle_ioctl_ep(struct file *file, unsigned int cmd,
 	case KDBUS_CMD_EP_MAKE: {
 		umode_t mode = 0;
 		kgid_t gid = KGIDT_INIT(0);
-		char *n;
+		char *name;
 
 		if (!KDBUS_IS_ALIGNED8((uintptr_t)buf)) {
 			ret = -EFAULT;
 			break;
 		}
 
-		ret = kdbus_ep_make_user(buf, &make, &n);
+		ret = kdbus_ep_make_user(buf, &make, &name);
 		if (ret < 0)
 			break;
 
@@ -344,8 +344,8 @@ static long kdbus_handle_ioctl_ep(struct file *file, unsigned int cmd,
 			gid = current_fsgid();
 		}
 
-		ret = kdbus_ep_new(handle->ep->bus, handle->ep->bus->ns, n,
-				   mode, current_fsuid(), gid,
+		ret = kdbus_ep_new(handle->ep->bus, handle->ep->bus->ns,
+				   name, mode, current_fsuid(), gid,
 				   make->flags & KDBUS_MAKE_POLICY_OPEN);
 
 		handle->type = KDBUS_HANDLE_EP_OWNER;
@@ -438,6 +438,12 @@ static long kdbus_handle_ioctl_ep_connected(struct file *file, unsigned int cmd,
 	case KDBUS_CMD_EP_POLICY_SET:
 		/* upload a policy for this endpoint */
 		if (!KDBUS_IS_ALIGNED8((uintptr_t)buf)) {
+			ret = -EFAULT;
+			break;
+		}
+
+		/* mangling policy is a privileged operation */
+		if (!kdbus_bus_uid_is_privileged(bus)) {
 			ret = -EFAULT;
 			break;
 		}
@@ -553,9 +559,7 @@ static long kdbus_handle_ioctl_ep_connected(struct file *file, unsigned int cmd,
 			break;
 		}
 
-		mutex_lock(&conn->lock);
 		ret = kdbus_pool_free_range(conn->pool, off);
-		mutex_unlock(&conn->lock);
 		break;
 	}
 

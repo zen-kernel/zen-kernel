@@ -253,10 +253,8 @@ int kdbus_ep_make_user(void __user *buf,
 		return -EMSGSIZE;
 
 	m = memdup_user(buf, size);
-	if (IS_ERR(m)) {
-		ret = PTR_ERR(m);
-		goto exit;
-	}
+	if (IS_ERR(m))
+		return PTR_ERR(m);
 
 	KDBUS_ITEM_FOREACH(item, m, items) {
 		if (!KDBUS_ITEM_VALID(item, m)) {
@@ -287,6 +285,10 @@ int kdbus_ep_make_user(void __user *buf,
 				ret = -EINVAL;
 				goto exit;
 			}
+
+			ret = kdbus_devname_valid(item->str);
+			if (ret < 0)
+				goto exit;
 
 			n = item->str;
 			continue;

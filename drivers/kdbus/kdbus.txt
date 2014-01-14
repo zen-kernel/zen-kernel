@@ -254,7 +254,7 @@ which owns that well-known name.
 ===============================================================================
 Message Format, Content, Exchange
 ===============================================================================
-Messages consist of fixed-size header followed directly be a list of
+Messages consist of fixed-size header followed directly by a list of
 variable-sized data records. The overall message size is specified in the
 header of the message. The chain of data records can contain well-defined
 message metadata fields, raw data, references to data, or file descriptors.

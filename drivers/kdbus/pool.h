@@ -20,7 +20,7 @@ void kdbus_pool_free(struct kdbus_pool *pool);
 
 int kdbus_pool_alloc_range(struct kdbus_pool *pool, size_t size, size_t *off);
 int kdbus_pool_free_range(struct kdbus_pool *pool, size_t off);
-size_t kdbus_pool_remain(const struct kdbus_pool *pool);
+size_t kdbus_pool_remain(struct kdbus_pool *pool);
 ssize_t kdbus_pool_write(const struct kdbus_pool *pool, size_t off,
 			 void *data, size_t len);
 ssize_t kdbus_pool_write_user(const struct kdbus_pool *pool, size_t off,

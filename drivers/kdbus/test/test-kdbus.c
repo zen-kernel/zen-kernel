@@ -333,31 +333,45 @@ static int check_busmake(struct kdbus_check_env *env)
 
 	bus_make.n_type = KDBUS_ITEM_MAKE_NAME;
 
-#if 0
-	/* check some illegal names */
+	/* missing uid prefix */
 	snprintf(bus_make.name, sizeof(bus_make.name), "foo");
 	bus_make.n_size = KDBUS_ITEM_HEADER_SIZE + strlen(bus_make.name) + 1;
 	bus_make.head.size = sizeof(struct kdbus_cmd_make) + bus_make.n_size;
 	ret = ioctl(env->control_fd, KDBUS_CMD_BUS_MAKE, &bus_make);
 	ASSERT_RETURN(ret == -1 && errno == EINVAL);
-#endif
+
+	/* non alphanumeric character */
+	snprintf(bus_make.name, sizeof(bus_make.name), "%u-blah@123", getuid());
+	bus_make.n_size = KDBUS_ITEM_HEADER_SIZE + strlen(bus_make.name) + 1;
+	bus_make.head.size = sizeof(struct kdbus_cmd_make) +
+			     sizeof(uint64_t) * 3 +
+			     bus_make.n_size;
+	ret = ioctl(env->control_fd, KDBUS_CMD_BUS_MAKE, &bus_make);
+	ASSERT_RETURN(ret == -1 && errno == EINVAL);
+
+	/* '-' at the end */
+	snprintf(bus_make.name, sizeof(bus_make.name), "%u-blah-", getuid());
+	bus_make.n_size = KDBUS_ITEM_HEADER_SIZE + strlen(bus_make.name) + 1;
+	bus_make.head.size = sizeof(struct kdbus_cmd_make) +
+			     sizeof(uint64_t) * 3 +
+			     bus_make.n_size;
+	ret = ioctl(env->control_fd, KDBUS_CMD_BUS_MAKE, &bus_make);
+	ASSERT_RETURN(ret == -1 && errno == EINVAL);
 
 	/* create a new bus */
-	snprintf(bus_make.name, sizeof(bus_make.name), "%u-blah", getuid());
+	snprintf(bus_make.name, sizeof(bus_make.name), "%u-blah-1", getuid());
 	bus_make.n_size = KDBUS_ITEM_HEADER_SIZE + strlen(bus_make.name) + 1;
 	bus_make.head.size = sizeof(struct kdbus_cmd_make) +
 			     sizeof(uint64_t) * 3 +
 			     bus_make.n_size;
 	ret = ioctl(env->control_fd, KDBUS_CMD_BUS_MAKE, &bus_make);
 	ASSERT_RETURN(ret == 0);
-	snprintf(s, sizeof(s), "/dev/" KBUILD_MODNAME "/%u-blah/bus", getuid());
+	snprintf(s, sizeof(s), "/dev/" KBUILD_MODNAME "/%u-blah-1/bus", getuid());
 	ASSERT_RETURN(access(s, F_OK) == 0);
 
-#if 0
 	/* can't use the same fd for bus make twice */
 	ret = ioctl(env->control_fd, KDBUS_CMD_BUS_MAKE, &bus_make);
 	ASSERT_RETURN(ret == -1 && errno == EBADFD);
-#endif
 
 	return CHECK_OK;
 }
@@ -1184,7 +1198,8 @@ static int arg_loop = 0;
 
 int main(int argc, char *argv[])
 {
-	int c, ret;
+	int c;
+	int r, ret = 0;
 
 	enum {
 		ARG_VERSION = 0x100,
@@ -1193,13 +1208,12 @@ int main(int argc, char *argv[])
 	static const struct option options[] = {
 		{ "count",	required_argument,	NULL, 'c'	},
 		{ "loop",	no_argument,		NULL, 'l'	},
-		{ NULL,		0,			NULL, 0		}
+		{}
 	};
 
 	while ((c = getopt_long(argc, argv, "c:l", options, NULL)) >= 0) {
 
 		switch (c) {
-
 		case 'c':
 			arg_count = atoi(optarg);
 			break;
@@ -1210,7 +1224,7 @@ int main(int argc, char *argv[])
 
 		default:
 			printf("Unknown option code %c", c);
-			return -EINVAL;
+			return EXIT_FAILURE;
 		}
 	}
 
@@ -1218,8 +1232,11 @@ int main(int argc, char *argv[])
 		for(;;)
 			run_tests();
 
-	for (c = 0; c < arg_count; c++)
-		ret = run_tests();
+	for (c = 0; c < arg_count; c++) {
+		r = run_tests();
+		if (r < 0)
+			ret = r;
+	}
 
-	return ret > 0 ? EXIT_FAILURE : EXIT_SUCCESS;
+	return ret;
 }

@@ -13,8 +13,6 @@
 #ifndef __KDBUS_MEMFD_H
 #define __KDBUS_MEMFD_H
 
-#include "internal.h"
-
 bool kdbus_is_memfd(const struct file *fp);
 bool kdbus_is_memfd_sealed(const struct file *fp);
 u64 kdbus_memfd_size(const struct file *fp);

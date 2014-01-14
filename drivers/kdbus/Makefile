@@ -12,9 +12,10 @@ kdbus$(EXT)-y := \
 	notify.o \
 	namespace.o \
 	policy.o \
-	pool.o
+	pool.o \
+	util.o
 
-obj-$(CONFIG_KDBUS) += kdbus$(EXT).o
+obj-m += kdbus$(EXT).o
 
 KERNELDIR 		?= /lib/modules/$(shell uname -r)/build
 PWD			:= $(shell pwd)
@@ -39,7 +40,7 @@ check:
 install: module
 	mkdir -p /lib/modules/$(shell uname -r)/kernel/drivers/kdbus$(EXT)/
 	cp -f kdbus$(EXT).ko /lib/modules/$(shell uname -r)/kernel/drivers/kdbus$(EXT)/
-	depmod $(shell name -r)
+	depmod $(shell uname -r)
 
 uninstall:
 	rm -f /lib/modules/$(shell uname -r)/kernel/drivers/kdbus/kdbus$(EXT).ko

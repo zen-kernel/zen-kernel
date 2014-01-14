@@ -25,7 +25,7 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 
-#include "internal.h"
+#include "util.h"
 #include "pool.h"
 
 /**
@@ -33,6 +33,7 @@
  * @f:			The backing shmem file
  * @size:		The size of the file
  * @busy:		The currently used size
+ * @lock		Pool data lock
  * @slices:		All slices sorted by address
  * @slices_busy:	Tree of allocated slices
  * @slices_free:	Tree of free slices
@@ -53,6 +54,7 @@ struct kdbus_pool {
 	struct file *f;
 	size_t size;
 	size_t busy;
+	struct mutex lock;
 
 	struct list_head slices;
 	struct rb_root slices_busy;
@@ -318,6 +320,7 @@ int kdbus_pool_new(struct kdbus_pool **pool, size_t size)
 	p->busy = 0;
 	p->slices_free = RB_ROOT;
 	p->slices_busy = RB_ROOT;
+	mutex_init(&p->lock);
 
 	INIT_LIST_HEAD(&p->slices);
 	list_add(&s->entry, &p->slices);
@@ -359,9 +362,15 @@ void kdbus_pool_free(struct kdbus_pool *pool)
  *
  * Returns: the number of unallocated bytes in the pool
  */
-size_t kdbus_pool_remain(const struct kdbus_pool *pool)
+size_t kdbus_pool_remain(struct kdbus_pool *pool)
 {
-	return pool->size - pool->busy;
+	size_t size;
+
+	mutex_lock(&pool->lock);
+	size =  pool->size - pool->busy;
+	mutex_unlock(&pool->lock);
+
+	return size;
 }
 
 /**
@@ -381,7 +390,9 @@ int kdbus_pool_alloc_range(struct kdbus_pool *pool, size_t size, size_t *off)
 	struct kdbus_slice *s;
 	int ret;
 
+	mutex_lock(&pool->lock);
 	ret = kdbus_pool_alloc_slice(pool, size, &s);
+	mutex_unlock(&pool->lock);
 	if (ret < 0)
 		return ret;
 
@@ -402,19 +413,28 @@ int kdbus_pool_alloc_range(struct kdbus_pool *pool, size_t size, size_t *off)
 int kdbus_pool_free_range(struct kdbus_pool *pool, size_t off)
 {
 	struct kdbus_slice *slice;
+	int ret = 0;
 
 	if (!pool)
 		return 0;
 
-	if (off >= pool->size)
-		return -EINVAL;
+	mutex_lock(&pool->lock);
+	if (off >= pool->size) {
+		ret = -EINVAL;
+		goto exit_unlock;
+	}
 
 	slice = kdbus_pool_find_slice(pool, off);
-	if (!slice)
-		return -ENXIO;
+	if (!slice) {
+		ret = -ENXIO;
+		goto exit_unlock;
+	}
 
 	kdbus_pool_free_slice(pool, slice);
-	return 0;
+
+exit_unlock:
+	mutex_unlock(&pool->lock);
+	return ret;
 }
 
 /* copy data from a file to ia page in the receiver's pool */

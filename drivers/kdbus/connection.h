@@ -13,7 +13,8 @@
 #ifndef __KDBUS_CONNECTION_H
 #define __KDBUS_CONNECTION_H
 
-#include "internal.h"
+#include "defaults.h"
+#include "util.h"
 #include "metadata.h"
 #include "pool.h"
 

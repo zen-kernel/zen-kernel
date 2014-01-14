@@ -13,7 +13,7 @@
 #ifndef __KDBUS_MESSAGE_H
 #define __KDBUS_MESSAGE_H
 
-#include "internal.h"
+#include "util.h"
 #include "metadata.h"
 
 /**

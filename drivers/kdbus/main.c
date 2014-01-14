@@ -18,7 +18,8 @@
 #include <linux/module.h>
 #include <linux/sched.h>
 
-#include "internal.h"
+#include "defaults.h"
+#include "util.h"
 #include "namespace.h"
 
 static int __init kdbus_init(void)

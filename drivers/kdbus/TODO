@@ -1,9 +1,23 @@
 Features:
-  - whitelist chars in bus names, they show up in /dev
+  - check guards for all privileged-only operations:
+     - activation
+     - monitor
+     - impersonation
+     - name register
+     - $UID prefix
+     - ns creation
+     - ep prefixing
+     - policy, policy for custom endpoints
+
+  - attach seclabel to names?
+
+  - also attach queued names to metadata?
 
   - account and limit number of messages a connection can have in-flight
     for another connection, like a connection can have a maximum of 100
-    messages in-flight, but only 10 of them to the same connection
+    messages in-flight, but only 10 of them for the same connection
+
+  - limit the number of buses an ordinary user can create
 
   - allow to update the metadata subscription bit mask
 

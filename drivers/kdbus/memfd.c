@@ -25,6 +25,7 @@
 #include <linux/uaccess.h>
 
 #include "memfd.h"
+#include "util.h"
 
 static const struct file_operations kdbus_memfd_fops;
 

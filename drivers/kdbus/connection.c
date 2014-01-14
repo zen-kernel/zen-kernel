@@ -1470,9 +1470,16 @@ int kdbus_conn_new(struct kdbus_ep *ep,
 
 	BUG_ON(*c);
 
+	/* can't be activator and monitor at the same time */
 	if (hello->conn_flags & KDBUS_HELLO_ACTIVATOR &&
 	    hello->conn_flags & KDBUS_HELLO_MONITOR)
 		return -EINVAL;
+
+	/* only privileged connections can activate and monitor */
+	if ((hello->conn_flags & KDBUS_HELLO_ACTIVATOR ||
+	     hello->conn_flags & KDBUS_HELLO_MONITOR) &&
+		!kdbus_bus_uid_is_privileged(bus))
+		return -EPERM;
 
 	KDBUS_ITEM_FOREACH(item, hello, items) {
 		switch (item->type) {
@@ -1617,7 +1624,6 @@ exit_unref:
 	kdbus_conn_unref(conn);
 	return ret;
 }
-
 
 /**
  * kdbus_conn_has_name() - check if a connection owns a name

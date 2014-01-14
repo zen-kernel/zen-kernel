@@ -16,7 +16,7 @@
 #include <linux/hashtable.h>
 #include <linux/idr.h>
 
-#include "internal.h"
+#include "util.h"
 
 /**
  * struct kdbus_bus - bus in a namespace

@@ -20,9 +20,10 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 
+#include "defaults.h"
+#include "util.h"
 #include "bus.h"
 #include "handle.h"
-#include "internal.h"
 #include "namespace.h"
 
 /* map of majors to namespaces */
@@ -364,6 +365,10 @@ int kdbus_ns_make_user(void __user *buf,
 				ret = -EINVAL;
 				goto exit;
 			}
+
+			ret = kdbus_devname_valid(item->str);
+			if (ret < 0)
+				goto exit;
 
 			n = item->str;
 			continue;
