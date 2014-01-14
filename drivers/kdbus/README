@@ -1,0 +1,17 @@
+Linux kernel D-Bus implementation
+
+See kdbus.txt in this repository for kernel-side details.
+
+The userspace side is developed in systemd:
+  http://cgit.freedesktop.org/systemd/systemd/tree/src/libsystemd-bus
+
+Development repos:
+  https://github.com/gregkh/kdbus
+  https://code.google.com/p/d-bus/
+
+See also:
+  https://review.tizen.org/git/?p=platform/upstream/glib.git;a=shortlog;h=refs/heads/kdbus-dev
+  https://review.tizen.org/git/?p=platform/upstream/dbus.git;a=shortlog;h=refs/heads/kdbus-dev
+
+The code is LGPLv2+. We need to make sure, that we are able to freely
+share and copy code with the userspace library, which has the same licence.
