@@ -1,0 +1,22 @@
+Features:
+  - whitelist chars in bus names, they show up in /dev
+
+  - account and limit number of messages a connection can have in-flight
+    for another connection, like a connection can have a maximum of 100
+    messages in-flight, but only 10 of them to the same connection
+
+  - allow to update the metadata subscription bit mask
+
+  - support the creation of anonymous buses
+
+  - limit the number of connections per uid
+
+  - actually return compatible/incompatible flags to users
+
+External API:
+  - rules for:
+      -unknown items to ignore in userspace lib?
+      -unknown items to ignore if SEND sees them?
+
+  - review all different structures of custom ioctls and items if they
+    can be further unified

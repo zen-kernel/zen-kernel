@@ -1,0 +1,17 @@
+*.cmd
+*.ko
+*.mod.c
+modules.order
+Module.symvers
+*.o
+*.swp
+.tmp_versions
+tags
+test/test-kdbus
+test/test-kdbus-daemon
+test/test-kdbus-namespace
+test/test-kdbus-fuzz
+test/test-kdbus-benchmark
+test/test-kdbus-monitor
+test/test-kdbus-activator
+test/test-kdbus-chat
