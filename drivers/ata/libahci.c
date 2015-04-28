@@ -738,6 +738,7 @@ static int ahci_set_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 			ahci_set_aggressive_devslp(ap, true);
 			break;
 		case ATA_LPM_FIRMWARE_DEFAULTS:
+		case ATA_LPM_MED_POWER:
 			ahci_set_aggressive_devslp(ap, ppriv->init_devslp);
 			break;
 		default:

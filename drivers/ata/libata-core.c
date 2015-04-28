@@ -3666,10 +3666,6 @@ int sata_link_scr_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 		}
 		break;
 	case ATA_LPM_MED_POWER:
-		/* allow LPM to PARTIAL */
-		scontrol &= ~(0x1 << 8);
-		scontrol |= (0x6 << 8);
-		break;
 	case ATA_LPM_MIN_POWER:
 		if (ata_link_nr_enabled(link) > 0)
 			/* no restrictions on LPM transitions */
