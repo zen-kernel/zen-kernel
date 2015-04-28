@@ -2021,6 +2021,9 @@ retry:
 		}
 	}
 
+	if (id[79] & SATA_DIPM)
+		dev->init_dipm = true;
+
 	*p_class = class;
 
 	return 0;
@@ -5559,11 +5562,11 @@ void ata_link_init(struct ata_port *ap, struct ata_link *link, int pmp)
 }
 
 /**
- *	sata_link_init_spd - Initialize link->sata_spd_limit
- *	@link: Link to configure sata_spd_limit for
+ *	sata_link_init_config - Initialize link->sata_spd_limit and init_lpm
+ *	@link: Link to configure sata_spd_limit and init_lpm for
  *
- *	Initialize @link->[hw_]sata_spd_limit to the currently
- *	configured value.
+ *	Initialize @link->[hw_]sata_spd_limit and @link->init_lpm to the
+ *	currently configured value.
  *
  *	LOCKING:
  *	Kernel thread context (may sleep).
@@ -5571,7 +5574,7 @@ void ata_link_init(struct ata_port *ap, struct ata_link *link, int pmp)
  *	RETURNS:
  *	0 on success, -errno on failure.
  */
-int sata_link_init_spd(struct ata_link *link)
+int sata_link_init_config(struct ata_link *link)
 {
 	u8 spd;
 	int rc;
@@ -5587,6 +5590,8 @@ int sata_link_init_spd(struct ata_link *link)
 	ata_force_link_limits(link);
 
 	link->sata_spd_limit = link->hw_sata_spd_limit;
+
+	link->init_lpm = (link->saved_scontrol >> 8) & 0x7;
 
 	return 0;
 }
@@ -6137,9 +6142,9 @@ int ata_host_register(struct ata_host *host, struct scsi_host_template *sht)
 			ap->cbl = ATA_CBL_SATA;
 
 		/* init sata_spd_limit to the current value */
-		sata_link_init_spd(&ap->link);
+		sata_link_init_config(&ap->link);
 		if (ap->slave_link)
-			sata_link_init_spd(ap->slave_link);
+			sata_link_init_config(ap->slave_link);
 
 		/* print per-port info to dmesg */
 		xfer_mask = ata_pack_xfermask(ap->pio_mask, ap->mwdma_mask,

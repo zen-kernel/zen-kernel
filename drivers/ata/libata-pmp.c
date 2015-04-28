@@ -531,7 +531,7 @@ int sata_pmp_attach(struct ata_device *dev)
 		ap->ops->pmp_attach(ap);
 
 	ata_for_each_link(tlink, ap, EDGE)
-		sata_link_init_spd(tlink);
+		sata_link_init_config(tlink);
 
 	return 0;
 

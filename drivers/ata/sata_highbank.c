@@ -556,6 +556,10 @@ static int ahci_highbank_probe(struct platform_device *pdev)
 		if (ap->flags & ATA_FLAG_EM)
 			ap->em_message_type = hpriv->em_msg_type;
 
+		rc = ahci_setup_port_privdata(ap);
+		if (rc)
+			goto err0;
+
 		/* disabled/not-implemented port */
 		if (!(hpriv->port_map & (1 << i)))
 			ap->ops = &ata_dummy_port_ops;

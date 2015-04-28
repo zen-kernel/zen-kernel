@@ -476,6 +476,9 @@ static int acard_ahci_init_one(struct pci_dev *pdev, const struct pci_device_id 
 		ata_port_pbar_desc(ap, AHCI_PCI_BAR,
 				   0x100 + ap->port_no * 0x80, "port");
 
+		rc = ahci_setup_port_privdata(ap);
+		if (rc)
+			return rc;
 		/* set initial link pm policy */
 		/*
 		ap->pm_policy = NOT_AVAILABLE;

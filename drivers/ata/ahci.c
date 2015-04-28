@@ -1436,6 +1436,9 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		if (ap->flags & ATA_FLAG_EM)
 			ap->em_message_type = hpriv->em_msg_type;
 
+		rc = ahci_setup_port_privdata(ap);
+		if (rc)
+			return rc;
 
 		/* disabled/not-implemented port */
 		if (!(hpriv->port_map & (1 << i)))

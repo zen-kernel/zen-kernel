@@ -563,6 +563,10 @@ int ahci_platform_init_host(struct platform_device *pdev,
 		if (ap->flags & ATA_FLAG_EM)
 			ap->em_message_type = hpriv->em_msg_type;
 
+		rc = ahci_setup_port_privdata(ap);
+		if (rc)
+			return rc;
+
 		/* disabled/not-implemented port */
 		if (!(hpriv->port_map & (1 << i)))
 			ap->ops = &ata_dummy_port_ops;

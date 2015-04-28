@@ -313,6 +313,12 @@ struct ahci_port_priv {
 	/* enclosure management info per PM slot */
 	struct ahci_em_priv	em_priv[EM_MAX_SLOTS];
 	char			*irq_desc;	/* desc in /proc/interrupts */
+	bool			init_alpe;	/* alpe enabled by default */
+	bool			init_asp;	/* asp enabled by default */
+	bool			init_devslp;	/* devslp enabled by default */
+	u32			init_dito;	/* initial dito configuration */
+	u32			init_deto;	/* initial deto configuration */
+	u32			init_mdat;	/* initial mdat configuration */
 };
 
 struct ahci_host_priv {
@@ -371,6 +377,7 @@ extern struct ata_port_operations ahci_platform_ops;
 extern struct ata_port_operations ahci_pmp_retry_srst_ops;
 
 unsigned int ahci_dev_classify(struct ata_port *ap);
+int ahci_setup_port_privdata(struct ata_port *ap);
 void ahci_fill_cmd_slot(struct ahci_port_priv *pp, unsigned int tag,
 			u32 opts);
 void ahci_save_initial_config(struct device *dev,
