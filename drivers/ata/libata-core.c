@@ -2021,7 +2021,7 @@ retry:
 		}
 	}
 
-	if (id[79] & SATA_DIPM)
+	if (id[79] & (1 << SATA_DIPM))
 		dev->init_dipm = true;
 
 	*p_class = class;
@@ -3651,6 +3651,11 @@ int sata_link_scr_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 		return rc;
 
 	switch (policy) {
+	case ATA_LPM_FIRMWARE_DEFAULTS:
+		/* use the values we read at probe */
+		scontrol &= ~(0x7 << 8);
+		scontrol |= (link->init_lpm << 8);
+		break;
 	case ATA_LPM_MAX_POWER:
 		/* disable all LPM transitions */
 		scontrol |= (0x7 << 8);

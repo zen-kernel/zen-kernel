@@ -508,6 +508,7 @@ enum ata_completion_errors {
 enum ata_lpm_policy {
 	ATA_LPM_UNKNOWN,
 	ATA_LPM_MAX_POWER,
+	ATA_LPM_FIRMWARE_DEFAULTS,
 	ATA_LPM_MED_POWER,
 	ATA_LPM_MIN_POWER,
 };

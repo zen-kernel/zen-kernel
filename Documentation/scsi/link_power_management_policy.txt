@@ -1,8 +1,11 @@
 This parameter allows the user to set the link (interface) power management.
-There are 3 possible options:
+There are 4 possible options:
 
 Value			Effect
 ----------------------------------------------------------------------------
+firmware_defaults	Inherit configuration from the state programmed by
+			the firmware during system init.
+
 min_power		Tell the controller to try to make the link use the
 			least possible power when possible.  This may
 			sacrifice some performance due to increased latency
