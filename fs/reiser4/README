@@ -1,0 +1,128 @@
+[LICENSING]
+
+Reiser4 is hereby licensed under the GNU General
+Public License version 2.
+
+Source code files that contain the phrase "licensing governed by
+reiser4/README" are "governed files" throughout this file.  Governed
+files are licensed under the GPL.  The portions of them owned by Hans
+Reiser, or authorized to be licensed by him, have been in the past,
+and likely will be in the future, licensed to other parties under
+other licenses.  If you add your code to governed files, and don't
+want it to be owned by Hans Reiser, put your copyright label on that
+code so the poor blight and his customers can keep things straight.
+All portions of governed files not labeled otherwise are owned by Hans
+Reiser, and by adding your code to it, widely distributing it to
+others or sending us a patch, and leaving the sentence in stating that
+licensing is governed by the statement in this file, you accept this.
+It will be a kindness if you identify whether Hans Reiser is allowed
+to license code labeled as owned by you on your behalf other than
+under the GPL, because he wants to know if it is okay to do so and put
+a check in the mail to you (for non-trivial improvements) when he
+makes his next sale.  He makes no guarantees as to the amount if any,
+though he feels motivated to motivate contributors, and you can surely
+discuss this with him before or after contributing.  You have the
+right to decline to allow him to license your code contribution other
+than under the GPL.
+
+Further licensing options are available for commercial and/or other
+interests directly from Hans Reiser: reiser@namesys.com.  If you interpret
+the GPL as not allowing those additional licensing options, you read
+it wrongly, and Richard Stallman agrees with me, when carefully read
+you can see that those restrictions on additional terms do not apply
+to the owner of the copyright, and my interpretation of this shall
+govern for this license.
+
+[END LICENSING]
+
+Reiser4 is a file system based on dancing tree algorithms, and is
+described at http://www.namesys.com
+
+mkfs.reiser4 and other utilities are on our webpage or wherever your
+Linux provider put them.  You really want to be running the latest
+version off the website if you use fsck.
+
+Yes, if you update your reiser4 kernel module you do have to
+recompile your kernel, most of the time.  The errors you get will be
+quite cryptic if your forget to do so.
+
+Hideous Commercial Pitch: Spread your development costs across other OS
+vendors.  Select from the best in the world, not the best in your
+building, by buying from third party OS component suppliers.  Leverage
+the software component development power of the internet.  Be the most
+aggressive in taking advantage of the commercial possibilities of
+decentralized internet development, and add value through your branded
+integration that you sell as an operating system.  Let your competitors
+be the ones to compete against the entire internet by themselves.  Be
+hip, get with the new economic trend, before your competitors do.  Send
+email to reiser@namesys.com
+
+Hans Reiser was the primary architect of Reiser4, but a whole team
+chipped their ideas in.  He invested everything he had into Namesys
+for 5.5 dark years of no money before Reiser3 finally started to work well
+enough to bring in money.  He owns the copyright.
+
+DARPA was the primary sponsor of Reiser4.  DARPA does not endorse
+Reiser4, it merely sponsors it.  DARPA is, in solely Hans's personal
+opinion, unique in its willingness to invest into things more
+theoretical than the VC community can readily understand, and more
+longterm than allows them to be sure that they will be the ones to
+extract the economic benefits from.  DARPA also integrated us into a
+security community that transformed our security worldview.
+
+Vladimir Saveliev is our lead programmer, with us from the beginning,
+and he worked long hours writing the cleanest code.  This is why he is
+now the lead programmer after years of commitment to our work.  He
+always made the effort to be the best he could be, and to make his
+code the best that it could be.  What resulted was quite remarkable. I
+don't think that money can ever motivate someone to work the way he
+did, he is one of the most selfless men I know.
+
+Alexander Lyamin was our sysadmin, and helped to educate us in
+security issues.  Moscow State University and IMT were very generous
+in the internet access they provided us, and in lots of other little
+ways that a generous institution can be.
+
+Alexander Zarochentcev (sometimes known as zam, or sasha), wrote the
+locking code, the block allocator, and finished the flushing code.
+His code is always crystal clean and well structured.
+
+Nikita Danilov wrote the core of the balancing code, the core of the
+plugins code, and the directory code.  He worked a steady pace of long
+hours that produced a whole lot of well abstracted code.  He is our
+senior computer scientist.
+
+Vladimir Demidov wrote the parser.  Writing an in kernel parser is
+something very few persons have the skills for, and it is thanks to
+him that we can say that the parser is really not so big compared to
+various bits of our other code, and making a parser work in the kernel
+was not so complicated as everyone would imagine mainly because it was
+him doing it...
+
+Joshua McDonald wrote the transaction manager, and the flush code.
+The flush code unexpectedly turned out be extremely hairy for reasons
+you can read about on our web page, and he did a great job on an
+extremely difficult task.
+
+Nina Reiser handled our accounting, government relations, and much
+more.
+
+Ramon Reiser developed our website.
+
+Beverly Palmer drew our graphics.
+
+Vitaly Fertman developed librepair, userspace plugins repair code, fsck
+and worked with Umka on developing libreiser4 and userspace plugins.
+
+Yury Umanets (aka Umka) developed libreiser4, userspace plugins and
+userspace tools (reiser4progs).
+
+Oleg Drokin (aka Green) is the release manager who fixes everything.
+It is so nice to have someone like that on the team.  He (plus Chris
+and Jeff) make it possible for the entire rest of the Namesys team to
+focus on Reiser4, and he fixed a whole lot of Reiser4 bugs also.  It
+is just amazing to watch his talent for spotting bugs in action.
+
+Edward Shishkin wrote cryptcompress file plugin (which manages files
+built of encrypted and(or) compressed bodies) and other plugins related
+to transparent encryption and compression support.
