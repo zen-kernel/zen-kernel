@@ -4,7 +4,7 @@
  *  Copyright (C) 1991, 1992  Linus Torvalds
  */
 
-#include <linux/slab.h> 
+#include <linux/slab.h>
 #include <linux/stat.h>
 #include <linux/fcntl.h>
 #include <linux/file.h>
@@ -193,12 +193,11 @@ loff_t no_llseek(struct file *file, loff_t offset, int whence)
 }
 EXPORT_SYMBOL(no_llseek);
 
-loff_t default_llseek(struct file *file, loff_t offset, int whence)
+loff_t default_llseek_unlocked(struct file *file, loff_t offset, int whence)
 {
 	struct inode *inode = file_inode(file);
 	loff_t retval;
 
-	mutex_lock(&inode->i_mutex);
 	switch (whence) {
 		case SEEK_END:
 			offset += i_size_read(inode);
@@ -243,7 +242,17 @@ loff_t default_llseek(struct file *file, loff_t offset, int whence)
 		retval = offset;
 	}
 out:
-	mutex_unlock(&inode->i_mutex);
+	return retval;
+}
+EXPORT_SYMBOL(default_llseek_unlocked);
+
+loff_t default_llseek(struct file *file, loff_t offset, int origin)
+{
+	loff_t retval;
+
+	mutex_lock(&file_inode(file)->i_mutex);
+	retval = default_llseek_unlocked(file, offset, origin);
+	mutex_unlock(&file_inode(file)->i_mutex);
 	return retval;
 }
 EXPORT_SYMBOL(default_llseek);
@@ -408,7 +417,7 @@ int rw_verify_area(int read_write, struct file *file, const loff_t *ppos, size_t
 	return count > MAX_RW_COUNT ? MAX_RW_COUNT : count;
 }
 
-static ssize_t new_sync_read(struct file *filp, char __user *buf, size_t len, loff_t *ppos)
+ssize_t new_sync_read(struct file *filp, char __user *buf, size_t len, loff_t *ppos)
 {
 	struct iovec iov = { .iov_base = buf, .iov_len = len };
 	struct kiocb kiocb;
@@ -424,6 +433,7 @@ static ssize_t new_sync_read(struct file *filp, char __user *buf, size_t len, lo
 	*ppos = kiocb.ki_pos;
 	return ret;
 }
+EXPORT_SYMBOL(new_sync_read);
 
 ssize_t __vfs_read(struct file *file, char __user *buf, size_t count,
 		   loff_t *pos)
