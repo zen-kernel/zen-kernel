@@ -653,7 +653,7 @@ int au_mvdown(struct dentry *dentry, struct aufs_mvdown __user *uarg)
 	}
 
 	mutex_lock_nested(&inode->i_mutex, I_MUTEX_CHILD);
-	err = aufs_read_lock(dentry, AuLock_DW | AuLock_FLUSH);
+	err = aufs_read_lock(dentry, AuLock_DW | AuLock_FLUSH | AuLock_NOPLMW);
 	if (unlikely(err))
 		goto out_inode;
 

@@ -881,15 +881,12 @@ struct au_whtmp_rmdir *au_whtmp_rmdir_alloc(struct super_block *sb, gfp_t gfp)
 
 	SiMustAnyLock(sb);
 
-	whtmp = kmalloc(sizeof(*whtmp), gfp);
+	whtmp = kzalloc(sizeof(*whtmp), gfp);
 	if (unlikely(!whtmp)) {
 		whtmp = ERR_PTR(-ENOMEM);
 		goto out;
 	}
 
-	whtmp->dir = NULL;
-	whtmp->br = NULL;
-	whtmp->wh_dentry = NULL;
 	/* no estimation for dir size */
 	rdhash = au_sbi(sb)->si_rdhash;
 	if (!rdhash)

@@ -245,7 +245,7 @@ int au_xino_trunc(struct super_block *sb, aufs_bindex_t bindex)
 	struct au_xino_lock_dir ldir;
 
 	err = -ENOMEM;
-	st = kzalloc(sizeof(*st), GFP_NOFS);
+	st = kmalloc(sizeof(*st), GFP_NOFS);
 	if (unlikely(!st))
 		goto out;
 

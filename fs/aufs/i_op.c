@@ -1392,78 +1392,80 @@ static int aufs_update_time(struct inode *inode, struct timespec *ts, int flags)
 
 /* ---------------------------------------------------------------------- */
 
-struct inode_operations aufs_symlink_iop = {
-	.permission	= aufs_permission,
+/* no getattr version will be set by module.c:aufs_init() */
+struct inode_operations aufs_iop_nogetattr[AuIop_Last],
+	aufs_iop[] = {
+	[AuIop_SYMLINK] = {
+		.permission	= aufs_permission,
 #ifdef CONFIG_FS_POSIX_ACL
-	.get_acl	= aufs_get_acl,
-	.set_acl	= aufs_set_acl, /* unsupport for symlink? */
+		.get_acl	= aufs_get_acl,
+		.set_acl	= aufs_set_acl, /* unsupport for symlink? */
 #endif
 
-	.setattr	= aufs_setattr,
-	.getattr	= aufs_getattr,
+		.setattr	= aufs_setattr,
+		.getattr	= aufs_getattr,
 
 #ifdef CONFIG_AUFS_XATTR
-	.setxattr	= aufs_setxattr,
-	.getxattr	= aufs_getxattr,
-	.listxattr	= aufs_listxattr,
-	.removexattr	= aufs_removexattr,
+		.setxattr	= aufs_setxattr,
+		.getxattr	= aufs_getxattr,
+		.listxattr	= aufs_listxattr,
+		.removexattr	= aufs_removexattr,
 #endif
 
-	.readlink	= generic_readlink,
-	.follow_link	= aufs_follow_link,
-	.put_link	= aufs_put_link,
+		.readlink	= generic_readlink,
+		.follow_link	= aufs_follow_link,
+		.put_link	= aufs_put_link,
 
-	/* .update_time	= aufs_update_time */
-};
+		/* .update_time	= aufs_update_time */
+	},
+	[AuIop_DIR] = {
+		.create		= aufs_create,
+		.lookup		= aufs_lookup,
+		.link		= aufs_link,
+		.unlink		= aufs_unlink,
+		.symlink	= aufs_symlink,
+		.mkdir		= aufs_mkdir,
+		.rmdir		= aufs_rmdir,
+		.mknod		= aufs_mknod,
+		.rename		= aufs_rename,
 
-struct inode_operations aufs_dir_iop = {
-	.create		= aufs_create,
-	.lookup		= aufs_lookup,
-	.link		= aufs_link,
-	.unlink		= aufs_unlink,
-	.symlink	= aufs_symlink,
-	.mkdir		= aufs_mkdir,
-	.rmdir		= aufs_rmdir,
-	.mknod		= aufs_mknod,
-	.rename		= aufs_rename,
-
-	.permission	= aufs_permission,
+		.permission	= aufs_permission,
 #ifdef CONFIG_FS_POSIX_ACL
-	.get_acl	= aufs_get_acl,
-	.set_acl	= aufs_set_acl,
+		.get_acl	= aufs_get_acl,
+		.set_acl	= aufs_set_acl,
 #endif
 
-	.setattr	= aufs_setattr,
-	.getattr	= aufs_getattr,
+		.setattr	= aufs_setattr,
+		.getattr	= aufs_getattr,
 
 #ifdef CONFIG_AUFS_XATTR
-	.setxattr	= aufs_setxattr,
-	.getxattr	= aufs_getxattr,
-	.listxattr	= aufs_listxattr,
-	.removexattr	= aufs_removexattr,
+		.setxattr	= aufs_setxattr,
+		.getxattr	= aufs_getxattr,
+		.listxattr	= aufs_listxattr,
+		.removexattr	= aufs_removexattr,
 #endif
 
-	.update_time	= aufs_update_time,
-	.atomic_open	= aufs_atomic_open,
-	.tmpfile	= aufs_tmpfile
-};
-
-struct inode_operations aufs_iop = {
-	.permission	= aufs_permission,
+		.update_time	= aufs_update_time,
+		.atomic_open	= aufs_atomic_open,
+		.tmpfile	= aufs_tmpfile
+	},
+	[AuIop_OTHER] = {
+		.permission	= aufs_permission,
 #ifdef CONFIG_FS_POSIX_ACL
-	.get_acl	= aufs_get_acl,
-	.set_acl	= aufs_set_acl,
+		.get_acl	= aufs_get_acl,
+		.set_acl	= aufs_set_acl,
 #endif
 
-	.setattr	= aufs_setattr,
-	.getattr	= aufs_getattr,
+		.setattr	= aufs_setattr,
+		.getattr	= aufs_getattr,
 
 #ifdef CONFIG_AUFS_XATTR
-	.setxattr	= aufs_setxattr,
-	.getxattr	= aufs_getxattr,
-	.listxattr	= aufs_listxattr,
-	.removexattr	= aufs_removexattr,
+		.setxattr	= aufs_setxattr,
+		.getxattr	= aufs_getxattr,
+		.listxattr	= aufs_listxattr,
+		.removexattr	= aufs_removexattr,
 #endif
 
-	.update_time	= aufs_update_time
+		.update_time	= aufs_update_time
+	}
 };

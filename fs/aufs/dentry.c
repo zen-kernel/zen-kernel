@@ -554,7 +554,9 @@ static int au_refresh_by_dinfo(struct dentry *dentry, struct au_dinfo *dinfo,
 		struct dentry *dentry;
 		struct inode *inode;
 		mode_t mode;
-	} orig_h, tmp_h;
+	} orig_h, tmp_h = {
+		.dentry = NULL
+	};
 	struct au_hdentry *hd;
 	struct inode *inode, *h_inode;
 	struct dentry *h_dentry;
@@ -568,10 +570,8 @@ static int au_refresh_by_dinfo(struct dentry *dentry, struct au_dinfo *dinfo,
 		orig_h.inode = d_inode(orig_h.dentry);
 		orig_h.mode = orig_h.inode->i_mode & S_IFMT;
 	}
-	memset(&tmp_h, 0, sizeof(tmp_h));
 	if (tmp->di_bstart >= 0) {
 		tmp_h.dentry = tmp->di_hdentry[tmp->di_bstart].hd_dentry;
-		tmp_h.inode = NULL;
 		if (d_is_positive(tmp_h.dentry)) {
 			tmp_h.inode = d_inode(tmp_h.dentry);
 			tmp_h.mode = tmp_h.inode->i_mode & S_IFMT;

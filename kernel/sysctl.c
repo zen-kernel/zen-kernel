@@ -127,6 +127,7 @@ static unsigned long one_ul = 1;
 static int __maybe_unused one_hundred = 100;
 #ifdef CONFIG_SCHED_BFS
 extern int rr_interval;
+extern int sched_interactive;
 extern int sched_iso_cpu;
 static int __read_mostly one_thousand = 1000;
 #endif
@@ -986,6 +987,15 @@ static struct ctl_table kern_table[] = {
 		.proc_handler	= &proc_dointvec_minmax,
 		.extra1		= &one,
 		.extra2		= &one_thousand,
+	},
+	{
+		.procname	= "interactive",
+		.data		= &sched_interactive,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &one,
 	},
 	{
 		.procname	= "iso_cpu",

@@ -949,7 +949,7 @@ static void mvneta_defaults_set(struct mvneta_port *pp)
 	/* Set CPU queue access map - all CPUs have access to all RX
 	 * queues and to all TX queues
 	 */
-	for (cpu = 0; cpu < CONFIG_NR_CPUS; cpu++)
+	for_each_present_cpu(cpu)
 		mvreg_write(pp, MVNETA_CPU_MAP(cpu),
 			    (MVNETA_CPU_RXQ_ACCESS_ALL_MASK |
 			     MVNETA_CPU_TXQ_ACCESS_ALL_MASK));
@@ -1533,11 +1533,15 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 		}
 
 		skb = build_skb(data, pp->frag_size > PAGE_SIZE ? 0 : pp->frag_size);
-		if (!skb)
-			goto err_drop_frame;
 
+		/* After refill old buffer has to be unmapped regardless
+		 * the skb is successfully built or not.
+		 */
 		dma_unmap_single(dev->dev.parent, phys_addr,
 				 MVNETA_RX_BUF_SIZE(pp->pkt_size), DMA_FROM_DEVICE);
+
+		if (!skb)
+			goto err_drop_frame;
 
 		rcvd_pkts++;
 		rcvd_bytes += rx_bytes;

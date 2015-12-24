@@ -117,7 +117,7 @@ static struct au_branch *au_br_alloc(struct super_block *sb, int new_nbranch,
 
 	err = -ENOMEM;
 	root = sb->s_root;
-	add_branch = kmalloc(sizeof(*add_branch), GFP_NOFS);
+	add_branch = kzalloc(sizeof(*add_branch), GFP_NOFS);
 	if (unlikely(!add_branch))
 		goto out;
 
@@ -125,16 +125,14 @@ static struct au_branch *au_br_alloc(struct super_block *sb, int new_nbranch,
 	if (unlikely(err))
 		goto out_br;
 
-	add_branch->br_wbr = NULL;
 	if (au_br_writable(perm)) {
 		/* may be freed separately at changing the branch permission */
-		add_branch->br_wbr = kmalloc(sizeof(*add_branch->br_wbr),
+		add_branch->br_wbr = kzalloc(sizeof(*add_branch->br_wbr),
 					     GFP_NOFS);
 		if (unlikely(!add_branch->br_wbr))
 			goto out_hnotify;
 	}
 
-	add_branch->br_fhsm = NULL;
 	if (au_br_fhsm(perm)) {
 		err = au_fhsm_br_alloc(add_branch);
 		if (unlikely(err))
@@ -339,9 +337,7 @@ static int au_wbr_init(struct au_branch *br, struct super_block *sb,
 
 	wbr = br->br_wbr;
 	au_rw_init(&wbr->wbr_wh_rwsem);
-	memset(wbr->wbr_wh, 0, sizeof(wbr->wbr_wh));
 	atomic_set(&wbr->wbr_wh_running, 0);
-	wbr->wbr_bytes = 0;
 
 	/*
 	 * a limit for rmdir/rename a dir
@@ -370,12 +366,10 @@ static int au_br_init(struct au_branch *br, struct super_block *sb,
 	struct inode *h_inode;
 
 	err = 0;
-	memset(&br->br_xino, 0, sizeof(br->br_xino));
 	mutex_init(&br->br_xino.xi_nondir_mtx);
 	br->br_perm = add->perm;
 	br->br_path = add->path; /* set first, path_get() later */
 	spin_lock_init(&br->br_dykey_lock);
-	memset(br->br_dykey, 0, sizeof(br->br_dykey));
 	atomic_set(&br->br_count, 0);
 	atomic_set(&br->br_xino_running, 0);
 	br->br_id = au_new_br_id(sb);
@@ -583,7 +577,7 @@ static void au_farray_free(struct file **a, unsigned long long max)
 	for (ull = 0; ull < max; ull++)
 		if (a[ull])
 			fput(a[ull]);
-	au_array_free(a);
+	kvfree(a);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -1333,7 +1327,7 @@ int au_br_mod(struct super_block *sb, struct au_opt_mod *mod, int remount,
 
 			if (unlikely(err)) {
 				rerr = -ENOMEM;
-				br->br_wbr = kmalloc(sizeof(*br->br_wbr),
+				br->br_wbr = kzalloc(sizeof(*br->br_wbr),
 						     GFP_NOFS);
 				if (br->br_wbr)
 					rerr = au_wbr_init(br, sb, br->br_perm);
@@ -1347,7 +1341,7 @@ int au_br_mod(struct super_block *sb, struct au_opt_mod *mod, int remount,
 	} else if (au_br_writable(mod->perm)) {
 		/* ro --> rw */
 		err = -ENOMEM;
-		br->br_wbr = kmalloc(sizeof(*br->br_wbr), GFP_NOFS);
+		br->br_wbr = kzalloc(sizeof(*br->br_wbr), GFP_NOFS);
 		if (br->br_wbr) {
 			err = au_wbr_init(br, sb, mod->perm);
 			if (unlikely(err)) {

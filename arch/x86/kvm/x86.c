@@ -622,7 +622,9 @@ int kvm_set_cr0(struct kvm_vcpu *vcpu, unsigned long cr0)
 	if ((cr0 ^ old_cr0) & update_bits)
 		kvm_mmu_reset_context(vcpu);
 
-	if ((cr0 ^ old_cr0) & X86_CR0_CD)
+	if (((cr0 ^ old_cr0) & X86_CR0_CD) &&
+	    kvm_arch_has_noncoherent_dma(vcpu->kvm) &&
+	    !kvm_check_has_quirk(vcpu->kvm, KVM_X86_QUIRK_CD_NW_CLEARED))
 		kvm_zap_gfn_range(vcpu->kvm, 0, ~0ULL);
 
 	return 0;
@@ -4059,6 +4061,15 @@ static int kvm_read_guest_virt_system(struct x86_emulate_ctxt *ctxt,
 	return kvm_read_guest_virt_helper(addr, val, bytes, vcpu, 0, exception);
 }
 
+static int kvm_read_guest_phys_system(struct x86_emulate_ctxt *ctxt,
+		unsigned long addr, void *val, unsigned int bytes)
+{
+	struct kvm_vcpu *vcpu = emul_to_vcpu(ctxt);
+	int r = kvm_vcpu_read_guest(vcpu, addr, val, bytes);
+
+	return r < 0 ? X86EMUL_IO_NEEDED : X86EMUL_CONTINUE;
+}
+
 int kvm_write_guest_virt_system(struct x86_emulate_ctxt *ctxt,
 				       gva_t addr, void *val,
 				       unsigned int bytes,
@@ -4794,6 +4805,7 @@ static const struct x86_emulate_ops emulate_ops = {
 	.write_gpr           = emulator_write_gpr,
 	.read_std            = kvm_read_guest_virt_system,
 	.write_std           = kvm_write_guest_virt_system,
+	.read_phys           = kvm_read_guest_phys_system,
 	.fetch               = kvm_fetch_guest_virt,
 	.read_emulated       = emulator_read_emulated,
 	.write_emulated      = emulator_write_emulated,

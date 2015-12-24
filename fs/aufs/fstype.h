@@ -13,8 +13,8 @@
 
 #include <linux/fs.h>
 #include <linux/magic.h>
-#include <linux/romfs_fs.h>
 #include <linux/nfs_fs.h>
+#include <linux/romfs_fs.h>
 
 static inline int au_test_aufs(struct super_block *sb)
 {

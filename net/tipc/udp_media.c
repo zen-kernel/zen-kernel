@@ -48,6 +48,7 @@
 #include <linux/tipc_netlink.h>
 #include "core.h"
 #include "bearer.h"
+#include "msg.h"
 
 /* IANA assigned UDP port */
 #define UDP_PORT_DEFAULT	6118
@@ -158,8 +159,11 @@ static int tipc_udp_send_msg(struct net *net, struct sk_buff *skb,
 	struct sk_buff *clone;
 	struct rtable *rt;
 
-	if (skb_headroom(skb) < UDP_MIN_HEADROOM)
-		pskb_expand_head(skb, UDP_MIN_HEADROOM, 0, GFP_ATOMIC);
+	if (skb_headroom(skb) < UDP_MIN_HEADROOM) {
+		err = pskb_expand_head(skb, UDP_MIN_HEADROOM, 0, GFP_ATOMIC);
+		if (err)
+			goto tx_error;
+	}
 
 	clone = skb_clone(skb, GFP_ATOMIC);
 	skb_set_inner_protocol(clone, htons(ETH_P_TIPC));
@@ -222,6 +226,10 @@ static int tipc_udp_recv(struct sock *sk, struct sk_buff *skb)
 {
 	struct udp_bearer *ub;
 	struct tipc_bearer *b;
+	int usr = msg_user(buf_msg(skb));
+
+	if ((usr == LINK_PROTOCOL) || (usr == NAME_DISTRIBUTOR))
+		skb_linearize(skb);
 
 	ub = rcu_dereference_sk_user_data(sk);
 	if (!ub) {

@@ -105,13 +105,13 @@ void au_update_iigen(struct inode *inode, int half)
 	sigen = au_sigen(inode->i_sb);
 	iinfo = au_ii(inode);
 	iigen = &iinfo->ii_generation;
-	spin_lock(&iinfo->ii_genspin);
+	spin_lock(&iigen->ig_spin);
 	iigen->ig_generation = sigen;
 	if (half)
 		au_ig_fset(iigen->ig_flags, HALF_REFRESHED);
 	else
 		au_ig_fclr(iigen->ig_flags, HALF_REFRESHED);
-	spin_unlock(&iinfo->ii_genspin);
+	spin_unlock(&iigen->ig_spin);
 }
 
 /* it may be called at remount time, too */
@@ -164,7 +164,7 @@ void au_icntnr_init_once(void *_c)
 	struct au_iinfo *iinfo = &c->iinfo;
 	static struct lock_class_key aufs_ii;
 
-	spin_lock_init(&iinfo->ii_genspin);
+	spin_lock_init(&iinfo->ii_generation.ig_spin);
 	au_rw_init(&iinfo->ii_rwsem);
 	au_rw_class(&iinfo->ii_rwsem, &aufs_ii);
 	inode_init_once(&c->vfs_inode);

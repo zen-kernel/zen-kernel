@@ -176,7 +176,7 @@ extern void get_iowait_load(unsigned long *nr_waiters, unsigned long *load);
 
 extern void calc_global_load(unsigned long ticks);
 
-#if defined(CONFIG_SMP) && defined(CONFIG_NO_HZ_COMMON)
+#if defined(CONFIG_SMP) && defined(CONFIG_NO_HZ_COMMON) && !defined(CONFIG_SCHED_BFS)
 extern void update_cpu_load_nohz(void);
 #else
 static inline void update_cpu_load_nohz(void) { }
@@ -2320,7 +2320,7 @@ static inline int set_cpus_allowed_ptr(struct task_struct *p,
 }
 #endif
 
-#ifdef CONFIG_NO_HZ_COMMON
+#if defined(CONFIG_NO_HZ_COMMON) && !defined(CONFIG_SCHED_BFS)
 void calc_load_enter_idle(void);
 void calc_load_exit_idle(void);
 #else

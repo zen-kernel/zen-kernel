@@ -1818,7 +1818,7 @@ int au_opts_remount(struct super_block *sb, struct au_opts *opts)
 		err = rerr;
 
 	if (no_dreval != !!au_ftest_si(sbinfo, NO_DREVAL))
-		au_fset_opts(opts->flags, REFRESH_DOP);
+		au_fset_opts(opts->flags, REFRESH_IDOP);
 
 	if (au_ftest_opts(opts->flags, TRUNC_XIB)) {
 		rerr = au_xib_trunc(sb);
@@ -1830,7 +1830,7 @@ int au_opts_remount(struct super_block *sb, struct au_opts *opts)
 	if (!au_ftest_opts(opts->flags, REFRESH)
 	    && (opts->given_udba
 		|| au_opt_test(sbinfo->si_mntflags, XINO)
-		|| au_ftest_opts(opts->flags, REFRESH_DOP)
+		|| au_ftest_opts(opts->flags, REFRESH_IDOP)
 		    ))
 		au_fset_opts(opts->flags, REFRESH);
 

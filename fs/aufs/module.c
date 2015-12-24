@@ -132,6 +132,10 @@ static int __init aufs_init(void)
 
 	au_dir_roflags = au_file_roflags(O_DIRECTORY | O_LARGEFILE);
 
+	memcpy(aufs_iop_nogetattr, aufs_iop, sizeof(aufs_iop));
+	for (i = 0; i < AuIop_Last; i++)
+		aufs_iop_nogetattr[i].getattr = NULL;
+
 	au_sbilist_init();
 	sysaufs_brs_init();
 	au_debug_init();

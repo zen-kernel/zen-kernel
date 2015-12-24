@@ -102,9 +102,9 @@ static void au_do_dir_ts(void *arg)
 	sb = a->dentry->d_sb;
 	if (d_really_is_negative(a->dentry))
 		goto out;
-	aufs_read_lock(a->dentry, AuLock_DW | AuLock_DIR); /* noflush */
-
 	/* no dir->i_mutex lock */
+	aufs_read_lock(a->dentry, AuLock_DW); /* noflush */
+
 	dir = d_inode(a->dentry);
 	bstart = au_ibstart(dir);
 	bindex = au_br_index(sb, a->brid);

@@ -3203,41 +3203,6 @@ out:
 	return ret;
 }
 
-/* Helper to check and see if this root currently has a ref on the given disk
- * bytenr.  If it does then we need to update the quota for this root.  This
- * doesn't do anything if quotas aren't enabled.
- */
-static int check_ref(struct btrfs_trans_handle *trans, struct btrfs_root *root,
-		     u64 disko)
-{
-	struct seq_list tree_mod_seq_elem = SEQ_LIST_INIT(tree_mod_seq_elem);
-	struct ulist *roots;
-	struct ulist_iterator uiter;
-	struct ulist_node *root_node = NULL;
-	int ret;
-
-	if (!root->fs_info->quota_enabled)
-		return 1;
-
-	btrfs_get_tree_mod_seq(root->fs_info, &tree_mod_seq_elem);
-	ret = btrfs_find_all_roots(trans, root->fs_info, disko,
-				   tree_mod_seq_elem.seq, &roots);
-	if (ret < 0)
-		goto out;
-	ret = 0;
-	ULIST_ITER_INIT(&uiter);
-	while ((root_node = ulist_next(roots, &uiter))) {
-		if (root_node->val == root->objectid) {
-			ret = 1;
-			break;
-		}
-	}
-	ulist_free(roots);
-out:
-	btrfs_put_tree_mod_seq(root->fs_info, &tree_mod_seq_elem);
-	return ret;
-}
-
 static int clone_finish_inode_update(struct btrfs_trans_handle *trans,
 				     struct inode *inode,
 				     u64 endoff,
@@ -3328,6 +3293,150 @@ static void clone_update_extent_map(struct inode *inode,
 			&BTRFS_I(inode)->runtime_flags);
 }
 
+/*
+ * Make sure we do not end up inserting an inline extent into a file that has
+ * already other (non-inline) extents. If a file has an inline extent it can
+ * not have any other extents and the (single) inline extent must start at the
+ * file offset 0. Failing to respect these rules will lead to file corruption,
+ * resulting in EIO errors on read/write operations, hitting BUG_ON's in mm, etc
+ *
+ * We can have extents that have been already written to disk or we can have
+ * dirty ranges still in delalloc, in which case the extent maps and items are
+ * created only when we run delalloc, and the delalloc ranges might fall outside
+ * the range we are currently locking in the inode's io tree. So we check the
+ * inode's i_size because of that (i_size updates are done while holding the
+ * i_mutex, which we are holding here).
+ * We also check to see if the inode has a size not greater than "datal" but has
+ * extents beyond it, due to an fallocate with FALLOC_FL_KEEP_SIZE (and we are
+ * protected against such concurrent fallocate calls by the i_mutex).
+ *
+ * If the file has no extents but a size greater than datal, do not allow the
+ * copy because we would need turn the inline extent into a non-inline one (even
+ * with NO_HOLES enabled). If we find our destination inode only has one inline
+ * extent, just overwrite it with the source inline extent if its size is less
+ * than the source extent's size, or we could copy the source inline extent's
+ * data into the destination inode's inline extent if the later is greater then
+ * the former.
+ */
+static int clone_copy_inline_extent(struct inode *src,
+				    struct inode *dst,
+				    struct btrfs_trans_handle *trans,
+				    struct btrfs_path *path,
+				    struct btrfs_key *new_key,
+				    const u64 drop_start,
+				    const u64 datal,
+				    const u64 skip,
+				    const u64 size,
+				    char *inline_data)
+{
+	struct btrfs_root *root = BTRFS_I(dst)->root;
+	const u64 aligned_end = ALIGN(new_key->offset + datal,
+				      root->sectorsize);
+	int ret;
+	struct btrfs_key key;
+
+	if (new_key->offset > 0)
+		return -EOPNOTSUPP;
+
+	key.objectid = btrfs_ino(dst);
+	key.type = BTRFS_EXTENT_DATA_KEY;
+	key.offset = 0;
+	ret = btrfs_search_slot(NULL, root, &key, path, 0, 0);
+	if (ret < 0) {
+		return ret;
+	} else if (ret > 0) {
+		if (path->slots[0] >= btrfs_header_nritems(path->nodes[0])) {
+			ret = btrfs_next_leaf(root, path);
+			if (ret < 0)
+				return ret;
+			else if (ret > 0)
+				goto copy_inline_extent;
+		}
+		btrfs_item_key_to_cpu(path->nodes[0], &key, path->slots[0]);
+		if (key.objectid == btrfs_ino(dst) &&
+		    key.type == BTRFS_EXTENT_DATA_KEY) {
+			ASSERT(key.offset > 0);
+			return -EOPNOTSUPP;
+		}
+	} else if (i_size_read(dst) <= datal) {
+		struct btrfs_file_extent_item *ei;
+		u64 ext_len;
+
+		/*
+		 * If the file size is <= datal, make sure there are no other
+		 * extents following (can happen do to an fallocate call with
+		 * the flag FALLOC_FL_KEEP_SIZE).
+		 */
+		ei = btrfs_item_ptr(path->nodes[0], path->slots[0],
+				    struct btrfs_file_extent_item);
+		/*
+		 * If it's an inline extent, it can not have other extents
+		 * following it.
+		 */
+		if (btrfs_file_extent_type(path->nodes[0], ei) ==
+		    BTRFS_FILE_EXTENT_INLINE)
+			goto copy_inline_extent;
+
+		ext_len = btrfs_file_extent_num_bytes(path->nodes[0], ei);
+		if (ext_len > aligned_end)
+			return -EOPNOTSUPP;
+
+		ret = btrfs_next_item(root, path);
+		if (ret < 0) {
+			return ret;
+		} else if (ret == 0) {
+			btrfs_item_key_to_cpu(path->nodes[0], &key,
+					      path->slots[0]);
+			if (key.objectid == btrfs_ino(dst) &&
+			    key.type == BTRFS_EXTENT_DATA_KEY)
+				return -EOPNOTSUPP;
+		}
+	}
+
+copy_inline_extent:
+	/*
+	 * We have no extent items, or we have an extent at offset 0 which may
+	 * or may not be inlined. All these cases are dealt the same way.
+	 */
+	if (i_size_read(dst) > datal) {
+		/*
+		 * If the destination inode has an inline extent...
+		 * This would require copying the data from the source inline
+		 * extent into the beginning of the destination's inline extent.
+		 * But this is really complex, both extents can be compressed
+		 * or just one of them, which would require decompressing and
+		 * re-compressing data (which could increase the new compressed
+		 * size, not allowing the compressed data to fit anymore in an
+		 * inline extent).
+		 * So just don't support this case for now (it should be rare,
+		 * we are not really saving space when cloning inline extents).
+		 */
+		return -EOPNOTSUPP;
+	}
+
+	btrfs_release_path(path);
+	ret = btrfs_drop_extents(trans, root, dst, drop_start, aligned_end, 1);
+	if (ret)
+		return ret;
+	ret = btrfs_insert_empty_item(trans, root, path, new_key, size);
+	if (ret)
+		return ret;
+
+	if (skip) {
+		const u32 start = btrfs_file_extent_calc_inline_size(0);
+
+		memmove(inline_data + start, inline_data + start + skip, datal);
+	}
+
+	write_extent_buffer(path->nodes[0], inline_data,
+			    btrfs_item_ptr_offset(path->nodes[0],
+						  path->slots[0]),
+			    size);
+	inode_add_bytes(dst, datal);
+
+	return 0;
+}
+
 /**
  * btrfs_clone() - clone a range from inode file to another
  *
@@ -3352,9 +3461,7 @@ static int btrfs_clone(struct inode *src, struct inode *inode,
 	u32 nritems;
 	int slot;
 	int ret;
-	int no_quota;
 	const u64 len = olen_aligned;
-	u64 last_disko = 0;
 	u64 last_dest_end = destoff;
 
 	ret = -ENOMEM;
@@ -3400,7 +3507,6 @@ static int btrfs_clone(struct inode *src, struct inode *inode,
 
 		nritems = btrfs_header_nritems(path->nodes[0]);
 process_slot:
-		no_quota = 1;
 		if (path->slots[0] >= nritems) {
 			ret = btrfs_next_leaf(BTRFS_I(src)->root, path);
 			if (ret < 0)
@@ -3552,35 +3658,13 @@ process_slot:
 				btrfs_set_file_extent_num_bytes(leaf, extent,
 								datal);
 
-				/*
-				 * We need to look up the roots that point at
-				 * this bytenr and see if the new root does.  If
-				 * it does not we need to make sure we update
-				 * quotas appropriately.
-				 */
-				if (disko && root != BTRFS_I(src)->root &&
-				    disko != last_disko) {
-					no_quota = check_ref(trans, root,
-							     disko);
-					if (no_quota < 0) {
-						btrfs_abort_transaction(trans,
-									root,
-									ret);
-						btrfs_end_transaction(trans,
-								      root);
-						ret = no_quota;
-						goto out;
-					}
-				}
-
 				if (disko) {
 					inode_add_bytes(inode, datal);
 					ret = btrfs_inc_extent_ref(trans, root,
 							disko, diskl, 0,
 							root->root_key.objectid,
 							btrfs_ino(inode),
-							new_key.offset - datao,
-							no_quota);
+							new_key.offset - datao);
 					if (ret) {
 						btrfs_abort_transaction(trans,
 									root,
@@ -3594,21 +3678,6 @@ process_slot:
 			} else if (type == BTRFS_FILE_EXTENT_INLINE) {
 				u64 skip = 0;
 				u64 trim = 0;
-				u64 aligned_end = 0;
-
-				/*
-				 * Don't copy an inline extent into an offset
-				 * greater than zero. Having an inline extent
-				 * at such an offset results in chaos as btrfs
-				 * isn't prepared for such cases. Just skip
-				 * this case for the same reasons as commented
-				 * at btrfs_ioctl_clone().
-				 */
-				if (last_dest_end > 0) {
-					ret = -EOPNOTSUPP;
-					btrfs_end_transaction(trans, root);
-					goto out;
-				}
 
 				if (off > key.offset) {
 					skip = off - key.offset;
@@ -3626,42 +3695,22 @@ process_slot:
 				size -= skip + trim;
 				datal -= skip + trim;
 
-				aligned_end = ALIGN(new_key.offset + datal,
-						    root->sectorsize);
-				ret = btrfs_drop_extents(trans, root, inode,
-							 drop_start,
-							 aligned_end,
-							 1);
+				ret = clone_copy_inline_extent(src, inode,
+							       trans, path,
+							       &new_key,
+							       drop_start,
+							       datal,
+							       skip, size, buf);
 				if (ret) {
 					if (ret != -EOPNOTSUPP)
 						btrfs_abort_transaction(trans,
-							root, ret);
+									root,
+									ret);
 					btrfs_end_transaction(trans, root);
 					goto out;
 				}
-
-				ret = btrfs_insert_empty_item(trans, root, path,
-							      &new_key, size);
-				if (ret) {
-					btrfs_abort_transaction(trans, root,
-								ret);
-					btrfs_end_transaction(trans, root);
-					goto out;
-				}
-
-				if (skip) {
-					u32 start =
-					  btrfs_file_extent_calc_inline_size(0);
-					memmove(buf+start, buf+start+skip,
-						datal);
-				}
-
 				leaf = path->nodes[0];
 				slot = path->slots[0];
-				write_extent_buffer(leaf, buf,
-					    btrfs_item_ptr_offset(leaf, slot),
-					    size);
-				inode_add_bytes(inode, datal);
 			}
 
 			/* If we have an implicit hole (NO_HOLES feature). */
