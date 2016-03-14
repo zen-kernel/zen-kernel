@@ -59,7 +59,7 @@ struct pci_pme_device {
 	struct pci_dev *dev;
 };
 
-#define PME_TIMEOUT 1000 /* How long between PME checks */
+#define PME_TIMEOUT 4000 /* How long between PME checks */
 
 static void pci_dev_d3_sleep(struct pci_dev *dev)
 {
