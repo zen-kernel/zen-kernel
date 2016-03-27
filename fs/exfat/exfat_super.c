@@ -1375,7 +1375,8 @@ static void *exfat_follow_link(struct dentry *dentry, struct nameidata *nd)
 #endif
 
 const struct inode_operations exfat_symlink_inode_operations = {
-	.readlink    = generic_readlink
+	.readlink    = generic_readlink,
+	.follow_link = exfat_follow_link,
 };
 
 static int exfat_file_release(struct inode *inode, struct file *filp)
