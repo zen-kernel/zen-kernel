@@ -1,0 +1,75 @@
+Reiser4 filesystem
+==================
+Reiser4 is a file system based on dancing tree algorithms, and is
+described at http://www.namesys.com
+
+
+References
+==========
+web page		http://namesys.com/v4/v4.html
+source code		ftp://ftp.namesys.com/pub/reiser4-for-2.6/
+userland tools		ftp://ftp.namesys.com/pub/reiser4progs/
+install page		http://www.namesys.com/install_v4.html
+
+Compile options
+===============
+Enable reiser4 debug mode
+       This checks everything imaginable while reiser4
+       runs
+
+Mount options
+=============
+tmgr.atom_max_size=N
+	Atoms containing more than N blocks will be forced to commit.
+	N is decimal.
+	Default is nr_free_pagecache_pages() / 2 at mount time.
+
+tmgr.atom_max_age=N
+	Atoms older than N seconds will be forced to commit. N is decimal.
+	Default is 600.
+
+tmgr.atom_max_flushers=N
+	Limit of concurrent flushers for one atom. 0 means no limit.
+	Default is 0.
+
+tree.cbk_cache.nr_slots=N
+	Number of slots in the cbk cache.
+
+flush.relocate_threshold=N
+	If flush finds more than N adjacent dirty leaf-level blocks it
+	will force them to be relocated.
+	Default is 64.
+
+flush.relocate_distance=N
+	If flush finds can find a block allocation closer than at most
+	N from the preceder it will relocate to that position.
+	Default is 64.
+
+flush.scan_maxnodes=N
+	The maximum number of nodes to scan left on a level during
+	flush.
+	Default is 10000.
+
+optimal_io_size=N
+	Preferred IO size. This value is used to set st_blksize of
+	struct stat.
+	Default is 65536.
+
+bsdgroups
+	Turn on BSD-style gid assignment.
+
+32bittimes
+	By default file in reiser4 have 64 bit timestamps. Files
+	created when filesystem is mounted with 32bittimes mount
+	option will get 32 bit timestamps.
+
+mtflush
+	Turn off concurrent flushing.
+
+nopseudo
+	Disable pseudo files support. See
+	http://namesys.com/v4/pseudo.html for more about pseudo files.
+
+dont_load_bitmap
+	Don't load all bitmap blocks at mount time, it is useful for
+	machines with tiny RAM and large disks.
