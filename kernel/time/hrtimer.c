@@ -2226,7 +2226,7 @@ EXPORT_SYMBOL_GPL(schedule_hrtimeout);
 long __sched schedule_msec_hrtimeout(long timeout)
 {
 	struct hrtimer_sleeper t;
-	int delta, secs, jiffs;
+	int delta, jiffs;
 	ktime_t expires;
 
 	if (!timeout) {
@@ -2243,9 +2243,8 @@ long __sched schedule_msec_hrtimeout(long timeout)
 	if (jiffs > 4 || hrtimer_resolution >= NSEC_PER_SEC / HZ || pm_freezing)
 		return schedule_timeout(jiffs);
 
-	secs = timeout / 1000;
 	delta = (timeout % 1000) * NSEC_PER_MSEC;
-	expires = ktime_set(secs, delta);
+	expires = ktime_set(0, delta);
 
 	hrtimer_init_sleeper_on_stack(&t, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	hrtimer_set_expires_range_ns(&t.timer, expires, delta);
@@ -2267,9 +2266,51 @@ long __sched schedule_msec_hrtimeout(long timeout)
 
 EXPORT_SYMBOL(schedule_msec_hrtimeout);
 
+#define USECS_PER_SEC 1000000
+extern int hrtimer_granularity_us;
+
+static inline long schedule_usec_hrtimeout(long timeout)
+{
+	struct hrtimer_sleeper t;
+	ktime_t expires;
+	int delta;
+
+	if (!timeout) {
+		__set_current_state(TASK_RUNNING);
+		return 0;
+	}
+
+	if (hrtimer_resolution >= NSEC_PER_SEC / HZ)
+		return schedule_timeout(usecs_to_jiffies(timeout));
+
+	if (timeout < hrtimer_granularity_us)
+		timeout = hrtimer_granularity_us;
+	delta = (timeout % USECS_PER_SEC) * NSEC_PER_USEC;
+	expires = ktime_set(0, delta);
+
+	hrtimer_init_sleeper_on_stack(&t, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	hrtimer_set_expires_range_ns(&t.timer, expires, delta);
+
+	hrtimer_sleeper_start_expires(&t, HRTIMER_MODE_REL);
+
+	if (likely(t.task))
+		schedule();
+
+	hrtimer_cancel(&t.timer);
+	destroy_hrtimer_on_stack(&t.timer);
+
+	__set_current_state(TASK_RUNNING);
+
+	expires = hrtimer_expires_remaining(&t.timer);
+	timeout = ktime_to_us(expires);
+	return timeout < 0 ? 0 : timeout;
+}
+
+int __read_mostly hrtimeout_min_us = 500;
+
 long __sched schedule_min_hrtimeout(void)
 {
-	return schedule_msec_hrtimeout(1);
+	return usecs_to_jiffies(schedule_usec_hrtimeout(hrtimeout_min_us));
 }
 
 EXPORT_SYMBOL(schedule_min_hrtimeout);
