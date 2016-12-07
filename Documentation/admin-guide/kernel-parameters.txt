@@ -4658,6 +4658,10 @@ Kernel parameters
 
 	nosync		[HW,M68K] Disables sync negotiation for all devices.
 
+	nothreadirqs	[KNL,EARLY]
+			Disable forced threading of interrupt handlers that
+			is enabled by default with CONFIG_FORCE_IRQ_THREADING.
+
 	no_timer_check	[X86,APIC] Disables the code which tests for broken
 			timer IRQ sources, i.e., the IO-APIC timer. This can
 			work around problems with incorrect timer
