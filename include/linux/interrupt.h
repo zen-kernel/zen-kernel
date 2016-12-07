@@ -511,6 +511,9 @@ extern int irq_set_irqchip_state(unsigned int irq, enum irqchip_irq_state which,
 #ifdef CONFIG_IRQ_FORCED_THREADING
 # ifdef CONFIG_PREEMPT_RT
 #  define force_irqthreads()	(true)
+# elif defined(CONFIG_FORCE_IRQ_THREADING)
+DECLARE_STATIC_KEY_TRUE(force_irqthreads_key);
+#  define force_irqthreads()	(static_branch_likely(&force_irqthreads_key))
 # else
 DECLARE_STATIC_KEY_FALSE(force_irqthreads_key);
 #  define force_irqthreads()	(static_branch_unlikely(&force_irqthreads_key))
