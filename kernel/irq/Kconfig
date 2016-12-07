@@ -108,6 +108,23 @@ config GENERIC_IRQ_RESERVATION_MODE
 config IRQ_FORCED_THREADING
        bool
 
+config FORCE_IRQ_THREADING
+	bool "Make IRQ threading compulsory"
+	depends on IRQ_FORCED_THREADING
+	default n
+	help
+
+	  Make IRQ threading mandatory for any IRQ handlers that support it
+	  instead of being optional and requiring the threadirqs kernel
+	  parameter. Instead they can be optionally disabled with the
+	  nothreadirqs kernel parameter.
+
+	  Enabling this may make some architectures not boot with runqueue
+	  sharing and MuQSS.
+
+	  Enable if you are building for a desktop or low latency system,
+	  otherwise say N.
+
 config SPARSE_IRQ
 	bool "Support sparse irq numbering" if MAY_HAVE_SPARSE_IRQ
 	help
