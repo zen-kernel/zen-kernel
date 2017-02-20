@@ -2258,7 +2258,7 @@ long __sched schedule_msec_hrtimeout(long timeout)
 	 * (yet) better than Hz, as would occur during startup, use regular
 	 * timers.
 	 */
-	if (jiffs > 4 || hrtimer_resolution >= NSEC_PER_SEC / HZ)
+	if (jiffs > 4 || hrtimer_resolution >= NSEC_PER_SEC / HZ || pm_freezing)
 		return schedule_timeout(jiffs);
 
 	secs = timeout / 1000;
