@@ -401,7 +401,7 @@ int snd_tea575x_s_hw_freq_seek(struct file *file, struct snd_tea575x *tea,
 	for (;;) {
 		if (time_after(jiffies, timeout))
 			break;
-		if (schedule_timeout_interruptible(msecs_to_jiffies(10))) {
+		if (schedule_msec_hrtimeout_interruptible((10))) {
 			/* some signal arrived, stop search */
 			tea->val &= ~TEA575X_BIT_SEARCH;
 			snd_tea575x_set_freq(tea);
