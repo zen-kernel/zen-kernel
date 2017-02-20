@@ -843,7 +843,7 @@ int ivtv_stop_v4l2_encode_stream(struct ivtv_stream *s, int gop_end)
 			while (!test_bit(IVTV_F_I_EOS, &itv->i_flags) &&
 				time_before(jiffies,
 					    then + msecs_to_jiffies(2000))) {
-				schedule_timeout(msecs_to_jiffies(10));
+				schedule_msec_hrtimeout((10));
 			}
 
 			/* To convert jiffies to ms, we must multiply by 1000
