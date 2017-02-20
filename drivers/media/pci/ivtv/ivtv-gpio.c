@@ -105,7 +105,7 @@ void ivtv_reset_ir_gpio(struct ivtv *itv)
 	curout = (curout & ~0xF) | 1;
 	write_reg(curout, IVTV_REG_GPIO_OUT);
 	/* We could use something else for smaller time */
-	schedule_timeout_interruptible(msecs_to_jiffies(1));
+	schedule_msec_hrtimeout_interruptible((1));
 	curout |= 2;
 	write_reg(curout, IVTV_REG_GPIO_OUT);
 	curdir &= ~0x80;
@@ -125,11 +125,11 @@ int ivtv_reset_tuner_gpio(void *dev, int component, int cmd, int value)
 	curout = read_reg(IVTV_REG_GPIO_OUT);
 	curout &= ~(1 << itv->card->xceive_pin);
 	write_reg(curout, IVTV_REG_GPIO_OUT);
-	schedule_timeout_interruptible(msecs_to_jiffies(1));
+	schedule_msec_hrtimeout_interruptible((1));
 
 	curout |= 1 << itv->card->xceive_pin;
 	write_reg(curout, IVTV_REG_GPIO_OUT);
-	schedule_timeout_interruptible(msecs_to_jiffies(1));
+	schedule_msec_hrtimeout_interruptible((1));
 	return 0;
 }
 
