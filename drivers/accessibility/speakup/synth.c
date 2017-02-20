@@ -93,12 +93,8 @@ static void _spk_do_catch_up(struct spk_synth *synth, int unicode)
 		spin_unlock_irqrestore(&speakup_info.spinlock, flags);
 		if (ch == '\n')
 			ch = synth->procspeech;
-		if (unicode)
-			ret = synth->io_ops->synth_out_unicode(synth, ch);
-		else
-			ret = synth->io_ops->synth_out(synth, ch);
-		if (!ret) {
-			schedule_timeout(msecs_to_jiffies(full_time_val));
+		if (!synth->io_ops->synth_out(synth, ch)) {
+			schedule_msec_hrtimeout(full_time_val);
 			continue;
 		}
 		if (time_after_eq(jiffies, jiff_max) && (ch == SPACE)) {
@@ -108,11 +104,9 @@ static void _spk_do_catch_up(struct spk_synth *synth, int unicode)
 			full_time_val = full_time->u.n.value;
 			spin_unlock_irqrestore(&speakup_info.spinlock, flags);
 			if (synth->io_ops->synth_out(synth, synth->procspeech))
-				schedule_timeout(
-					msecs_to_jiffies(delay_time_val));
+				schedule_msec_hrtimeout(delay_time_val);
 			else
-				schedule_timeout(
-					msecs_to_jiffies(full_time_val));
+				schedule_msec_hrtimeout(full_time_val);
 			jiff_max = jiffies + jiffy_delta_val;
 		}
 		set_current_state(TASK_RUNNING);
