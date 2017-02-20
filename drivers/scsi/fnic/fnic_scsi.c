@@ -217,7 +217,7 @@ int fnic_fw_reset_handler(struct fnic *fnic)
 
 	/* wait for io cmpl */
 	while (atomic_read(&fnic->in_flight))
-		schedule_timeout(msecs_to_jiffies(1));
+		schedule_msec_hrtimeout((1));
 
 	spin_lock_irqsave(&fnic->wq_copy_lock[0], flags);
 
@@ -2277,7 +2277,7 @@ static int fnic_clean_pending_aborts(struct fnic *fnic,
 		}
 	}
 
-	schedule_timeout(msecs_to_jiffies(2 * fnic->config.ed_tov));
+	schedule_msec_hrtimeout((2 * fnic->config.ed_tov));
 
 	/* walk again to check, if IOs are still pending in fw */
 	if (fnic_is_abts_pending(fnic, lr_sc))

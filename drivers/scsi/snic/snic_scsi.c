@@ -2349,7 +2349,7 @@ snic_reset(struct Scsi_Host *shost, struct scsi_cmnd *sc)
 
 	/* Wait for all the IOs that are entered in Qcmd */
 	while (atomic_read(&snic->ios_inflight))
-		schedule_timeout(msecs_to_jiffies(1));
+		schedule_msec_hrtimeout((1));
 
 	ret = snic_issue_hba_reset(snic, sc);
 	if (ret) {
