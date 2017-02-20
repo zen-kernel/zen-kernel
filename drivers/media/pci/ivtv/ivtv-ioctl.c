@@ -1139,7 +1139,7 @@ void ivtv_s_std_dec(struct ivtv *itv, v4l2_std_id std)
 				TASK_UNINTERRUPTIBLE);
 		if ((read_reg(IVTV_REG_DEC_LINE_FIELD) >> 16) < 100)
 			break;
-		schedule_timeout(msecs_to_jiffies(25));
+		schedule_msec_hrtimeout((25));
 	}
 	finish_wait(&itv->vsync_waitq, &wait);
 	mutex_lock(&itv->serialize_lock);

@@ -242,7 +242,7 @@ static int pcan_usb_write_mode(struct peak_usb_device *dev, u8 onoff)
 	} else {
 		/* the PCAN-USB needs time to init */
 		set_current_state(TASK_INTERRUPTIBLE);
-		schedule_timeout(msecs_to_jiffies(PCAN_USB_STARTUP_TIMEOUT));
+		schedule_msec_hrtimeout((PCAN_USB_STARTUP_TIMEOUT));
 	}
 
 	return err;
