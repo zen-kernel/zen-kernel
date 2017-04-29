@@ -513,7 +513,7 @@ static void sched_sync_hw_clock(struct timespec64 now,
 		 * the algorithm is very likely to require a short-sleep retry
 		 * after the above long sleep to synchronize ts_nsec.
 		 */
-		next.tv_sec = 0;
+		next.tv_sec = 10;
 	}
 
 	/* Compute the needed delay that will get to tv_nsec == target_nsec */
