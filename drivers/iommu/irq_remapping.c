@@ -20,7 +20,21 @@
 int irq_remapping_enabled;
 int irq_remap_broken;
 int disable_sourceid_checking;
-int no_x2apic_optout;
+
+#if defined(CONFIG_ZEN_INTERACTIVE)
+	/* Ignore BIOS request to disable x2apic with IOMMU is enabled.  There's
+	 * evidence now that BIOS developers are turning off support for x2apic
+	 * where it previously worked just fine.  Also, consumer level hardware
+	 * like the Dell Latitude E7450 and the Asus X99 Deluxe board, both set
+	 * the opt-out bit.  When setting 'no_x2apic_optout' to ignore, the E7450
+	 * actually behaves _better_ by not screwing up the DPI on SDDM.
+	 *
+	 * Lets reverse the optout kernel parameter and see what improves.
+	 */
+	int no_x2apic_optout = 1;
+#else
+	int no_x2apic_optout;
+#endif
 
 int disable_irq_post = 0;
 
@@ -66,8 +80,13 @@ static __init int setup_irqremap(char *str)
 			disable_irq_post = 1;
 		} else if (!strncmp(str, "nosid", 5))
 			disable_sourceid_checking = 1;
-		else if (!strncmp(str, "no_x2apic_optout", 16))
-			no_x2apic_optout = 1;
+		#if defined(CONFIG_ZEN_INTERACTIVE)
+			else if (!strncmp(str, "x2apic_optout", 16))
+				no_x2apic_optout = 0;
+		#else
+			else if (!strncmp(str, "no_x2apic_optout", 16))
+				no_x2apic_optout = 1;
+		#endif
 		else if (!strncmp(str, "nopost", 6))
 			disable_irq_post = 1;
 

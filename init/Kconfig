@@ -78,6 +78,15 @@ config ZEN_INTERACTIVE
 	    Ondemand coarse upscaling limit:  80 %  ->  45 %
 	    Ondemand fine upscaling limit..:  95 %  ->  45 %
 
+	  --- IOMMU ----------------------------------------------
+
+	    ** EXPERIMENTAL **
+
+		Enables intremap=no_x2apic_optout for better interrupt routing and
+		mapping by default.  To reverse on systems that either can't boot
+		or reduce in stability, pass the parameter: intremap=x2apic_optout
+		to your bootloader.
+
 config BROKEN
 	bool
 

@@ -1581,8 +1581,8 @@ enum netdev_priv_flags {
  *	@rtnl_link_state:	This enum represents the phases of creating
  *				a new link
  *
- *	@destructor:		Called from unregister,
- *				can be used to call free_netdev
+ *	@needs_free_netdev:	Should unregister perform free_netdev?
+ *	@priv_destructor:	Called from unregister
  *	@npinfo:		XXX: need comments on this one
  * 	@nd_net:		Network namespace this network device is inside
  *
@@ -1838,7 +1838,8 @@ struct net_device {
 		RTNL_LINK_INITIALIZING,
 	} rtnl_link_state:16;
 
-	void (*destructor)(struct net_device *dev);
+	bool needs_free_netdev;
+	void (*priv_destructor)(struct net_device *dev);
 
 #ifdef CONFIG_NETPOLL
 	struct netpoll_info __rcu	*npinfo;
@@ -4229,6 +4230,11 @@ static inline const char *netdev_name(const struct net_device *dev)
 	if (!dev->name[0] || strchr(dev->name, '%'))
 		return "(unnamed net_device)";
 	return dev->name;
+}
+
+static inline bool netdev_unregistering(const struct net_device *dev)
+{
+	return dev->reg_state == NETREG_UNREGISTERING;
 }
 
 static inline const char *netdev_reg_state(const struct net_device *dev)
