@@ -2017,3 +2017,74 @@ int __sched schedule_hrtimeout(ktime_t *expires,
 	return schedule_hrtimeout_range(expires, 0, mode);
 }
 EXPORT_SYMBOL_GPL(schedule_hrtimeout);
+
+/*
+ * As per schedule_hrtimeout but taskes a millisecond value and returns how
+ * many milliseconds are left.
+ */
+long __sched schedule_msec_hrtimeout(long timeout)
+{
+	struct hrtimer_sleeper t;
+	int delta, secs, jiffs;
+	ktime_t expires;
+
+	if (!timeout) {
+		__set_current_state(TASK_RUNNING);
+		return 0;
+	}
+
+	jiffs = msecs_to_jiffies(timeout);
+	/*
+	 * If regular timer resolution is adequate or hrtimer resolution is not
+	 * (yet) better than Hz, as would occur during startup, use regular
+	 * timers.
+	 */
+	if (jiffs > 4 || hrtimer_resolution >= NSEC_PER_SEC / HZ)
+		return schedule_timeout(jiffs);
+
+	secs = timeout / 1000;
+	delta = (timeout % 1000) * NSEC_PER_MSEC;
+	expires = ktime_set(secs, delta);
+
+	hrtimer_init_on_stack(&t.timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	hrtimer_set_expires_range_ns(&t.timer, expires, delta);
+
+	hrtimer_init_sleeper(&t, current);
+
+	hrtimer_start_expires(&t.timer, HRTIMER_MODE_REL);
+
+	if (likely(t.task))
+		schedule();
+
+	hrtimer_cancel(&t.timer);
+	destroy_hrtimer_on_stack(&t.timer);
+
+	__set_current_state(TASK_RUNNING);
+
+	expires = hrtimer_expires_remaining(&t.timer);
+	timeout = ktime_to_ms(expires);
+	return timeout < 0 ? 0 : timeout;
+}
+
+EXPORT_SYMBOL(schedule_msec_hrtimeout);
+
+long __sched schedule_min_hrtimeout(void)
+{
+	return schedule_msec_hrtimeout(1);
+}
+
+EXPORT_SYMBOL(schedule_min_hrtimeout);
+
+long __sched schedule_msec_hrtimeout_interruptible(long timeout)
+{
+	__set_current_state(TASK_INTERRUPTIBLE);
+	return schedule_msec_hrtimeout(timeout);
+}
+EXPORT_SYMBOL(schedule_msec_hrtimeout_interruptible);
+
+long __sched schedule_msec_hrtimeout_uninterruptible(long timeout)
+{
+	__set_current_state(TASK_UNINTERRUPTIBLE);
+	return schedule_msec_hrtimeout(timeout);
+}
+EXPORT_SYMBOL(schedule_msec_hrtimeout_uninterruptible);
