@@ -141,7 +141,7 @@ static int qeth_l2_send_setmac(struct qeth_card *card, __u8 *mac)
 
 static int qeth_l2_write_mac(struct qeth_card *card, u8 *mac)
 {
-	enum qeth_ipa_cmds cmd = is_multicast_ether_addr_64bits(mac) ?
+	enum qeth_ipa_cmds cmd = is_multicast_ether_addr(mac) ?
 					IPA_CMD_SETGMAC : IPA_CMD_SETVMAC;
 	int rc;
 
@@ -158,7 +158,7 @@ static int qeth_l2_write_mac(struct qeth_card *card, u8 *mac)
 
 static int qeth_l2_remove_mac(struct qeth_card *card, u8 *mac)
 {
-	enum qeth_ipa_cmds cmd = is_multicast_ether_addr_64bits(mac) ?
+	enum qeth_ipa_cmds cmd = is_multicast_ether_addr(mac) ?
 					IPA_CMD_DELGMAC : IPA_CMD_DELVMAC;
 	int rc;
 
@@ -523,27 +523,34 @@ static int qeth_l2_set_mac_address(struct net_device *dev, void *p)
 		return -ERESTARTSYS;
 	}
 
+	/* avoid racing against concurrent state change: */
+	if (!mutex_trylock(&card->conf_mutex))
+		return -EAGAIN;
+
 	if (!qeth_card_hw_is_reachable(card)) {
 		ether_addr_copy(dev->dev_addr, addr->sa_data);
-		return 0;
+		goto out_unlock;
 	}
 
 	/* don't register the same address twice */
 	if (ether_addr_equal_64bits(dev->dev_addr, addr->sa_data) &&
 	    (card->info.mac_bits & QETH_LAYER2_MAC_REGISTERED))
-		return 0;
+		goto out_unlock;
 
 	/* add the new address, switch over, drop the old */
 	rc = qeth_l2_send_setmac(card, addr->sa_data);
 	if (rc)
-		return rc;
+		goto out_unlock;
 	ether_addr_copy(old_addr, dev->dev_addr);
 	ether_addr_copy(dev->dev_addr, addr->sa_data);
 
 	if (card->info.mac_bits & QETH_LAYER2_MAC_REGISTERED)
 		qeth_l2_remove_mac(card, old_addr);
 	card->info.mac_bits |= QETH_LAYER2_MAC_REGISTERED;
-	return 0;
+
+out_unlock:
+	mutex_unlock(&card->conf_mutex);
+	return rc;
 }
 
 static void qeth_promisc_to_bridge(struct qeth_card *card)

@@ -1411,7 +1411,7 @@ static struct pinctrl_desc mtk_desc = {
 
 static int mtk_gpio_get(struct gpio_chip *chip, unsigned int gpio)
 {
-	struct mtk_pinctrl *hw = dev_get_drvdata(chip->parent);
+	struct mtk_pinctrl *hw = gpiochip_get_data(chip);
 	int value, err;
 
 	err = mtk_hw_get_value(hw, gpio, PINCTRL_PIN_REG_DI, &value);
@@ -1423,7 +1423,7 @@ static int mtk_gpio_get(struct gpio_chip *chip, unsigned int gpio)
 
 static void mtk_gpio_set(struct gpio_chip *chip, unsigned int gpio, int value)
 {
-	struct mtk_pinctrl *hw = dev_get_drvdata(chip->parent);
+	struct mtk_pinctrl *hw = gpiochip_get_data(chip);
 
 	mtk_hw_set_value(hw, gpio, PINCTRL_PIN_REG_DO, !!value);
 }
@@ -1463,11 +1463,20 @@ static int mtk_build_gpiochip(struct mtk_pinctrl *hw, struct device_node *np)
 	if (ret < 0)
 		return ret;
 
-	ret = gpiochip_add_pin_range(chip, dev_name(hw->dev), 0, 0,
-				     chip->ngpio);
-	if (ret < 0) {
-		gpiochip_remove(chip);
-		return ret;
+	/* Just for backward compatible for these old pinctrl nodes without
+	 * "gpio-ranges" property. Otherwise, called directly from a
+	 * DeviceTree-supported pinctrl driver is DEPRECATED.
+	 * Please see Section 2.1 of
+	 * Documentation/devicetree/bindings/gpio/gpio.txt on how to
+	 * bind pinctrl and gpio drivers via the "gpio-ranges" property.
+	 */
+	if (!of_find_property(np, "gpio-ranges", NULL)) {
+		ret = gpiochip_add_pin_range(chip, dev_name(hw->dev), 0, 0,
+					     chip->ngpio);
+		if (ret < 0) {
+			gpiochip_remove(chip);
+			return ret;
+		}
 	}
 
 	return 0;
@@ -1561,7 +1570,7 @@ static int mtk_pinctrl_probe(struct platform_device *pdev)
 	err = mtk_build_groups(hw);
 	if (err) {
 		dev_err(&pdev->dev, "Failed to build groups\n");
-		return 0;
+		return err;
 	}
 
 	/* Setup functions descriptions per SoC types */
