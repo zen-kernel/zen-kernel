@@ -82,7 +82,7 @@
 #define BOND_STATE_ACTIVE       0   /* link is active */
 #define BOND_STATE_BACKUP       1   /* link is backup */
 
-#define BOND_DEFAULT_MAX_BONDS  1   /* Default maximum number of devices to support */
+#define BOND_DEFAULT_MAX_BONDS  0   /* Default maximum number of devices to support */
 
 #define BOND_DEFAULT_TX_QUEUES 16   /* Default number of tx queues per device */
 
