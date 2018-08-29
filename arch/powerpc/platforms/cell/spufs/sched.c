@@ -52,6 +52,13 @@ static struct timer_list spusched_timer;
 static struct timer_list spuloadavg_timer;
 
 /*
+ * Priority of a normal, non-rt, non-niced'd process (aka nice level 0).
+ */
+#ifndef CONFIG_SCHED_MUQSS
+#define NORMAL_PRIO		120
+#endif
+
+/*
  * Frequency of the spu scheduler tick.  By default we do one SPU scheduler
  * tick for every 10 CPU scheduler ticks.
  */

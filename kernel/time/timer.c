@@ -44,7 +44,9 @@
 #include <linux/slab.h>
 #include <linux/compat.h>
 #include <linux/random.h>
+#ifdef CONFIG_SCHED_MUQSS
 #include <linux/freezer.h>
+#endif
 
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
@@ -1610,8 +1612,10 @@ static u64 cmp_next_hrtimer_event(struct timer_base *base, u64 basem, u64 expire
 	if (nextevt <= basem)
 		return basem;
 
+#ifdef CONFIG_SCHED_MUQSS
 	if (nextevt < expires && nextevt - basem <= TICK_NSEC)
 		base->is_idle = false;
+#endif
 
 	/*
 	 * Round up to the next jiffie. High resolution timers are
