@@ -130,8 +130,8 @@ static int __maybe_unused four = 4;
 static unsigned long zero_ul;
 static unsigned long one_ul = 1;
 static unsigned long long_max = LONG_MAX;
-static int __read_mostly one_hundred = 100;
-static int __read_mostly one_thousand = 1000;
+static int one_hundred = 100;
+static int one_thousand = 1000;
 static int zero = 0;
 static int one = 1;
 #ifdef CONFIG_SCHED_MUQSS
