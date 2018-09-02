@@ -466,19 +466,34 @@ out:
 	return rc;
 }
 
-void
-smb2_cached_lease_break(struct work_struct *work)
+static void
+smb2_close_cached_fid(struct kref *ref)
 {
-	struct cached_fid *cfid = container_of(work,
-				struct cached_fid, lease_break);
-	mutex_lock(&cfid->fid_mutex);
+	struct cached_fid *cfid = container_of(ref, struct cached_fid,
+					       refcount);
+
 	if (cfid->is_valid) {
 		cifs_dbg(FYI, "clear cached root file handle\n");
 		SMB2_close(0, cfid->tcon, cfid->fid->persistent_fid,
 			   cfid->fid->volatile_fid);
 		cfid->is_valid = false;
 	}
+}
+
+void close_shroot(struct cached_fid *cfid)
+{
+	mutex_lock(&cfid->fid_mutex);
+	kref_put(&cfid->refcount, smb2_close_cached_fid);
 	mutex_unlock(&cfid->fid_mutex);
+}
+
+void
+smb2_cached_lease_break(struct work_struct *work)
+{
+	struct cached_fid *cfid = container_of(work,
+				struct cached_fid, lease_break);
+
+	close_shroot(cfid);
 }
 
 /*
@@ -495,6 +510,7 @@ int open_shroot(unsigned int xid, struct cifs_tcon *tcon, struct cifs_fid *pfid)
 	if (tcon->crfid.is_valid) {
 		cifs_dbg(FYI, "found a cached root file handle\n");
 		memcpy(pfid, tcon->crfid.fid, sizeof(struct cifs_fid));
+		kref_get(&tcon->crfid.refcount);
 		mutex_unlock(&tcon->crfid.fid_mutex);
 		return 0;
 	}
@@ -511,6 +527,8 @@ int open_shroot(unsigned int xid, struct cifs_tcon *tcon, struct cifs_fid *pfid)
 		memcpy(tcon->crfid.fid, pfid, sizeof(struct cifs_fid));
 		tcon->crfid.tcon = tcon;
 		tcon->crfid.is_valid = true;
+		kref_init(&tcon->crfid.refcount);
+		kref_get(&tcon->crfid.refcount);
 	}
 	mutex_unlock(&tcon->crfid.fid_mutex);
 	return rc;
@@ -549,9 +567,14 @@ smb3_qfs_tcon(const unsigned int xid, struct cifs_tcon *tcon)
 	SMB2_QFS_attr(xid, tcon, fid.persistent_fid, fid.volatile_fid,
 			FS_DEVICE_INFORMATION);
 	SMB2_QFS_attr(xid, tcon, fid.persistent_fid, fid.volatile_fid,
+			FS_VOLUME_INFORMATION);
+	SMB2_QFS_attr(xid, tcon, fid.persistent_fid, fid.volatile_fid,
 			FS_SECTOR_SIZE_INFORMATION); /* SMB3 specific */
 	if (no_cached_open)
 		SMB2_close(xid, tcon, fid.persistent_fid, fid.volatile_fid);
+	else
+		close_shroot(&tcon->crfid);
+
 	return;
 }
 
@@ -1353,6 +1376,13 @@ smb3_set_integrity(const unsigned int xid, struct cifs_tcon *tcon,
 
 }
 
+/* GMT Token is @GMT-YYYY.MM.DD-HH.MM.SS Unicode which is 48 bytes + null */
+#define GMT_TOKEN_SIZE 50
+
+/*
+ * Input buffer contains (empty) struct smb_snapshot array with size filled in
+ * For output see struct SRV_SNAPSHOT_ARRAY in MS-SMB2 section 2.2.32.2
+ */
 static int
 smb3_enum_snapshots(const unsigned int xid, struct cifs_tcon *tcon,
 		   struct cifsFileInfo *cfile, void __user *ioc_buf)
@@ -1382,14 +1412,27 @@ smb3_enum_snapshots(const unsigned int xid, struct cifs_tcon *tcon,
 			kfree(retbuf);
 			return rc;
 		}
-		if (snapshot_in.snapshot_array_size < sizeof(struct smb_snapshot_array)) {
-			rc = -ERANGE;
-			kfree(retbuf);
-			return rc;
-		}
 
-		if (ret_data_len > snapshot_in.snapshot_array_size)
-			ret_data_len = snapshot_in.snapshot_array_size;
+		/*
+		 * Check for min size, ie not large enough to fit even one GMT
+		 * token (snapshot).  On the first ioctl some users may pass in
+		 * smaller size (or zero) to simply get the size of the array
+		 * so the user space caller can allocate sufficient memory
+		 * and retry the ioctl again with larger array size sufficient
+		 * to hold all of the snapshot GMT tokens on the second try.
+		 */
+		if (snapshot_in.snapshot_array_size < GMT_TOKEN_SIZE)
+			ret_data_len = sizeof(struct smb_snapshot_array);
+
+		/*
+		 * We return struct SRV_SNAPSHOT_ARRAY, followed by
+		 * the snapshot array (of 50 byte GMT tokens) each
+		 * representing an available previous version of the data
+		 */
+		if (ret_data_len > (snapshot_in.snapshot_array_size +
+					sizeof(struct smb_snapshot_array)))
+			ret_data_len = snapshot_in.snapshot_array_size +
+					sizeof(struct smb_snapshot_array);
 
 		if (copy_to_user(ioc_buf, retbuf, ret_data_len))
 			rc = -EFAULT;
@@ -3366,6 +3409,11 @@ struct smb_version_operations smb311_operations = {
 	.query_all_EAs = smb2_query_eas,
 	.set_EA = smb2_set_ea,
 #endif /* CIFS_XATTR */
+#ifdef CONFIG_CIFS_ACL
+	.get_acl = get_smb2_acl,
+	.get_acl_by_fid = get_smb2_acl_by_fid,
+	.set_acl = set_smb2_acl,
+#endif /* CIFS_ACL */
 	.next_header = smb2_next_header,
 };
 #endif /* CIFS_SMB311 */
