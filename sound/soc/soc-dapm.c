@@ -137,7 +137,7 @@ static void dapm_assert_locked(struct snd_soc_dapm_context *dapm)
 static void pop_wait(u32 pop_time)
 {
 	if (pop_time)
-		schedule_timeout_uninterruptible(msecs_to_jiffies(pop_time));
+		schedule_msec_hrtimeout_uninterruptible((pop_time));
 }
 
 static void pop_dbg(struct device *dev, u32 pop_time, const char *fmt, ...)

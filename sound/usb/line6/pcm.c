@@ -131,7 +131,7 @@ static void line6_wait_clear_audio_urbs(struct snd_line6_pcm *line6pcm,
 		if (!alive)
 			break;
 		set_current_state(TASK_UNINTERRUPTIBLE);
-		schedule_timeout(1);
+		schedule_min_hrtimeout();
 	} while (--timeout > 0);
 	if (alive)
 		dev_err(line6pcm->line6->ifcdev,

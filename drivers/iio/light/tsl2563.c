@@ -282,11 +282,7 @@ static void tsl2563_wait_adc(struct tsl2563_chip *chip)
 	default:
 		delay = 402;
 	}
-	/*
-	 * TODO: Make sure that we wait at least required delay but why we
-	 * have to extend it one tick more?
-	 */
-	schedule_timeout_interruptible(msecs_to_jiffies(delay) + 2);
+	schedule_msec_hrtimeout_interruptible(delay + 1);
 }
 
 static int tsl2563_adjust_gainlevel(struct tsl2563_chip *chip, u16 adc)

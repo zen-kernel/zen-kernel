@@ -179,7 +179,7 @@ static int msp_read(struct i2c_client *client, int dev, int addr)
 			break;
 		dev_warn(&client->dev, "I/O error #%d (read 0x%02x/0x%02x)\n", err,
 		       dev, addr);
-		schedule_timeout_interruptible(msecs_to_jiffies(10));
+		schedule_msec_hrtimeout_interruptible((10));
 	}
 	if (err == 3) {
 		dev_warn(&client->dev, "resetting chip, sound will go off.\n");
@@ -220,7 +220,7 @@ static int msp_write(struct i2c_client *client, int dev, int addr, int val)
 			break;
 		dev_warn(&client->dev, "I/O error #%d (write 0x%02x/0x%02x)\n", err,
 		       dev, addr);
-		schedule_timeout_interruptible(msecs_to_jiffies(10));
+		schedule_msec_hrtimeout_interruptible((10));
 	}
 	if (err == 3) {
 		dev_warn(&client->dev, "resetting chip, sound will go off.\n");

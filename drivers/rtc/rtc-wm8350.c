@@ -119,7 +119,7 @@ static int wm8350_rtc_settime(struct device *dev, struct rtc_time *tm)
 	/* Wait until confirmation of stopping */
 	do {
 		rtc_ctrl = wm8350_reg_read(wm8350, WM8350_RTC_TIME_CONTROL);
-		schedule_timeout_uninterruptible(msecs_to_jiffies(1));
+		schedule_msec_hrtimeout_uninterruptible((1));
 	} while (--retries && !(rtc_ctrl & WM8350_RTC_STS));
 
 	if (!retries) {
@@ -202,7 +202,7 @@ static int wm8350_rtc_stop_alarm(struct wm8350 *wm8350)
 	/* Wait until confirmation of stopping */
 	do {
 		rtc_ctrl = wm8350_reg_read(wm8350, WM8350_RTC_TIME_CONTROL);
-		schedule_timeout_uninterruptible(msecs_to_jiffies(1));
+		schedule_msec_hrtimeout_uninterruptible((1));
 	} while (retries-- && !(rtc_ctrl & WM8350_RTC_ALMSTS));
 
 	if (!(rtc_ctrl & WM8350_RTC_ALMSTS))
@@ -225,7 +225,7 @@ static int wm8350_rtc_start_alarm(struct wm8350 *wm8350)
 	/* Wait until confirmation */
 	do {
 		rtc_ctrl = wm8350_reg_read(wm8350, WM8350_RTC_TIME_CONTROL);
-		schedule_timeout_uninterruptible(msecs_to_jiffies(1));
+		schedule_msec_hrtimeout_uninterruptible((1));
 	} while (retries-- && rtc_ctrl & WM8350_RTC_ALMSTS);
 
 	if (rtc_ctrl & WM8350_RTC_ALMSTS)

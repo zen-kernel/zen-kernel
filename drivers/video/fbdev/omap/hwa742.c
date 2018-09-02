@@ -926,7 +926,7 @@ static void hwa742_resume(void)
 		if (hwa742_read_reg(HWA742_PLL_DIV_REG) & (1 << 7))
 			break;
 		set_current_state(TASK_UNINTERRUPTIBLE);
-		schedule_timeout(msecs_to_jiffies(5));
+		schedule_msec_hrtimeout((5));
 	}
 	hwa742_set_update_mode(hwa742.update_mode_before_suspend);
 }

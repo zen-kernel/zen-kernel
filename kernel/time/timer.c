@@ -44,6 +44,7 @@
 #include <linux/sched/debug.h>
 #include <linux/slab.h>
 #include <linux/compat.h>
+#include <linux/freezer.h>
 
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
@@ -1800,6 +1801,18 @@ signed long __sched schedule_timeout(signed long timeout)
 
 	expire = timeout + jiffies;
 
+#ifdef CONFIG_HIGH_RES_TIMERS
+	if (timeout == 1 && hrtimer_resolution < NSEC_PER_SEC / HZ) {
+		/*
+		 * Special case 1 as being a request for the minimum timeout
+		 * and use highres timers to timeout after 1ms to workaround
+		 * the granularity of low Hz tick timers.
+		 */
+		if (!schedule_min_hrtimeout())
+			return 0;
+		goto out_timeout;
+	}
+#endif
 	timer.task = current;
 	timer_setup_on_stack(&timer.timer, process_timeout, 0);
 	__mod_timer(&timer.timer, expire, 0);
@@ -1808,10 +1821,10 @@ signed long __sched schedule_timeout(signed long timeout)
 
 	/* Remove the timer from the object tracker */
 	destroy_timer_on_stack(&timer.timer);
-
+out_timeout:
 	timeout = expire - jiffies;
 
- out:
+out:
 	return timeout < 0 ? 0 : timeout;
 }
 EXPORT_SYMBOL(schedule_timeout);
@@ -1952,7 +1965,19 @@ void __init init_timers(void)
  */
 void msleep(unsigned int msecs)
 {
-	unsigned long timeout = msecs_to_jiffies(msecs) + 1;
+	int jiffs = msecs_to_jiffies(msecs);
+	unsigned long timeout;
+
+	/*
+	 * Use high resolution timers where the resolution of tick based
+	 * timers is inadequate.
+	 */
+	if (jiffs < 5 && hrtimer_resolution < NSEC_PER_SEC / HZ && !pm_freezing) {
+		while (msecs)
+			msecs = schedule_msec_hrtimeout_uninterruptible(msecs);
+		return;
+	}
+	timeout = jiffs + 1;
 
 	while (timeout)
 		timeout = schedule_timeout_uninterruptible(timeout);
@@ -1966,7 +1991,15 @@ EXPORT_SYMBOL(msleep);
  */
 unsigned long msleep_interruptible(unsigned int msecs)
 {
-	unsigned long timeout = msecs_to_jiffies(msecs) + 1;
+	int jiffs = msecs_to_jiffies(msecs);
+	unsigned long timeout;
+
+	if (jiffs < 5 && hrtimer_resolution < NSEC_PER_SEC / HZ && !pm_freezing) {
+		while (msecs && !signal_pending(current))
+			msecs = schedule_msec_hrtimeout_interruptible(msecs);
+		return msecs;
+	}
+	timeout = jiffs + 1;
 
 	while (timeout && !signal_pending(current))
 		timeout = schedule_timeout_interruptible(timeout);

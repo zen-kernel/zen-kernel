@@ -253,7 +253,7 @@ unsigned int ucb1x00_adc_read(struct ucb1x00 *ucb, int adc_channel, int sync)
 			break;
 		/* yield to other processes */
 		set_current_state(TASK_INTERRUPTIBLE);
-		schedule_timeout(1);
+		schedule_min_hrtimeout();
 	}
 
 	return UCB_ADC_DAT(val);
