@@ -120,16 +120,16 @@ static unsigned long long_max = LONG_MAX;
 static int one_hundred = 100;
 static int two_hundred = 200;
 static int one_thousand = 1000;
+#ifdef CONFIG_SCHED_MUQSS
 static int zero = 0;
 static int one = 1;
-#ifdef CONFIG_SCHED_MUQSS
 extern int rr_interval;
 extern int sched_interactive;
 extern int sched_iso_cpu;
 extern int sched_yield_type;
-#endif
 extern int hrtimer_granularity_us;
 extern int hrtimeout_min_us;
+#endif
 #if defined(CONFIG_PRINTK) || defined(CONFIG_SCHED_MUQSS)
 static int ten_thousand = 10000;
 #endif
@@ -1902,7 +1902,6 @@ static struct ctl_table kern_table[] = {
 		.extra2		= SYSCTL_ONE,
 	},
 #endif /* CONFIG_SMP && CONFIG_SCHEDSTATS */
-#endif /* CONFIG_SCHED_MUQSS */
 	{
 		.procname	= "hrtimer_granularity_us",
 		.data		= &hrtimer_granularity_us,
@@ -1921,6 +1920,7 @@ static struct ctl_table kern_table[] = {
 		.extra1		= &one,
 		.extra2		= &ten_thousand,
 	},
+#endif /* CONFIG_SCHED_MUQSS */
 #if defined(CONFIG_ENERGY_MODEL) && defined(CONFIG_CPU_FREQ_GOV_SCHEDUTIL)
 	{
 		.procname	= "sched_energy_aware",
