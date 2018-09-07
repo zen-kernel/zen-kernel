@@ -1833,8 +1833,7 @@ static bool srpt_close_ch(struct srpt_rdma_ch *ch)
 	int ret;
 
 	if (!srpt_set_ch_state(ch, CH_DRAINING)) {
-		pr_debug("%s-%d: already closed\n", ch->sess_name,
-			 ch->qp->qp_num);
+		pr_debug("%s: already closed\n", ch->sess_name);
 		return false;
 	}
 
@@ -1940,8 +1939,8 @@ static void __srpt_close_all_ch(struct srpt_port *sport)
 	list_for_each_entry(nexus, &sport->nexus_list, entry) {
 		list_for_each_entry(ch, &nexus->ch_list, list) {
 			if (srpt_disconnect_ch(ch) >= 0)
-				pr_info("Closing channel %s-%d because target %s_%d has been disabled\n",
-					ch->sess_name, ch->qp->qp_num,
+				pr_info("Closing channel %s because target %s_%d has been disabled\n",
+					ch->sess_name,
 					sport->sdev->device->name, sport->port);
 			srpt_close_ch(ch);
 		}
@@ -2087,7 +2086,7 @@ static int srpt_cm_req_recv(struct srpt_device *const sdev,
 		struct rdma_conn_param rdma_cm;
 		struct ib_cm_rep_param ib_cm;
 	} *rep_param = NULL;
-	struct srpt_rdma_ch *ch;
+	struct srpt_rdma_ch *ch = NULL;
 	char i_port_id[36];
 	u32 it_iu_len;
 	int i, ret;
@@ -2234,13 +2233,15 @@ static int srpt_cm_req_recv(struct srpt_device *const sdev,
 						TARGET_PROT_NORMAL,
 						i_port_id + 2, ch, NULL);
 	if (IS_ERR_OR_NULL(ch->sess)) {
+		WARN_ON_ONCE(ch->sess == NULL);
 		ret = PTR_ERR(ch->sess);
+		ch->sess = NULL;
 		pr_info("Rejected login for initiator %s: ret = %d.\n",
 			ch->sess_name, ret);
 		rej->reason = cpu_to_be32(ret == -ENOMEM ?
 				SRP_LOGIN_REJ_INSUFFICIENT_RESOURCES :
 				SRP_LOGIN_REJ_CHANNEL_LIMIT_REACHED);
-		goto reject;
+		goto destroy_ib;
 	}
 
 	mutex_lock(&sport->mutex);
@@ -2279,7 +2280,7 @@ static int srpt_cm_req_recv(struct srpt_device *const sdev,
 		rej->reason = cpu_to_be32(SRP_LOGIN_REJ_INSUFFICIENT_RESOURCES);
 		pr_err("rejected SRP_LOGIN_REQ because enabling RTR failed (error code = %d)\n",
 		       ret);
-		goto destroy_ib;
+		goto reject;
 	}
 
 	pr_debug("Establish connection sess=%p name=%s ch=%p\n", ch->sess,
@@ -2358,8 +2359,11 @@ free_ring:
 	srpt_free_ioctx_ring((struct srpt_ioctx **)ch->ioctx_ring,
 			     ch->sport->sdev, ch->rq_size,
 			     ch->max_rsp_size, DMA_TO_DEVICE);
+
 free_ch:
-	if (ib_cm_id)
+	if (rdma_cm_id)
+		rdma_cm_id->context = NULL;
+	else
 		ib_cm_id->context = NULL;
 	kfree(ch);
 	ch = NULL;
@@ -2378,6 +2382,15 @@ reject:
 	else
 		ib_send_cm_rej(ib_cm_id, IB_CM_REJ_CONSUMER_DEFINED, NULL, 0,
 			       rej, sizeof(*rej));
+
+	if (ch && ch->sess) {
+		srpt_close_ch(ch);
+		/*
+		 * Tell the caller not to free cm_id since
+		 * srpt_release_channel_work() will do that.
+		 */
+		ret = 0;
+	}
 
 out:
 	kfree(rep_param);
@@ -2969,7 +2982,8 @@ static void srpt_add_one(struct ib_device *device)
 
 	pr_debug("device = %p\n", device);
 
-	sdev = kzalloc(sizeof(*sdev), GFP_KERNEL);
+	sdev = kzalloc(struct_size(sdev, port, device->phys_port_cnt),
+		       GFP_KERNEL);
 	if (!sdev)
 		goto err;
 
@@ -3022,8 +3036,6 @@ static void srpt_add_one(struct ib_device *device)
 	INIT_IB_EVENT_HANDLER(&sdev->event_handler, sdev->device,
 			      srpt_event_handler);
 	ib_register_event_handler(&sdev->event_handler);
-
-	WARN_ON(sdev->device->phys_port_cnt > ARRAY_SIZE(sdev->port));
 
 	for (i = 1; i <= sdev->device->phys_port_cnt; i++) {
 		sport = &sdev->port[i - 1];

@@ -27,6 +27,7 @@
 #include <linux/slab.h>
 #include <linux/prefetch.h>
 #include <linux/delay.h>
+#include <asm/unaligned.h>
 #include <video/udlfb.h>
 #include "edid.h"
 
@@ -450,17 +451,17 @@ static void dlfb_compress_hline(
 		raw_pixels_count_byte = cmd++; /*  we'll know this later */
 		raw_pixel_start = pixel;
 
-		cmd_pixel_end = pixel + min(MAX_CMD_PIXELS + 1,
-			min((int)(pixel_end - pixel),
-			    (int)(cmd_buffer_end - cmd) / BPP));
+		cmd_pixel_end = pixel + min3(MAX_CMD_PIXELS + 1UL,
+					(unsigned long)(pixel_end - pixel),
+					(unsigned long)(cmd_buffer_end - 1 - cmd) / BPP);
 
-		prefetch_range((void *) pixel, (cmd_pixel_end - pixel) * BPP);
+		prefetch_range((void *) pixel, (u8 *)cmd_pixel_end - (u8 *)pixel);
 
 		while (pixel < cmd_pixel_end) {
 			const uint16_t * const repeating_pixel = pixel;
 
-			*cmd++ = *pixel >> 8;
-			*cmd++ = *pixel;
+			put_unaligned_be16(*pixel, cmd);
+			cmd += 2;
 			pixel++;
 
 			if (unlikely((pixel < cmd_pixel_end) &&
@@ -486,13 +487,16 @@ static void dlfb_compress_hline(
 		if (pixel > raw_pixel_start) {
 			/* finalize last RAW span */
 			*raw_pixels_count_byte = (pixel-raw_pixel_start) & 0xFF;
+		} else {
+			/* undo unused byte */
+			cmd--;
 		}
 
 		*cmd_pixels_count_byte = (pixel - cmd_pixel_start) & 0xFF;
-		dev_addr += (pixel - cmd_pixel_start) * BPP;
+		dev_addr += (u8 *)pixel - (u8 *)cmd_pixel_start;
 	}
 
-	if (cmd_buffer_end <= MIN_RLX_CMD_BYTES + cmd) {
+	if (cmd_buffer_end - MIN_RLX_CMD_BYTES <= cmd) {
 		/* Fill leftover bytes with no-ops */
 		if (cmd_buffer_end > cmd)
 			memset(cmd, 0xAF, cmd_buffer_end - cmd);
@@ -610,8 +614,11 @@ static int dlfb_handle_damage(struct dlfb_data *dlfb, int x, int y,
 	}
 
 	if (cmd > (char *) urb->transfer_buffer) {
+		int len;
+		if (cmd < (char *) urb->transfer_buffer + urb->transfer_buffer_length)
+			*cmd++ = 0xAF;
 		/* Send partial buffer remaining before exiting */
-		int len = cmd - (char *) urb->transfer_buffer;
+		len = cmd - (char *) urb->transfer_buffer;
 		ret = dlfb_submit_urb(dlfb, urb, len);
 		bytes_sent += len;
 	} else
@@ -735,8 +742,11 @@ static void dlfb_dpy_deferred_io(struct fb_info *info,
 	}
 
 	if (cmd > (char *) urb->transfer_buffer) {
+		int len;
+		if (cmd < (char *) urb->transfer_buffer + urb->transfer_buffer_length)
+			*cmd++ = 0xAF;
 		/* Send partial buffer remaining before exiting */
-		int len = cmd - (char *) urb->transfer_buffer;
+		len = cmd - (char *) urb->transfer_buffer;
 		dlfb_submit_urb(dlfb, urb, len);
 		bytes_sent += len;
 	} else
@@ -922,14 +932,6 @@ static void dlfb_free(struct kref *kref)
 	kfree(dlfb);
 }
 
-static void dlfb_release_urb_work(struct work_struct *work)
-{
-	struct urb_node *unode = container_of(work, struct urb_node,
-					      release_urb_work.work);
-
-	up(&unode->dlfb->urbs.limit_sem);
-}
-
 static void dlfb_free_framebuffer(struct dlfb_data *dlfb)
 {
 	struct fb_info *info = dlfb->info;
@@ -1039,10 +1041,25 @@ static int dlfb_ops_set_par(struct fb_info *info)
 	int result;
 	u16 *pix_framebuffer;
 	int i;
+	struct fb_var_screeninfo fvs;
+
+	/* clear the activate field because it causes spurious miscompares */
+	fvs = info->var;
+	fvs.activate = 0;
+	fvs.vmode &= ~FB_VMODE_SMOOTH_XPAN;
+
+	if (!memcmp(&dlfb->current_mode, &fvs, sizeof(struct fb_var_screeninfo)))
+		return 0;
 
 	result = dlfb_set_video_mode(dlfb, &info->var);
 
-	if ((result == 0) && (dlfb->fb_count == 0)) {
+	if (result)
+		return result;
+
+	dlfb->current_mode = fvs;
+	info->fix.line_length = info->var.xres * (info->var.bits_per_pixel / 8);
+
+	if (dlfb->fb_count == 0) {
 
 		/* paint greenscreen */
 
@@ -1054,7 +1071,7 @@ static int dlfb_ops_set_par(struct fb_info *info)
 				   info->screen_base);
 	}
 
-	return result;
+	return 0;
 }
 
 /* To fonzi the jukebox (e.g. make blanking changes take effect) */
@@ -1649,7 +1666,8 @@ static void dlfb_init_framebuffer_work(struct work_struct *work)
 	dlfb->info = info;
 	info->par = dlfb;
 	info->pseudo_palette = dlfb->pseudo_palette;
-	info->fbops = &dlfb_ops;
+	dlfb->ops = dlfb_ops;
+	info->fbops = &dlfb->ops;
 
 	retval = fb_alloc_cmap(&info->cmap, 256, 0);
 	if (retval < 0) {
@@ -1789,14 +1807,7 @@ static void dlfb_urb_completion(struct urb *urb)
 	dlfb->urbs.available++;
 	spin_unlock_irqrestore(&dlfb->urbs.lock, flags);
 
-	/*
-	 * When using fb_defio, we deadlock if up() is called
-	 * while another is waiting. So queue to another process.
-	 */
-	if (fb_defio)
-		schedule_delayed_work(&unode->release_urb_work, 0);
-	else
-		up(&dlfb->urbs.limit_sem);
+	up(&dlfb->urbs.limit_sem);
 }
 
 static void dlfb_free_urb_list(struct dlfb_data *dlfb)
@@ -1805,16 +1816,11 @@ static void dlfb_free_urb_list(struct dlfb_data *dlfb)
 	struct list_head *node;
 	struct urb_node *unode;
 	struct urb *urb;
-	int ret;
 	unsigned long flags;
 
 	/* keep waiting and freeing, until we've got 'em all */
 	while (count--) {
-
-		/* Getting interrupted means a leak, but ok at disconnect */
-		ret = down_interruptible(&dlfb->urbs.limit_sem);
-		if (ret)
-			break;
+		down(&dlfb->urbs.limit_sem);
 
 		spin_lock_irqsave(&dlfb->urbs.lock, flags);
 
@@ -1838,24 +1844,26 @@ static void dlfb_free_urb_list(struct dlfb_data *dlfb)
 
 static int dlfb_alloc_urb_list(struct dlfb_data *dlfb, int count, size_t size)
 {
-	int i = 0;
 	struct urb *urb;
 	struct urb_node *unode;
 	char *buf;
+	size_t wanted_size = count * size;
 
 	spin_lock_init(&dlfb->urbs.lock);
 
+retry:
 	dlfb->urbs.size = size;
 	INIT_LIST_HEAD(&dlfb->urbs.list);
 
-	while (i < count) {
+	sema_init(&dlfb->urbs.limit_sem, 0);
+	dlfb->urbs.count = 0;
+	dlfb->urbs.available = 0;
+
+	while (dlfb->urbs.count * size < wanted_size) {
 		unode = kzalloc(sizeof(*unode), GFP_KERNEL);
 		if (!unode)
 			break;
 		unode->dlfb = dlfb;
-
-		INIT_DELAYED_WORK(&unode->release_urb_work,
-			  dlfb_release_urb_work);
 
 		urb = usb_alloc_urb(0, GFP_KERNEL);
 		if (!urb) {
@@ -1864,11 +1872,16 @@ static int dlfb_alloc_urb_list(struct dlfb_data *dlfb, int count, size_t size)
 		}
 		unode->urb = urb;
 
-		buf = usb_alloc_coherent(dlfb->udev, MAX_TRANSFER, GFP_KERNEL,
+		buf = usb_alloc_coherent(dlfb->udev, size, GFP_KERNEL,
 					 &urb->transfer_dma);
 		if (!buf) {
 			kfree(unode);
 			usb_free_urb(urb);
+			if (size > PAGE_SIZE) {
+				size /= 2;
+				dlfb_free_urb_list(dlfb);
+				goto retry;
+			}
 			break;
 		}
 
@@ -1879,14 +1892,12 @@ static int dlfb_alloc_urb_list(struct dlfb_data *dlfb, int count, size_t size)
 
 		list_add_tail(&unode->entry, &dlfb->urbs.list);
 
-		i++;
+		up(&dlfb->urbs.limit_sem);
+		dlfb->urbs.count++;
+		dlfb->urbs.available++;
 	}
 
-	sema_init(&dlfb->urbs.limit_sem, i);
-	dlfb->urbs.count = i;
-	dlfb->urbs.available = i;
-
-	return i;
+	return dlfb->urbs.count;
 }
 
 static struct urb *dlfb_get_urb(struct dlfb_data *dlfb)
