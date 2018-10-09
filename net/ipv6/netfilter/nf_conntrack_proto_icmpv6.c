@@ -270,7 +270,7 @@ static unsigned int icmpv6_nlattr_tuple_size(void)
 }
 #endif
 
-#if IS_ENABLED(CONFIG_NF_CT_NETLINK_TIMEOUT)
+#ifdef CONFIG_NF_CONNTRACK_TIMEOUT
 
 #include <linux/netfilter/nfnetlink.h>
 #include <linux/netfilter/nfnetlink_cttimeout.h>
@@ -308,7 +308,7 @@ static const struct nla_policy
 icmpv6_timeout_nla_policy[CTA_TIMEOUT_ICMPV6_MAX+1] = {
 	[CTA_TIMEOUT_ICMPV6_TIMEOUT]	= { .type = NLA_U32 },
 };
-#endif /* CONFIG_NF_CT_NETLINK_TIMEOUT */
+#endif /* CONFIG_NF_CONNTRACK_TIMEOUT */
 
 #ifdef CONFIG_SYSCTL
 static struct ctl_table icmpv6_sysctl_table[] = {
@@ -368,7 +368,7 @@ const struct nf_conntrack_l4proto nf_conntrack_l4proto_icmpv6 =
 	.nlattr_to_tuple	= icmpv6_nlattr_to_tuple,
 	.nla_policy		= icmpv6_nla_policy,
 #endif
-#if IS_ENABLED(CONFIG_NF_CT_NETLINK_TIMEOUT)
+#ifdef CONFIG_NF_CONNTRACK_TIMEOUT
 	.ctnl_timeout		= {
 		.nlattr_to_obj	= icmpv6_timeout_nlattr_to_obj,
 		.obj_to_nlattr	= icmpv6_timeout_obj_to_nlattr,
@@ -376,7 +376,7 @@ const struct nf_conntrack_l4proto nf_conntrack_l4proto_icmpv6 =
 		.obj_size	= sizeof(unsigned int),
 		.nla_policy	= icmpv6_timeout_nla_policy,
 	},
-#endif /* CONFIG_NF_CT_NETLINK_TIMEOUT */
+#endif /* CONFIG_NF_CONNTRACK_TIMEOUT */
 	.init_net		= icmpv6_init_net,
 	.get_net_proto		= icmpv6_get_net_proto,
 };

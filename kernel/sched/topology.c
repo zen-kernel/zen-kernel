@@ -1303,7 +1303,7 @@ static void init_numa_topology_type(void)
 
 	n = sched_max_numa_distance;
 
-	if (sched_domains_numa_levels <= 1) {
+	if (sched_domains_numa_levels <= 2) {
 		sched_numa_topology_type = NUMA_DIRECT;
 		return;
 	}
@@ -1387,9 +1387,6 @@ void sched_init_numa(void)
 		if (!sched_debug())
 			break;
 	}
-
-	if (!level)
-		return;
 
 	/*
 	 * 'level' contains the number of unique distances
