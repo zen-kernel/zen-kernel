@@ -293,7 +293,6 @@ struct rxrpc_peer {
 	struct hlist_node	hash_link;
 	struct rxrpc_local	*local;
 	struct hlist_head	error_targets;	/* targets for net error distribution */
-	struct work_struct	error_distributor;
 	struct rb_root		service_conns;	/* Service connections */
 	struct list_head	keepalive_link;	/* Link in net->peer_keepalive[] */
 	time64_t		last_tx_at;	/* Last time packet sent here */
@@ -304,8 +303,6 @@ struct rxrpc_peer {
 	unsigned int		maxdata;	/* data size (MTU - hdrsize) */
 	unsigned short		hdrsize;	/* header size (IP + UDP + RxRPC) */
 	int			debug_id;	/* debug ID for printks */
-	int			error_report;	/* Net (+0) or local (+1000000) to distribute */
-#define RXRPC_LOCAL_ERROR_OFFSET 1000000
 	struct sockaddr_rxrpc	srx;		/* remote address */
 
 	/* calculated RTT cache */
@@ -449,8 +446,7 @@ struct rxrpc_connection {
 	spinlock_t		state_lock;	/* state-change lock */
 	enum rxrpc_conn_cache_state cache_state;
 	enum rxrpc_conn_proto_state state;	/* current state of connection */
-	u32			local_abort;	/* local abort code */
-	u32			remote_abort;	/* remote abort code */
+	u32			abort_code;	/* Abort code of connection abort */
 	int			debug_id;	/* debug ID for printks */
 	atomic_t		serial;		/* packet serial number counter */
 	unsigned int		hi_serial;	/* highest serial number received */
@@ -460,7 +456,18 @@ struct rxrpc_connection {
 	u8			security_size;	/* security header size */
 	u8			security_ix;	/* security type */
 	u8			out_clientflag;	/* RXRPC_CLIENT_INITIATED if we are client */
+	short			error;		/* Local error code */
 };
+
+static inline bool rxrpc_to_server(const struct rxrpc_skb_priv *sp)
+{
+	return sp->hdr.flags & RXRPC_CLIENT_INITIATED;
+}
+
+static inline bool rxrpc_to_client(const struct rxrpc_skb_priv *sp)
+{
+	return !rxrpc_to_server(sp);
+}
 
 /*
  * Flags in call->flags.
@@ -1029,7 +1036,6 @@ void rxrpc_send_keepalive(struct rxrpc_peer *);
  * peer_event.c
  */
 void rxrpc_error_report(struct sock *);
-void rxrpc_peer_error_distributor(struct work_struct *);
 void rxrpc_peer_add_rtt(struct rxrpc_call *, enum rxrpc_rtt_rx_trace,
 			rxrpc_serial_t, rxrpc_serial_t, ktime_t, ktime_t);
 void rxrpc_peer_keepalive_worker(struct work_struct *);
@@ -1048,7 +1054,6 @@ void rxrpc_destroy_all_peers(struct rxrpc_net *);
 struct rxrpc_peer *rxrpc_get_peer(struct rxrpc_peer *);
 struct rxrpc_peer *rxrpc_get_peer_maybe(struct rxrpc_peer *);
 void rxrpc_put_peer(struct rxrpc_peer *);
-void __rxrpc_queue_peer_error(struct rxrpc_peer *);
 
 /*
  * proc.c

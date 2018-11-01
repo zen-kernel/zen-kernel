@@ -99,7 +99,7 @@ struct rxrpc_connection *rxrpc_find_connection_rcu(struct rxrpc_local *local,
 	k.epoch	= sp->hdr.epoch;
 	k.cid	= sp->hdr.cid & RXRPC_CIDMASK;
 
-	if (sp->hdr.flags & RXRPC_CLIENT_INITIATED) {
+	if (rxrpc_to_server(sp)) {
 		/* We need to look up service connections by the full protocol
 		 * parameter set.  We look up the peer first as an intermediate
 		 * step and then the connection from the peer's tree.
@@ -214,7 +214,7 @@ void rxrpc_disconnect_call(struct rxrpc_call *call)
 	call->peer->cong_cwnd = call->cong_cwnd;
 
 	spin_lock_bh(&conn->params.peer->lock);
-	hlist_del_init(&call->error_link);
+	hlist_del_rcu(&call->error_link);
 	spin_unlock_bh(&conn->params.peer->lock);
 
 	if (rxrpc_is_client_call(call))
