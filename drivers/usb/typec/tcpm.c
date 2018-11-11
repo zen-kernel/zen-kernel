@@ -1383,8 +1383,8 @@ static enum pdo_err tcpm_caps_err(struct tcpm_port *port, const u32 *pdo,
 				if (pdo_apdo_type(pdo[i]) != APDO_TYPE_PPS)
 					break;
 
-				if (pdo_pps_apdo_max_current(pdo[i]) <
-				    pdo_pps_apdo_max_current(pdo[i - 1]))
+				if (pdo_pps_apdo_max_voltage(pdo[i]) <
+				    pdo_pps_apdo_max_voltage(pdo[i - 1]))
 					return PDO_ERR_PPS_APDO_NOT_SORTED;
 				else if (pdo_pps_apdo_min_voltage(pdo[i]) ==
 					  pdo_pps_apdo_min_voltage(pdo[i - 1]) &&
@@ -4018,6 +4018,9 @@ static int tcpm_pps_set_op_curr(struct tcpm_port *port, u16 op_curr)
 		goto port_unlock;
 	}
 
+	/* Round down operating current to align with PPS valid steps */
+	op_curr = op_curr - (op_curr % RDO_PROG_CURR_MA_STEP);
+
 	reinit_completion(&port->pps_complete);
 	port->pps_data.op_curr = op_curr;
 	port->pps_status = 0;
@@ -4070,6 +4073,9 @@ static int tcpm_pps_set_out_volt(struct tcpm_port *port, u16 out_volt)
 		ret = -EINVAL;
 		goto port_unlock;
 	}
+
+	/* Round down output voltage to align with PPS valid steps */
+	out_volt = out_volt - (out_volt % RDO_PROG_VOLT_MV_STEP);
 
 	reinit_completion(&port->pps_complete);
 	port->pps_data.out_volt = out_volt;

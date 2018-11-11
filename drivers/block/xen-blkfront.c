@@ -1911,6 +1911,7 @@ static int negotiate_mq(struct blkfront_info *info)
 			      GFP_KERNEL);
 	if (!info->rinfo) {
 		xenbus_dev_fatal(info->xbdev, -ENOMEM, "allocating ring_info structure");
+		info->nr_rings = 0;
 		return -ENOMEM;
 	}
 
@@ -2474,6 +2475,9 @@ static int blkfront_remove(struct xenbus_device *xbdev)
 	struct gendisk *disk;
 
 	dev_dbg(&xbdev->dev, "%s removed", xbdev->nodename);
+
+	if (!info)
+		return 0;
 
 	blkif_free(info, 0);
 
