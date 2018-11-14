@@ -98,14 +98,11 @@ menu "General setup"
 config SCHED_MUQSS
 	bool "MuQSS cpu scheduler"
 	select HIGH_RES_TIMERS
+	default n
 	help
 	  The Multiple Queue Skiplist Scheduler for excellent interactivity and
 	  responsiveness on the desktop and highly scalable deterministic
 	  low latency on any hardware.
-
-          Say Y here.
-	default y
-
 
 config BROKEN
 	bool
