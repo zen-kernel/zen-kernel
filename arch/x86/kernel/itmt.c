@@ -172,6 +172,11 @@ int arch_asym_cpu_priority(int cpu)
 	return per_cpu(sched_core_priority, cpu);
 }
 
+extern int best_core;
+extern int second_best_core;
+static int best_core_score;
+static int second_best_core_score;
+
 /**
  * sched_set_itmt_core_prio() - Set CPU priority based on ITMT
  * @prio:	Priority of cpu core
@@ -201,5 +206,14 @@ void sched_set_itmt_core_prio(int prio, int core_cpu)
 		smt_prio = prio * smp_num_siblings / i;
 		per_cpu(sched_core_priority, cpu) = smt_prio;
 		i++;
+
+		if (smt_prio > best_core_score) {
+			best_core = cpu;
+			best_core_score = smt_prio;
+		} else
+		if (smt_prio > second_best_core_score) {
+			second_best_core = cpu;
+			second_best_core_score = smt_prio;
+		}
 	}
 }
