@@ -116,9 +116,6 @@ void mt76x0_bss_info_changed(struct ieee80211_hw *hw,
 			       MT_BKOFF_SLOT_CFG_SLOTTIME, slottime);
 	}
 
-	if (changed & BSS_CHANGED_ASSOC)
-		mt76x0_phy_recalibrate_after_assoc(dev);
-
 	mutex_unlock(&dev->mt76.mutex);
 }
 EXPORT_SYMBOL_GPL(mt76x0_bss_info_changed);
@@ -138,6 +135,12 @@ void mt76x0_sw_scan_complete(struct ieee80211_hw *hw,
 	struct mt76x02_dev *dev = hw->priv;
 
 	clear_bit(MT76_SCANNING, &dev->mt76.state);
+
+	if (dev->cal.gain_init_done) {
+		/* Restore AGC gain and resume calibration after scanning. */
+		dev->cal.low_gain = -1;
+		ieee80211_queue_delayed_work(hw, &dev->cal_work, 0);
+	}
 }
 EXPORT_SYMBOL_GPL(mt76x0_sw_scan_complete);
 
