@@ -235,6 +235,7 @@ int __weak arch_sd_sibling_asym_packing(void)
 
 #ifdef CONFIG_SCHED_SMT
 DEFINE_STATIC_KEY_FALSE(sched_smt_present);
+EXPORT_SYMBOL_GPL(sched_smt_present);
 #endif
 
 #else
