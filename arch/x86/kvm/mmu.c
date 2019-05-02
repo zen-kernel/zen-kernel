@@ -4915,11 +4915,15 @@ static union kvm_mmu_role
 kvm_calc_shadow_ept_root_page_role(struct kvm_vcpu *vcpu, bool accessed_dirty,
 				   bool execonly)
 {
-	union kvm_mmu_role role;
+	union kvm_mmu_role role = {0};
+	union kvm_mmu_page_role root_base = vcpu->arch.root_mmu.mmu_role.base;
 
-	/* Base role is inherited from root_mmu */
-	role.base.word = vcpu->arch.root_mmu.mmu_role.base.word;
-	role.ext = kvm_calc_mmu_role_ext(vcpu);
+	/* Legacy paging and SMM flags are inherited from root_mmu */
+	role.base.smm = root_base.smm;
+	role.base.nxe = root_base.nxe;
+	role.base.cr0_wp = root_base.cr0_wp;
+	role.base.smep_andnot_wp = root_base.smep_andnot_wp;
+	role.base.smap_andnot_wp = root_base.smap_andnot_wp;
 
 	role.base.level = PT64_ROOT_4LEVEL;
 	role.base.direct = false;
@@ -4927,6 +4931,7 @@ kvm_calc_shadow_ept_root_page_role(struct kvm_vcpu *vcpu, bool accessed_dirty,
 	role.base.guest_mode = true;
 	role.base.access = ACC_ALL;
 
+	role.ext = kvm_calc_mmu_role_ext(vcpu);
 	role.ext.execonly = execonly;
 
 	return role;
@@ -5390,10 +5395,12 @@ emulate:
 	 * This can happen if a guest gets a page-fault on data access but the HW
 	 * table walker is not able to read the instruction page (e.g instruction
 	 * page is not present in memory). In those cases we simply restart the
-	 * guest.
+	 * guest, with the exception of AMD Erratum 1096 which is unrecoverable.
 	 */
-	if (unlikely(insn && !insn_len))
-		return 1;
+	if (unlikely(insn && !insn_len)) {
+		if (!kvm_x86_ops->need_emulation_on_page_fault(vcpu))
+			return 1;
+	}
 
 	er = x86_emulate_instruction(vcpu, cr2, emulation_type, insn, insn_len);
 
