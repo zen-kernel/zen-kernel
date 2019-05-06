@@ -604,8 +604,10 @@ int elevator_init_mq(struct request_queue *q)
 	struct elevator_type *e;
 	int err = 0;
 
+#ifndef CONFIG_ZEN_INTERACTIVE
 	if (q->nr_hw_queues != 1)
 		return 0;
+#endif
 
 	/*
 	 * q->sysfs_lock must be held to provide mutual exclusion between
@@ -615,7 +617,13 @@ int elevator_init_mq(struct request_queue *q)
 	if (unlikely(q->elevator))
 		goto out_unlock;
 
+#if defined(CONFIG_ZEN_INTERACTIVE) && defined(CONFIG_MQ_IOSCHED_BFQ)
+	e = elevator_get(q, "bfq-mq", false);
+#elif defined(CONFIG_ZEN_INTERACTIVE) && defined(CONFIG_IOSCHED_BFQ)
+	e = elevator_get(q, "bfq", false);
+#else
 	e = elevator_get(q, "mq-deadline", false);
+#endif
 	if (!e)
 		goto out_unlock;
 
