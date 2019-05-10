@@ -19,6 +19,8 @@ struct stable_node;
 struct mem_cgroup;
 
 #ifdef CONFIG_KSM
+int ksm_madvise_merge(struct mm_struct *mm, struct vm_area_struct *vma,
+		unsigned long *vm_flags);
 int ksm_madvise(struct vm_area_struct *vma, unsigned long start,
 		unsigned long end, int advice, unsigned long *vm_flags);
 int __ksm_enter(struct mm_struct *mm);
