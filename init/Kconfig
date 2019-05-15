@@ -65,6 +65,18 @@ config THREAD_INFO_IN_TASK
 
 menu "General setup"
 
+config SCHED_MUQSS
+	bool "MuQSS cpu scheduler"
+	select HIGH_RES_TIMERS
+	---help---
+	  The Multiple Queue Skiplist Scheduler for excellent interactivity and
+	  responsiveness on the desktop and highly scalable deterministic
+	  low latency on any hardware.
+
+          Say Y here.
+	default y
+
+
 config BROKEN
 	bool
 
@@ -711,6 +723,7 @@ config NUMA_BALANCING
 	depends on ARCH_SUPPORTS_NUMA_BALANCING
 	depends on !ARCH_WANT_NUMA_VARIABLE_LOCALITY
 	depends on SMP && NUMA && MIGRATION
+	depends on !SCHED_MUQSS
 	help
 	  This option adds support for automatic NUMA aware memory/task placement.
 	  The mechanism is quite primitive and is based on migrating memory when
@@ -818,9 +831,13 @@ menuconfig CGROUP_SCHED
 	help
 	  This feature lets CPU scheduler recognize task groups and control CPU
 	  bandwidth allocation to such task groups. It uses cgroups to group
-	  tasks.
+	  tasks. In combination with MuQSS this is purely a STUB to create the
+	  files associated with the CPU controller cgroup but most of the
+	  controls do nothing. This is useful for working in environments and
+	  with applications that will only work if this control group is
+	  present.
 
-if CGROUP_SCHED
+if CGROUP_SCHED && !SCHED_MUQSS
 config FAIR_GROUP_SCHED
 	bool "Group scheduling for SCHED_OTHER"
 	depends on CGROUP_SCHED
@@ -927,6 +944,7 @@ config CGROUP_DEVICE
 
 config CGROUP_CPUACCT
 	bool "Simple CPU accounting controller"
+	depends on !SCHED_MUQSS
 	help
 	  Provides a simple controller for monitoring the
 	  total CPU consumed by the tasks in a cgroup.
@@ -1045,6 +1063,7 @@ config CHECKPOINT_RESTORE
 
 config SCHED_AUTOGROUP
 	bool "Automatic process group scheduling"
+	depends on !SCHED_MUQSS
 	select CGROUPS
 	select CGROUP_SCHED
 	select FAIR_GROUP_SCHED

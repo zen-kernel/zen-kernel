@@ -176,6 +176,12 @@ static unsigned int get_next_freq(struct sugov_policy *sg_policy,
 	return cpufreq_driver_resolve_freq(policy, freq);
 }
 
+#ifdef CONFIG_SCHED_MUQSS
+#define rt_rq_runnable(rq_rt) rt_rq_is_runnable(rq)
+#else
+#define rt_rq_runnable(rq_rt) rt_rq_is_runnable(&rq->rt)
+#endif
+
 /*
  * This function computes an effective utilization for the given CPU, to be
  * used for frequency selection given the linear relation: f = u * f_max.
@@ -202,7 +208,7 @@ unsigned long schedutil_freq_util(int cpu, unsigned long util_cfs,
 	unsigned long dl_util, util, irq;
 	struct rq *rq = cpu_rq(cpu);
 
-	if (type == FREQUENCY_UTIL && rt_rq_is_runnable(&rq->rt))
+	if (type == FREQUENCY_UTIL && rt_rq_runnable(rq))
 		return max;
 
 	/*
@@ -638,7 +644,11 @@ static int sugov_kthread_create(struct sugov_policy *sg_policy)
 	struct task_struct *thread;
 	struct sched_attr attr = {
 		.size		= sizeof(struct sched_attr),
+#ifdef CONFIG_SCHED_MUQSS
+		.sched_policy	= SCHED_RR,
+#else
 		.sched_policy	= SCHED_DEADLINE,
+#endif
 		.sched_flags	= SCHED_FLAG_SUGOV,
 		.sched_nice	= 0,
 		.sched_priority	= 0,

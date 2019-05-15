@@ -433,6 +433,34 @@ void kthread_bind(struct task_struct *p, unsigned int cpu)
 }
 EXPORT_SYMBOL(kthread_bind);
 
+#if defined(CONFIG_SCHED_MUQSS) && defined(CONFIG_SMP)
+extern void __do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask);
+
+/*
+ * new_kthread_bind is a special variant of __kthread_bind_mask.
+ * For new threads to work on muqss we want to call do_set_cpus_allowed
+ * without the task_cpu being set and the task rescheduled until they're
+ * rescheduled on their own so we call __do_set_cpus_allowed directly which
+ * only changes the cpumask. This is particularly important for smpboot threads
+ * to work.
+ */
+static void new_kthread_bind(struct task_struct *p, unsigned int cpu)
+{
+	unsigned long flags;
+
+	if (WARN_ON(!wait_task_inactive(p, TASK_UNINTERRUPTIBLE)))
+		return;
+
+	/* It's safe because the task is inactive. */
+	raw_spin_lock_irqsave(&p->pi_lock, flags);
+	__do_set_cpus_allowed(p, cpumask_of(cpu));
+	p->flags |= PF_NO_SETAFFINITY;
+	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
+}
+#else
+#define new_kthread_bind(p, cpu) kthread_bind(p, cpu)
+#endif
+
 /**
  * kthread_create_on_cpu - Create a cpu bound kthread
  * @threadfn: the function to run until signal_pending(current).
@@ -454,7 +482,7 @@ struct task_struct *kthread_create_on_cpu(int (*threadfn)(void *data),
 				   cpu);
 	if (IS_ERR(p))
 		return p;
-	kthread_bind(p, cpu);
+	new_kthread_bind(p, cpu);
 	/* CPU hotplug need to bind once again when unparking the thread. */
 	set_bit(KTHREAD_IS_PER_CPU, &to_kthread(p)->flags);
 	to_kthread(p)->cpu = cpu;
