@@ -6579,6 +6579,38 @@ commit_trans:
 	return btrfs_commit_transaction(trans);
 }
 
+/*
+ * Make sure any existing dellaloc is flushed for any root used by a send
+ * operation so that we do not miss any data and we do not race with writeback
+ * finishing and changing a tree while send is using the tree. This could
+ * happen if a subvolume is in RW mode, has delalloc, is turned to RO mode and
+ * a send operation then uses the subvolume.
+ * After flushing delalloc ensure_commit_roots_uptodate() must be called.
+ */
+static int flush_delalloc_roots(struct send_ctx *sctx)
+{
+	struct btrfs_root *root = sctx->parent_root;
+	int ret;
+	int i;
+
+	if (root) {
+		ret = btrfs_start_delalloc_snapshot(root);
+		if (ret)
+			return ret;
+		btrfs_wait_ordered_extents(root, U64_MAX, 0, U64_MAX);
+	}
+
+	for (i = 0; i < sctx->clone_roots_cnt; i++) {
+		root = sctx->clone_roots[i].root;
+		ret = btrfs_start_delalloc_snapshot(root);
+		if (ret)
+			return ret;
+		btrfs_wait_ordered_extents(root, U64_MAX, 0, U64_MAX);
+	}
+
+	return 0;
+}
+
 static void btrfs_root_dec_send_in_progress(struct btrfs_root* root)
 {
 	spin_lock(&root->root_item_lock);
@@ -6592,6 +6624,13 @@ static void btrfs_root_dec_send_in_progress(struct btrfs_root* root)
 			  "send_in_progress unbalanced %d root %llu",
 			  root->send_in_progress, root->root_key.objectid);
 	spin_unlock(&root->root_item_lock);
+}
+
+static void dedupe_in_progress_warn(const struct btrfs_root *root)
+{
+	btrfs_warn_rl(root->fs_info,
+"cannot use root %llu for send while deduplications on it are in progress (%d in progress)",
+		      root->root_key.objectid, root->dedupe_in_progress);
 }
 
 long btrfs_ioctl_send(struct file *mnt_file, struct btrfs_ioctl_send_args *arg)
@@ -6617,6 +6656,11 @@ long btrfs_ioctl_send(struct file *mnt_file, struct btrfs_ioctl_send_args *arg)
 	 * making it RW. This also protects against deletion.
 	 */
 	spin_lock(&send_root->root_item_lock);
+	if (btrfs_root_readonly(send_root) && send_root->dedupe_in_progress) {
+		dedupe_in_progress_warn(send_root);
+		spin_unlock(&send_root->root_item_lock);
+		return -EAGAIN;
+	}
 	send_root->send_in_progress++;
 	spin_unlock(&send_root->root_item_lock);
 
@@ -6751,6 +6795,13 @@ long btrfs_ioctl_send(struct file *mnt_file, struct btrfs_ioctl_send_args *arg)
 				ret = -EPERM;
 				goto out;
 			}
+			if (clone_root->dedupe_in_progress) {
+				dedupe_in_progress_warn(clone_root);
+				spin_unlock(&clone_root->root_item_lock);
+				srcu_read_unlock(&fs_info->subvol_srcu, index);
+				ret = -EAGAIN;
+				goto out;
+			}
 			clone_root->send_in_progress++;
 			spin_unlock(&clone_root->root_item_lock);
 			srcu_read_unlock(&fs_info->subvol_srcu, index);
@@ -6785,6 +6836,13 @@ long btrfs_ioctl_send(struct file *mnt_file, struct btrfs_ioctl_send_args *arg)
 			ret = -EPERM;
 			goto out;
 		}
+		if (sctx->parent_root->dedupe_in_progress) {
+			dedupe_in_progress_warn(sctx->parent_root);
+			spin_unlock(&sctx->parent_root->root_item_lock);
+			srcu_read_unlock(&fs_info->subvol_srcu, index);
+			ret = -EAGAIN;
+			goto out;
+		}
 		spin_unlock(&sctx->parent_root->root_item_lock);
 
 		srcu_read_unlock(&fs_info->subvol_srcu, index);
@@ -6802,6 +6860,10 @@ long btrfs_ioctl_send(struct file *mnt_file, struct btrfs_ioctl_send_args *arg)
 			sizeof(*sctx->clone_roots), __clone_root_cmp_sort,
 			NULL);
 	sort_clone_roots = 1;
+
+	ret = flush_delalloc_roots(sctx);
+	if (ret)
+		goto out;
 
 	ret = ensure_commit_roots_uptodate(sctx);
 	if (ret)
