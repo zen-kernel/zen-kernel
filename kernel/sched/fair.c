@@ -6695,10 +6695,6 @@ fail:
  *
  * preempt must be disabled.
  */
-
-int best_core = -1;
-int second_best_core = -1;
-
 static int
 select_task_rq_fair(struct task_struct *p, int prev_cpu, int sd_flag, int wake_flags)
 {
@@ -6721,21 +6717,6 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int sd_flag, int wake_f
 		want_affine = !wake_wide(p) && !wake_cap(p, cpu, prev_cpu) &&
 			      cpumask_test_cpu(cpu, &p->cpus_allowed);
 	}
-
-	if (prev_cpu != best_core && prev_cpu != second_best_core &&
-		       cpu_rq(prev_cpu)->nr_running != 0) {
-		if (second_best_core != -1 && cpu_rq(second_best_core)->nr_running == 0 &&
-			       nr_iowait_cpu(second_best_core) < 2 && cpu_to_node(prev_cpu) == cpu_to_node(second_best_core))
-			prev_cpu = second_best_core;
-		if (best_core != -1 && cpu_rq(best_core)->nr_running == 0 &&
-			       nr_iowait_cpu(best_core) < 2  && cpu_to_node(prev_cpu) == cpu_to_node(best_core))
-			prev_cpu = best_core;
-	}
-/*
-	if (prev_cpu > 0 && cpu_rq(prev_cpu)->nr_running != 0 && cpu_rq(prev_cpu - 1)->nr_running == 0)
-		prev_cpu = prev_cpu - 1;
-*/
-
 
 	rcu_read_lock();
 	for_each_domain(cpu, tmp) {
