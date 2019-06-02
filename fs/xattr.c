@@ -118,15 +118,17 @@ xattr_permission(struct inode *inode, const char *name, int mask)
 	}
 
 	/*
-	 * In the user.* namespace, only regular files and directories can have
-	 * extended attributes. For sticky directories, only the owner and
-	 * privileged users can write attributes.
+	 * In the user.* namespace, only regular files, symbolic links, and
+	 * directories can have extended attributes. For symbolic links and
+	 * sticky directories, only the owner and privileged users can write
+	 * attributes.
 	 */
 	if (!strncmp(name, XATTR_USER_PREFIX, XATTR_USER_PREFIX_LEN)) {
-		if (!S_ISREG(inode->i_mode) && !S_ISDIR(inode->i_mode))
+		if (!S_ISREG(inode->i_mode) && !S_ISDIR(inode->i_mode) && !S_ISLNK(inode->i_mode))
 			return (mask & MAY_WRITE) ? -EPERM : -ENODATA;
-		if (S_ISDIR(inode->i_mode) && (inode->i_mode & S_ISVTX) &&
-		    (mask & MAY_WRITE) && !inode_owner_or_capable(inode))
+		if (((S_ISDIR(inode->i_mode) && (inode->i_mode & S_ISVTX))
+		        || S_ISLNK(inode->i_mode)) && (mask & MAY_WRITE)
+		        && !inode_owner_or_capable(inode))
 			return -EPERM;
 	}
 

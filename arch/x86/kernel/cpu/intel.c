@@ -608,13 +608,15 @@ static void init_intel_energy_perf(struct cpuinfo_x86 *c)
 		return;
 
 	rdmsrl(MSR_IA32_ENERGY_PERF_BIAS, epb);
-	if ((epb & 0xF) != ENERGY_PERF_BIAS_PERFORMANCE)
+	if ((epb & 0xF) >= ENERGY_PERF_BIAS_NORMAL)
 		return;
 
-	pr_info_once("ENERGY_PERF_BIAS: Set to 'normal', was 'performance'\n");
+	pr_info_once("ENERGY_PERF_BIAS: Set to 'performance', was 'normal'\n");
 	pr_info_once("ENERGY_PERF_BIAS: View and update with x86_energy_perf_policy(8)\n");
-	epb = (epb & ~0xF) | ENERGY_PERF_BIAS_NORMAL;
+	epb = (epb & ~0xF) | ENERGY_PERF_BIAS_PERFORMANCE;
 	wrmsrl(MSR_IA32_ENERGY_PERF_BIAS, epb);
+
+ 	pr_warn_once("ENERGY_PERF_BIAS: View and update with x86_energy_perf_policy(8)\n");
 }
 
 static void intel_bsp_resume(struct cpuinfo_x86 *c)

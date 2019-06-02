@@ -89,6 +89,7 @@ config INET
 	  Short answer: say Y.
 
 if INET
+source "net/wireguard/Kconfig"
 source "net/ipv4/Kconfig"
 source "net/ipv6/Kconfig"
 source "net/netlabel/Kconfig"

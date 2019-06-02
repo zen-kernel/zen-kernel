@@ -42,7 +42,7 @@
 #define DRV_NAME	"dummy"
 #define DRV_VERSION	"1.0"
 
-static int numdummies = 1;
+static int numdummies = 0;
 
 /* fake multicast ability */
 static void set_multicast_list(struct net_device *dev)
