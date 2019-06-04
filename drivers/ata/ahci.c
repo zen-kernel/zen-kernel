@@ -1499,7 +1499,7 @@ static irqreturn_t ahci_thunderx_irq_handler(int irq, void *dev_instance)
 }
 #endif
 
-static void ahci_remap_check(struct pci_dev *pdev, int bar,
+static int ahci_remap_check(struct pci_dev *pdev, int bar,
 		struct ahci_host_priv *hpriv)
 {
 	int i;
@@ -1512,7 +1512,7 @@ static void ahci_remap_check(struct pci_dev *pdev, int bar,
 	    pci_resource_len(pdev, bar) < SZ_512K ||
 	    bar != AHCI_PCI_BAR_STANDARD ||
 	    !(readl(hpriv->mmio + AHCI_VSCAP) & 1))
-		return;
+		return 0;
 
 	cap = readq(hpriv->mmio + AHCI_REMAP_CAP);
 	for (i = 0; i < AHCI_MAX_REMAP; i++) {
@@ -1527,18 +1527,11 @@ static void ahci_remap_check(struct pci_dev *pdev, int bar,
 	}
 
 	if (!hpriv->remapped_nvme)
-		return;
+		return 0;
 
-	dev_warn(&pdev->dev, "Found %u remapped NVMe devices.\n",
-		 hpriv->remapped_nvme);
-	dev_warn(&pdev->dev,
-		 "Switch your BIOS from RAID to AHCI mode to use them.\n");
-
-	/*
-	 * Don't rely on the msi-x capability in the remap case,
-	 * share the legacy interrupt across ahci and remapped devices.
-	 */
-	hpriv->flags |= AHCI_HFLAG_NO_MSI;
+	/* Abort probe, allowing intel-nvme-remap to step in when available */
+	dev_info(&pdev->dev, "Device will be handled by intel-nvme-remap.\n");
+	return -ENODEV;
 }
 
 static int ahci_get_irq_vector(struct ata_host *host, int port)
@@ -1763,7 +1756,9 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	hpriv->mmio = pcim_iomap_table(pdev)[ahci_pci_bar];
 
 	/* detect remapped nvme devices */
-	ahci_remap_check(pdev, ahci_pci_bar, hpriv);
+	rc = ahci_remap_check(pdev, ahci_pci_bar, hpriv);
+	if (rc)
+		return rc;
 
 	sysfs_add_file_to_group(&pdev->dev.kobj,
 				&dev_attr_remapped_nvme.attr,
