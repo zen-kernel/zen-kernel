@@ -26,6 +26,7 @@ struct pci_sysdata {
 #if IS_ENABLED(CONFIG_VMD)
 	struct pci_dev	*vmd_dev;	/* VMD Device if in Intel VMD domain */
 #endif
+	struct pci_dev	*nvme_remap_dev;	/* AHCI Device if NVME remapped bus */
 };
 
 extern int pci_routeirq;
@@ -68,6 +69,11 @@ static inline bool is_vmd(struct pci_bus *bus)
 #else
 #define is_vmd(bus)		false
 #endif /* CONFIG_VMD */
+
+static inline bool is_nvme_remap(struct pci_bus *bus)
+{
+	return to_pci_sysdata(bus)->nvme_remap_dev != NULL;
+}
 
 /* Can be used to override the logic in pci_scan_bus for skipping
    already-configured bus numbers - to be used for buggy BIOSes
