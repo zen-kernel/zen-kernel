@@ -3899,19 +3899,18 @@ void v4l2_ctrl_request_complete(struct media_request *req,
 }
 EXPORT_SYMBOL(v4l2_ctrl_request_complete);
 
-int v4l2_ctrl_request_setup(struct media_request *req,
+void v4l2_ctrl_request_setup(struct media_request *req,
 			     struct v4l2_ctrl_handler *main_hdl)
 {
 	struct media_request_object *obj;
 	struct v4l2_ctrl_handler *hdl;
 	struct v4l2_ctrl_ref *ref;
-	int ret = 0;
 
 	if (!req || !main_hdl)
-		return 0;
+		return;
 
 	if (WARN_ON(req->state != MEDIA_REQUEST_STATE_QUEUED))
-		return -EBUSY;
+		return;
 
 	/*
 	 * Note that it is valid if nothing was found. It means
@@ -3920,10 +3919,10 @@ int v4l2_ctrl_request_setup(struct media_request *req,
 	 */
 	obj = media_request_object_find(req, &req_ops, main_hdl);
 	if (!obj)
-		return 0;
+		return;
 	if (obj->completed) {
 		media_request_object_put(obj);
-		return -EBUSY;
+		return;
 	}
 	hdl = container_of(obj, struct v4l2_ctrl_handler, req_obj);
 
@@ -3991,15 +3990,12 @@ int v4l2_ctrl_request_setup(struct media_request *req,
 				update_from_auto_cluster(master);
 		}
 
-		ret = try_or_set_cluster(NULL, master, true, 0);
-		v4l2_ctrl_unlock(master);
+		try_or_set_cluster(NULL, master, true, 0);
 
-		if (ret)
-			break;
+		v4l2_ctrl_unlock(master);
 	}
 
 	media_request_object_put(obj);
-	return ret;
 }
 EXPORT_SYMBOL(v4l2_ctrl_request_setup);
 

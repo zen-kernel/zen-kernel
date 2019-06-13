@@ -178,10 +178,8 @@ static void __imx2_wdt_set_timeout(struct watchdog_device *wdog,
 static int imx2_wdt_set_timeout(struct watchdog_device *wdog,
 				unsigned int new_timeout)
 {
-	unsigned int actual;
+	__imx2_wdt_set_timeout(wdog, new_timeout);
 
-	actual = min(new_timeout, wdog->max_hw_heartbeat_ms * 1000);
-	__imx2_wdt_set_timeout(wdog, actual);
 	wdog->timeout = new_timeout;
 	return 0;
 }

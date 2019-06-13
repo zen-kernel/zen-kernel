@@ -163,7 +163,7 @@ static int v4l2_fwnode_endpoint_parse_csi2_bus(struct fwnode_handle *fwnode,
 		}
 
 		if (use_default_lane_mapping)
-			pr_debug("no lane mapping given, using defaults\n");
+			pr_debug("using default lane mapping\n");
 	}
 
 	rval = fwnode_property_read_u32_array(fwnode, "data-lanes", NULL, 0);
@@ -175,10 +175,6 @@ static int v4l2_fwnode_endpoint_parse_csi2_bus(struct fwnode_handle *fwnode,
 					       num_data_lanes);
 
 		have_data_lanes = true;
-		if (use_default_lane_mapping) {
-			pr_debug("data-lanes property exists; disabling default mapping\n");
-			use_default_lane_mapping = false;
-		}
 	}
 
 	for (i = 0; i < num_data_lanes; i++) {

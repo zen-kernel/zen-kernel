@@ -5942,11 +5942,8 @@ int hclge_add_uc_addr_common(struct hclge_vport *vport,
 	}
 
 	/* check if we just hit the duplicate */
-	if (!ret) {
-		dev_warn(&hdev->pdev->dev, "VF %d mac(%pM) exists\n",
-			 vport->vport_id, addr);
-		return 0;
-	}
+	if (!ret)
+		ret = -EINVAL;
 
 	dev_err(&hdev->pdev->dev,
 		"PF failed to add unicast entry(%pM) in the MAC table\n",

@@ -1190,9 +1190,6 @@ static int nft_dump_stats(struct sk_buff *skb, struct nft_stats __percpu *stats)
 	u64 pkts, bytes;
 	int cpu;
 
-	if (!stats)
-		return 0;
-
 	memset(&total, 0, sizeof(total));
 	for_each_possible_cpu(cpu) {
 		cpu_stats = per_cpu_ptr(stats, cpu);
@@ -1250,7 +1247,6 @@ static int nf_tables_fill_chain_info(struct sk_buff *skb, struct net *net,
 	if (nft_is_base_chain(chain)) {
 		const struct nft_base_chain *basechain = nft_base_chain(chain);
 		const struct nf_hook_ops *ops = &basechain->ops;
-		struct nft_stats __percpu *stats;
 		struct nlattr *nest;
 
 		nest = nla_nest_start(skb, NFTA_CHAIN_HOOK);
@@ -1272,9 +1268,8 @@ static int nf_tables_fill_chain_info(struct sk_buff *skb, struct net *net,
 		if (nla_put_string(skb, NFTA_CHAIN_TYPE, basechain->type->name))
 			goto nla_put_failure;
 
-		stats = rcu_dereference_check(basechain->stats,
-					      lockdep_commit_lock_is_held(net));
-		if (nft_dump_stats(skb, stats))
+		if (rcu_access_pointer(basechain->stats) &&
+		    nft_dump_stats(skb, rcu_dereference(basechain->stats)))
 			goto nla_put_failure;
 	}
 
