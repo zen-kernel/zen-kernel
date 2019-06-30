@@ -15,6 +15,12 @@ config FB_LOGO_EXTRA
 	depends on FB=y
 	default y if SPU_BASE
 
+config LOGO_RANDOM
+	bool "Select random available logo"
+	default y
+	help
+	  Enable this option to use any available logo randomly at bootup.
+
 comment "Available logos"
 
 config LOGO_ZEN_CLUT224
