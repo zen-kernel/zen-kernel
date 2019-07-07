@@ -175,7 +175,11 @@ __setup("rqshare=", set_rqshare);
  * Value is in ms and set to a minimum of 6ms.
  * Tunable via /proc interface.
  */
+#ifdef CONFIG_ZEN_INTERACTIVE
+int rr_interval __read_mostly = 2;
+#else
 int rr_interval __read_mostly = 6;
+#endif
 
 /*
  * Tunable to choose whether to prioritise latency or throughput, simple
