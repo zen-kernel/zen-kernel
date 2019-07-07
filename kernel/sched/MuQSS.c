@@ -158,7 +158,7 @@ __setup("rqshare=", set_rqshare);
  * Tunable via /proc interface.
  */
 #ifdef CONFIG_ZEN_INTERACTIVE
-int rr_interval __read_mostly = 4;
+int rr_interval __read_mostly = 2;
 #else
 int rr_interval __read_mostly = 6;
 #endif
@@ -186,8 +186,9 @@ int sched_iso_cpu __read_mostly = 70;
  * 1: Yield only to better priority/deadline tasks. (default)
  * 2: Expire timeslice and recalculate deadline.
  */
+
 #ifdef CONFIG_ZEN_INTERACTIVE
-int sched_yield_type __read_mostly = 0;
+int sched_yield_type __read_mostly = 2;
 #else
 int sched_yield_type __read_mostly = 1;
 #endif
