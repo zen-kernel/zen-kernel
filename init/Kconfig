@@ -1013,6 +1013,22 @@ config USER_NS
 
 	  If unsure, say N.
 
+config USER_NS_UNPRIVILEGED
+	bool "Allow unprivileged users to create namespaces"
+	default y
+	depends on USER_NS
+	help
+	  When disabled, unprivileged users will not be able to create
+	  new namespaces. Allowing users to create their own namespaces
+	  has been part of several recent local privilege escalation
+	  exploits, so if you need user namespaces but are
+	  paranoid^Wsecurity-conscious you want to disable this.
+
+	  This setting can be overridden at runtime via the
+	  kernel.unprivileged_userns_clone sysctl.
+
+	  If unsure, say Y.
+
 config PID_NS
 	bool "PID Namespaces"
 	default y
@@ -1136,6 +1152,14 @@ config CC_OPTIMIZE_FOR_PERFORMANCE
 	  This is the default optimization level for the kernel, building
 	  with the "-O2" compiler flag for best performance and most
 	  helpful compile-time warnings.
+
+config CC_OPTIMIZE_HARDER
+	bool "Optimize harder"
+	imply CC_DISABLE_WARN_MAYBE_UNINITIALIZED  # avoid false positives
+	help
+	  This option will pass "-O3" to your compiler resulting in a
+	  larger and faster kernel. The more complex optimizations also
+	  increase compilation time and may affect stability.
 
 config CC_OPTIMIZE_FOR_SIZE
 	bool "Optimize for size"

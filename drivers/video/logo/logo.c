@@ -100,6 +100,54 @@ const struct linux_logo * __ref fb_find_logo(int depth)
 		/* SuperH Linux logo */
 		logo = &logo_superh_clut224;
 #endif
+#ifdef CONFIG_LOGO_ZEN_CLUT224
+		/* Zen-Kernel logo */
+		logo = &logo_zen_clut224;
+#endif
+#ifdef CONFIG_LOGO_OLDZEN_CLUT224
+		/* Old Zen-Kernel logo */
+		logo = &logo_oldzen_clut224;
+#endif
+#ifdef CONFIG_LOGO_ARCH_CLUT224
+		/* Arch Linux logo */
+		logo = &logo_arch_clut224;
+#endif
+#ifdef CONFIG_LOGO_GENTOO_CLUT224
+		/* Gentoo Linux logo */
+		logo = &logo_gentoo_clut224;
+#endif
+#ifdef CONFIG_LOGO_EXHERBO_CLUT224
+		/* Exherbo Linux logo */
+		logo = &logo_exherbo_clut224;
+#endif
+#ifdef CONFIG_LOGO_SLACKWARE_CLUT224
+		/* Slackware Linux logo */
+		logo = &logo_slackware_clut224;
+#endif
+#ifdef CONFIG_LOGO_DEBIAN_CLUT224
+		/* Debian Linux logo */
+		logo = &logo_debian_clut224;
+#endif
+#ifdef CONFIG_LOGO_FEDORASIMPLE_CLUT224
+		/* Fedora Simple logo */
+		logo = &logo_fedorasimple_clut224;
+#endif
+#ifdef CONFIG_LOGO_FEDORAGLOSSY_CLUT224
+		/* Fedora Glossy logo */
+		logo = &logo_fedoraglossy_clut224;
+#endif
+#ifdef CONFIG_LOGO_TITS_CLUT224
+		/* Tits logo */
+		logo = &logo_tits_clut224;
+#endif
+#ifdef CONFIG_LOGO_BSD_CLUT224
+		/* BSD logo */
+		logo = &logo_bsd_clut224;
+#endif
+#ifdef CONFIG_LOGO_FBSD_CLUT224
+		/* Free BSD logo */
+		logo = &logo_fbsd_clut224;
+#endif
 	}
 	return logo;
 }

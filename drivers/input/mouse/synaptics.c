@@ -1339,7 +1339,9 @@ static int set_input_params(struct psmouse *psmouse,
 		if (psmouse_matches_pnp_id(psmouse, topbuttonpad_pnp_ids) &&
 		    !SYN_CAP_EXT_BUTTONS_STICK(info->ext_cap_10))
 			__set_bit(INPUT_PROP_TOPBUTTONPAD, dev->propbit);
-	}
+	} else if (SYN_CAP_CLICKPAD2BTN(info->ext_cap_0c) ||
+		   SYN_CAP_CLICKPAD2BTN2(info->ext_cap_0c))
+		__set_bit(INPUT_PROP_BUTTONPAD, dev->propbit);
 
 	return 0;
 }

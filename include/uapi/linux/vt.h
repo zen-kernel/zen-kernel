@@ -4,11 +4,24 @@
 
 
 /*
+ * We will make this definition solely for the purpose of making packages
+ * such as splashutils build, because they can not understand that
+ * NR_TTY_DEVICES is defined in the kernel configuration.
+ */
+#ifndef CONFIG_NR_TTY_DEVICES
+#define CONFIG_NR_TTY_DEVICES 63
+#endif
+
+/*
  * These constants are also useful for user-level apps (e.g., VC
  * resizing).
  */
 #define MIN_NR_CONSOLES 1       /* must be at least 1 */
-#define MAX_NR_CONSOLES	63	/* serial lines start at 64 */
+/*
+ * NR_TTY_DEVICES:
+ * Value MUST be at least 12 and must never be higher then 63
+ */
+#define MAX_NR_CONSOLES CONFIG_NR_TTY_DEVICES	/* serial lines start above this */
 		/* Note: the ioctl VT_GETSTATE does not work for
 		   consoles 16 and higher (since it returns a short) */
 
