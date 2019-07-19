@@ -2,6 +2,19 @@
 /*
  * Scheduler internal types and methods:
  */
+#ifdef CONFIG_SCHED_MUQSS
+#include "MuQSS.h"
+
+/* Begin compatibility wrappers for MuQSS/CFS differences */
+#define rq_rt_nr_running(rq) ((rq)->rt_nr_running)
+#define rq_h_nr_running(rq) ((rq)->nr_running)
+
+#else /* CONFIG_SCHED_MUQSS */
+
+#define rq_rt_nr_running(rq) ((rq)->rt.rt_nr_running)
+#define rq_h_nr_running(rq) ((rq)->cfs.h_nr_running)
+
+
 #include <linux/sched.h>
 
 #include <linux/sched/autogroup.h>
@@ -2341,3 +2354,30 @@ static inline bool sched_energy_enabled(void)
 static inline bool sched_energy_enabled(void) { return false; }
 
 #endif /* CONFIG_ENERGY_MODEL && CONFIG_CPU_FREQ_GOV_SCHEDUTIL */
+
+/* MuQSS compatibility functions */
+static inline bool softirq_pending(int cpu)
+{
+	return false;
+}
+
+#ifdef CONFIG_64BIT
+static inline u64 read_sum_exec_runtime(struct task_struct *t)
+{
+	return t->se.sum_exec_runtime;
+}
+#else
+static inline u64 read_sum_exec_runtime(struct task_struct *t)
+{
+	u64 ns;
+	struct rq_flags rf;
+	struct rq *rq;
+
+	rq = task_rq_lock(t, &rf);
+	ns = t->se.sum_exec_runtime;
+	task_rq_unlock(rq, t, &rf);
+
+	return ns;
+}
+#endif
+#endif /* CONFIG_SCHED_MUQSS */

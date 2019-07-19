@@ -1,0 +1,89 @@
+choice
+	prompt "CPU scheduler runqueue sharing"
+	default RQ_MC if SCHED_MUQSS
+	default RQ_NONE
+
+config RQ_NONE
+	bool "No sharing"
+	help
+	  This is the default behaviour where the CPU scheduler has one runqueue
+	  per CPU, whether it is a physical or logical CPU (hyperthread).
+
+	  This can still be enabled runtime with the boot parameter
+	  rqshare=none
+
+	  If unsure, say N.
+
+config RQ_SMT
+	bool "SMT (hyperthread) siblings"
+	depends on SCHED_SMT && SCHED_MUQSS
+
+	help
+	  With this option enabled, the CPU scheduler will have one runqueue
+	  shared by SMT (hyperthread) siblings. As these logical cores share
+	  one physical core, sharing the runqueue resource can lead to decreased
+	  overhead, lower latency and higher throughput.
+
+	  This can still be enabled runtime with the boot parameter
+	  rqshare=smt
+
+	  If unsure, say N.
+
+config RQ_MC
+	bool "Multicore siblings"
+	depends on SCHED_MC && SCHED_MUQSS
+	help
+	  With this option enabled, the CPU scheduler will have one runqueue
+	  shared by multicore siblings in addition to any SMT siblings.
+	  As these physical cores share caches, sharing the runqueue resource
+	  will lead to lower latency, but its effects on overhead and throughput
+	  are less predictable. As a general rule, 6 or fewer cores will likely
+	  benefit from this, while larger CPUs will only derive a latency
+	  benefit. If your workloads are primarily single threaded, this will
+	  possibly worsen throughput. If you are only concerned about latency
+	  then enable this regardless of how many cores you have.
+
+	  This can still be enabled runtime with the boot parameter
+	  rqshare=mc
+
+	  If unsure, say Y.
+
+config RQ_SMP
+	bool "Symmetric Multi-Processing"
+	depends on SMP && SCHED_MUQSS
+	help
+	  With this option enabled, the CPU scheduler will have one runqueue
+	  shared by all physical CPUs unless they are on separate NUMA nodes.
+	  As physical CPUs usually do not share resources, sharing the runqueue
+	  will normally worsen throughput but improve latency. If you only
+	  care about latency enable this.
+
+	  This can still be enabled runtime with the boot parameter
+	  rqshare=smp
+
+	  If unsure, say N.
+
+config RQ_ALL
+	bool "NUMA"
+	depends on SMP && SCHED_MUQSS
+	help
+	  With this option enabled, the CPU scheduler will have one runqueue
+	  regardless of the architecture configuration, including across NUMA
+	  nodes. This can substantially decrease throughput in NUMA
+	  configurations, but light NUMA designs will not be dramatically
+	  affected. This option should only be chosen if latency is the prime
+	  concern.
+
+	  This can still be enabled runtime with the boot parameter
+	  rqshare=all
+
+	  If unsure, say N.
+endchoice
+
+config SHARERQ
+	int
+	default 0 if RQ_NONE
+	default 1 if RQ_SMT
+	default 2 if RQ_MC
+	default 3 if RQ_SMP
+	default 4 if RQ_ALL

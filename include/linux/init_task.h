@@ -47,7 +47,11 @@ extern struct cred init_cred;
 #define INIT_CPU_TIMERS(s)
 #endif
 
+#ifdef CONFIG_SCHED_MUQSS
+#define INIT_TASK_COMM "MuQSS"
+#else
 #define INIT_TASK_COMM "swapper"
+#endif
 
 /* Attach to the init_task data structure for proper alignment */
 #ifdef CONFIG_ARCH_TASK_STRUCT_ON_STACK

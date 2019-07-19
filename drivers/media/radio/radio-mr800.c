@@ -369,7 +369,7 @@ static int vidioc_s_hw_freq_seek(struct file *file, void *priv,
 			retval = -ENODATA;
 			break;
 		}
-		if (schedule_timeout_interruptible(msecs_to_jiffies(10))) {
+		if (schedule_msec_hrtimeout_interruptible((10))) {
 			retval = -ERESTARTSYS;
 			break;
 		}

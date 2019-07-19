@@ -282,7 +282,7 @@ static int klp_check_stack(struct task_struct *task, char *err_buf)
 static bool klp_try_switch_task(struct task_struct *task)
 {
 	struct rq *rq;
-	struct rq_flags flags;
+	struct rq_flags rf;
 	int ret;
 	bool success = false;
 	char err_buf[STACK_ERR_BUF_SIZE];
@@ -298,7 +298,7 @@ static bool klp_try_switch_task(struct task_struct *task)
 	 * functions.  If all goes well, switch the task to the target patch
 	 * state.
 	 */
-	rq = task_rq_lock(task, &flags);
+	rq = task_rq_lock(task, &rf);
 
 	if (task_running(rq, task) && task != current) {
 		snprintf(err_buf, STACK_ERR_BUF_SIZE,
@@ -317,7 +317,7 @@ static bool klp_try_switch_task(struct task_struct *task)
 	task->patch_state = klp_target_state;
 
 done:
-	task_rq_unlock(rq, task, &flags);
+	task_rq_unlock(rq, task, &rf);
 
 	/*
 	 * Due to console deadlock issues, pr_debug() can't be used while
