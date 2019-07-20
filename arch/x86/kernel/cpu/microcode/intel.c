@@ -39,7 +39,7 @@
 #include <asm/msr.h>
 
 static const char ucode_path[] = "kernel/x86/microcode/GenuineIntel.bin";
-static bool force_ucode_load = false;
+bool force_ucode_load = false;
 
 /* Current microcode patch used in early patching on the APs. */
 static struct microcode_intel *intel_ucode_patch;
