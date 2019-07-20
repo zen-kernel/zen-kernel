@@ -621,17 +621,22 @@ static ssize_t reload_store(struct device *dev,
 			    struct device_attribute *attr,
 			    const char *buf, size_t size)
 {
+	extern bool force_ucode_load;
 	enum ucode_state tmp_ret = UCODE_OK;
 	int bsp = boot_cpu_data.cpu_index;
 	unsigned long val;
+	bool orig_cmd_line = force_ucode_load;
 	ssize_t ret = 0;
 
 	ret = kstrtoul(buf, 0, &val);
 	if (ret)
 		return ret;
 
-	if (val != 1)
+	if (!val || val > 2)
 		return size;
+
+	if (val == 2)
+		force_ucode_load = true;
 
 	tmp_ret = microcode_ops->request_microcode_fw(bsp, &microcode_pdev->dev, true);
 	if (tmp_ret != UCODE_NEW)
@@ -648,6 +653,7 @@ static ssize_t reload_store(struct device *dev,
 	mutex_unlock(&microcode_mutex);
 
 put:
+	force_ucode_load = orig_cmd_line;
 	put_online_cpus();
 
 	if (ret >= 0)
