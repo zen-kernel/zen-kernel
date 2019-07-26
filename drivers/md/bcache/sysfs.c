@@ -16,6 +16,8 @@
 #include <linux/sort.h>
 #include <linux/sched/clock.h>
 
+extern bool bcache_is_reboot;
+
 /* Default is 0 ("writethrough") */
 static const char * const bch_cache_modes[] = {
 	"writethrough",
@@ -180,7 +182,7 @@ SHOW(__bch_cached_dev)
 	var_print(writeback_percent);
 	sysfs_hprint(writeback_rate,
 		     wb ? atomic_long_read(&dc->writeback_rate.rate) << 9 : 0);
-	sysfs_hprint(io_errors,		atomic_read(&dc->io_errors));
+	sysfs_printf(io_errors,		"%i", atomic_read(&dc->io_errors));
 	sysfs_printf(io_error_limit,	"%i", dc->error_limit);
 	sysfs_printf(io_disable,	"%i", dc->io_disable);
 	var_print(writeback_rate_update_seconds);
@@ -270,6 +272,10 @@ STORE(__cached_dev)
 	ssize_t v;
 	struct cache_set *c;
 	struct kobj_uevent_env *env;
+
+	/* no user space access if system is rebooting */
+	if (bcache_is_reboot)
+		return -EBUSY;
 
 #define d_strtoul(var)		sysfs_strtoul(var, dc->var)
 #define d_strtoul_nonzero(var)	sysfs_strtoul_clamp(var, dc->var, 1, INT_MAX)
@@ -408,6 +414,10 @@ STORE(bch_cached_dev)
 	struct cached_dev *dc = container_of(kobj, struct cached_dev,
 					     disk.kobj);
 
+	/* no user space access if system is rebooting */
+	if (bcache_is_reboot)
+		return -EBUSY;
+
 	mutex_lock(&bch_register_lock);
 	size = __cached_dev_store(kobj, attr, buf, size);
 
@@ -464,7 +474,7 @@ static struct attribute *bch_cached_dev_files[] = {
 	&sysfs_writeback_rate_p_term_inverse,
 	&sysfs_writeback_rate_minimum,
 	&sysfs_writeback_rate_debug,
-	&sysfs_errors,
+	&sysfs_io_errors,
 	&sysfs_io_error_limit,
 	&sysfs_io_disable,
 	&sysfs_dirty_data,
@@ -510,6 +520,10 @@ STORE(__bch_flash_dev)
 	struct bcache_device *d = container_of(kobj, struct bcache_device,
 					       kobj);
 	struct uuid_entry *u = &d->c->uuids[d->id];
+
+	/* no user space access if system is rebooting */
+	if (bcache_is_reboot)
+		return -EBUSY;
 
 	sysfs_strtoul(data_csum,	d->data_csum);
 
@@ -746,6 +760,10 @@ STORE(__bch_cache_set)
 	struct cache_set *c = container_of(kobj, struct cache_set, kobj);
 	ssize_t v;
 
+	/* no user space access if system is rebooting */
+	if (bcache_is_reboot)
+		return -EBUSY;
+
 	if (attr == &sysfs_unregister)
 		bch_cache_set_unregister(c);
 
@@ -864,6 +882,10 @@ SHOW(bch_cache_set_internal)
 STORE(bch_cache_set_internal)
 {
 	struct cache_set *c = container_of(kobj, struct cache_set, internal);
+
+	/* no user space access if system is rebooting */
+	if (bcache_is_reboot)
+		return -EBUSY;
 
 	return bch_cache_set_store(&c->kobj, attr, buf, size);
 }
@@ -1049,6 +1071,10 @@ STORE(__bch_cache)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
 	ssize_t v;
+
+	/* no user space access if system is rebooting */
+	if (bcache_is_reboot)
+		return -EBUSY;
 
 	if (attr == &sysfs_discard) {
 		bool v = strtoul_or_return(buf);

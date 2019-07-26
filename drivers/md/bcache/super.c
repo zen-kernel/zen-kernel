@@ -40,6 +40,7 @@ static const char invalid_uuid[] = {
 
 static struct kobject *bcache_kobj;
 struct mutex bch_register_lock;
+bool bcache_is_reboot;
 LIST_HEAD(bch_cache_sets);
 static LIST_HEAD(uncached_devices);
 
@@ -48,6 +49,7 @@ static DEFINE_IDA(bcache_device_idx);
 static wait_queue_head_t unregister_wait;
 struct workqueue_struct *bcache_wq;
 struct workqueue_struct *bch_journal_wq;
+
 
 #define BTREE_MAX_PAGES		(256 * 1024 / PAGE_SIZE)
 /* limitation of partitions number on single bcache device */
@@ -1190,17 +1192,15 @@ static void cached_dev_free(struct closure *cl)
 {
 	struct cached_dev *dc = container_of(cl, struct cached_dev, disk.cl);
 
-	mutex_lock(&bch_register_lock);
-
 	if (test_and_clear_bit(BCACHE_DEV_WB_RUNNING, &dc->disk.flags))
 		cancel_writeback_rate_update_dwork(dc);
 
 	if (!IS_ERR_OR_NULL(dc->writeback_thread))
 		kthread_stop(dc->writeback_thread);
-	if (dc->writeback_write_wq)
-		destroy_workqueue(dc->writeback_write_wq);
 	if (!IS_ERR_OR_NULL(dc->status_update_thread))
 		kthread_stop(dc->status_update_thread);
+
+	mutex_lock(&bch_register_lock);
 
 	if (atomic_read(&dc->running))
 		bd_unlink_disk_holder(dc->bdev, dc->disk.disk);
@@ -1437,8 +1437,6 @@ int bch_flash_dev_create(struct cache_set *c, uint64_t size)
 
 bool bch_cached_dev_error(struct cached_dev *dc)
 {
-	struct cache_set *c;
-
 	if (!dc || test_bit(BCACHE_DEV_CLOSING, &dc->disk.flags))
 		return false;
 
@@ -1448,21 +1446,6 @@ bool bch_cached_dev_error(struct cached_dev *dc)
 
 	pr_err("stop %s: too many IO errors on backing device %s\n",
 		dc->disk.disk->disk_name, dc->backing_dev_name);
-
-	/*
-	 * If the cached device is still attached to a cache set,
-	 * even dc->io_disable is true and no more I/O requests
-	 * accepted, cache device internal I/O (writeback scan or
-	 * garbage collection) may still prevent bcache device from
-	 * being stopped. So here CACHE_SET_IO_DISABLE should be
-	 * set to c->flags too, to make the internal I/O to cache
-	 * device rejected and stopped immediately.
-	 * If c is NULL, that means the bcache device is not attached
-	 * to any cache set, then no CACHE_SET_IO_DISABLE bit to set.
-	 */
-	c = dc->disk.c;
-	if (c && test_and_set_bit(CACHE_SET_IO_DISABLE, &c->flags))
-		pr_info("CACHE_SET_IO_DISABLE already set");
 
 	bcache_device_stop(&dc->disk);
 	return true;
@@ -1564,7 +1547,7 @@ static void cache_set_flush(struct closure *cl)
 	kobject_put(&c->internal);
 	kobject_del(&c->kobj);
 
-	if (c->gc_thread)
+	if (!IS_ERR_OR_NULL(c->gc_thread))
 		kthread_stop(c->gc_thread);
 
 	if (!IS_ERR_OR_NULL(c->root))
@@ -2301,6 +2284,11 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
 	if (!try_module_get(THIS_MODULE))
 		return -EBUSY;
 
+	/* For latest state of bcache_is_reboot */
+	smp_mb();
+	if (bcache_is_reboot)
+		return -EBUSY;
+
 	path = kstrndup(buffer, size, GFP_KERNEL);
 	if (!path)
 		goto err;
@@ -2380,6 +2368,9 @@ err:
 
 static int bcache_reboot(struct notifier_block *n, unsigned long code, void *x)
 {
+	if (bcache_is_reboot)
+		return NOTIFY_DONE;
+
 	if (code == SYS_DOWN ||
 	    code == SYS_HALT ||
 	    code == SYS_POWER_OFF) {
@@ -2392,19 +2383,45 @@ static int bcache_reboot(struct notifier_block *n, unsigned long code, void *x)
 
 		mutex_lock(&bch_register_lock);
 
+		if (bcache_is_reboot)
+			goto out;
+
+		/* New registration is rejected since now */
+		bcache_is_reboot = true;
+		/*
+		 * Make registering caller (if there is) on other CPU
+		 * core know bcache_is_reboot set to true earlier
+		 */
+		smp_mb();
+
 		if (list_empty(&bch_cache_sets) &&
 		    list_empty(&uncached_devices))
 			goto out;
 
+		mutex_unlock(&bch_register_lock);
+
 		pr_info("Stopping all devices:");
 
+		/*
+		 * The reason bch_register_lock is not held to call
+		 * bch_cache_set_stop() and bcache_device_stop() is to
+		 * avoid potential deadlock during reboot, because cache
+		 * set or bcache device stopping process will acqurie
+		 * bch_register_lock too.
+		 *
+		 * We are safe here because bcache_is_reboot sets to
+		 * true already, register_bcache() will reject new
+		 * registration now. bcache_is_reboot also makes sure
+		 * bcache_reboot() won't be re-entered on by other thread,
+		 * so there is no race in following list iteration by
+		 * list_for_each_entry_safe().
+		 */
 		list_for_each_entry_safe(c, tc, &bch_cache_sets, list)
 			bch_cache_set_stop(c);
 
 		list_for_each_entry_safe(dc, tdc, &uncached_devices, list)
 			bcache_device_stop(&dc->disk);
 
-		mutex_unlock(&bch_register_lock);
 
 		/*
 		 * Give an early chance for other kthreads and
@@ -2530,6 +2547,8 @@ static int __init bcache_init(void)
 
 	bch_debug_init();
 	closure_debug_init();
+
+	bcache_is_reboot = false;
 
 	return 0;
 err:

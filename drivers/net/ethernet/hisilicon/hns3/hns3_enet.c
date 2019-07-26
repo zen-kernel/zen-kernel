@@ -4,6 +4,9 @@
 #include <linux/dma-mapping.h>
 #include <linux/etherdevice.h>
 #include <linux/interrupt.h>
+#ifdef CONFIG_RFS_ACCEL
+#include <linux/cpu_rmap.h>
+#endif
 #include <linux/if_vlan.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
@@ -24,8 +27,7 @@
 #define hns3_set_field(origin, shift, val)	((origin) |= ((val) << (shift)))
 #define hns3_tx_bd_count(S)	DIV_ROUND_UP(S, HNS3_MAX_BD_SIZE)
 
-static void hns3_clear_all_ring(struct hnae3_handle *h);
-static void hns3_force_clear_all_rx_ring(struct hnae3_handle *h);
+static void hns3_clear_all_ring(struct hnae3_handle *h, bool force);
 static void hns3_remove_hw_addr(struct net_device *netdev);
 
 static const char hns3_driver_name[] = "hns3";
@@ -79,23 +81,6 @@ static irqreturn_t hns3_irq_handle(int irq, void *vector)
 	return IRQ_HANDLED;
 }
 
-/* This callback function is used to set affinity changes to the irq affinity
- * masks when the irq_set_affinity_notifier function is used.
- */
-static void hns3_nic_irq_affinity_notify(struct irq_affinity_notify *notify,
-					 const cpumask_t *mask)
-{
-	struct hns3_enet_tqp_vector *tqp_vectors =
-		container_of(notify, struct hns3_enet_tqp_vector,
-			     affinity_notify);
-
-	tqp_vectors->affinity_mask = *mask;
-}
-
-static void hns3_nic_irq_affinity_release(struct kref *ref)
-{
-}
-
 static void hns3_nic_uninit_irq(struct hns3_nic_priv *priv)
 {
 	struct hns3_enet_tqp_vector *tqp_vectors;
@@ -107,8 +92,7 @@ static void hns3_nic_uninit_irq(struct hns3_nic_priv *priv)
 		if (tqp_vectors->irq_init_flag != HNS3_VECTOR_INITED)
 			continue;
 
-		/* clear the affinity notifier and affinity mask */
-		irq_set_affinity_notifier(tqp_vectors->vector_irq, NULL);
+		/* clear the affinity mask */
 		irq_set_affinity_hint(tqp_vectors->vector_irq, NULL);
 
 		/* release the irq resource */
@@ -161,12 +145,6 @@ static int hns3_nic_init_irq(struct hns3_nic_priv *priv)
 			return ret;
 		}
 
-		tqp_vectors->affinity_notify.notify =
-					hns3_nic_irq_affinity_notify;
-		tqp_vectors->affinity_notify.release =
-					hns3_nic_irq_affinity_release;
-		irq_set_affinity_notifier(tqp_vectors->vector_irq,
-					  &tqp_vectors->affinity_notify);
 		irq_set_affinity_hint(tqp_vectors->vector_irq,
 				      &tqp_vectors->affinity_mask);
 
@@ -340,6 +318,40 @@ static void hns3_tqp_disable(struct hnae3_queue *tqp)
 	hns3_write_dev(tqp, HNS3_RING_EN_REG, rcb_reg);
 }
 
+static void hns3_free_rx_cpu_rmap(struct net_device *netdev)
+{
+#ifdef CONFIG_RFS_ACCEL
+	free_irq_cpu_rmap(netdev->rx_cpu_rmap);
+	netdev->rx_cpu_rmap = NULL;
+#endif
+}
+
+static int hns3_set_rx_cpu_rmap(struct net_device *netdev)
+{
+#ifdef CONFIG_RFS_ACCEL
+	struct hns3_nic_priv *priv = netdev_priv(netdev);
+	struct hns3_enet_tqp_vector *tqp_vector;
+	int i, ret;
+
+	if (!netdev->rx_cpu_rmap) {
+		netdev->rx_cpu_rmap = alloc_irq_cpu_rmap(priv->vector_num);
+		if (!netdev->rx_cpu_rmap)
+			return -ENOMEM;
+	}
+
+	for (i = 0; i < priv->vector_num; i++) {
+		tqp_vector = &priv->tqp_vector[i];
+		ret = irq_cpu_rmap_add(netdev->rx_cpu_rmap,
+				       tqp_vector->vector_irq);
+		if (ret) {
+			hns3_free_rx_cpu_rmap(netdev);
+			return ret;
+		}
+	}
+#endif
+	return 0;
+}
+
 static int hns3_nic_net_up(struct net_device *netdev)
 {
 	struct hns3_nic_priv *priv = netdev_priv(netdev);
@@ -351,11 +363,16 @@ static int hns3_nic_net_up(struct net_device *netdev)
 	if (ret)
 		return ret;
 
+	/* the device can work without cpu rmap, only aRFS needs it */
+	ret = hns3_set_rx_cpu_rmap(netdev);
+	if (ret)
+		netdev_warn(netdev, "set rx cpu rmap fail, ret=%d!\n", ret);
+
 	/* get irq resource for all vectors */
 	ret = hns3_nic_init_irq(priv);
 	if (ret) {
 		netdev_err(netdev, "hns init irq failed! ret=%d\n", ret);
-		return ret;
+		goto free_rmap;
 	}
 
 	clear_bit(HNS3_NIC_STATE_DOWN, &priv->state);
@@ -384,7 +401,8 @@ out_start_err:
 		hns3_vector_disable(&priv->tqp_vector[j]);
 
 	hns3_nic_uninit_irq(priv);
-
+free_rmap:
+	hns3_free_rx_cpu_rmap(netdev);
 	return ret;
 }
 
@@ -447,6 +465,20 @@ static int hns3_nic_net_open(struct net_device *netdev)
 	return 0;
 }
 
+static void hns3_reset_tx_queue(struct hnae3_handle *h)
+{
+	struct net_device *ndev = h->kinfo.netdev;
+	struct hns3_nic_priv *priv = netdev_priv(ndev);
+	struct netdev_queue *dev_queue;
+	u32 i;
+
+	for (i = 0; i < h->kinfo.num_tqps; i++) {
+		dev_queue = netdev_get_tx_queue(ndev,
+						priv->ring_data[i].queue_index);
+		netdev_tx_reset_queue(dev_queue);
+	}
+}
+
 static void hns3_nic_net_down(struct net_device *netdev)
 {
 	struct hns3_nic_priv *priv = netdev_priv(netdev);
@@ -467,10 +499,19 @@ static void hns3_nic_net_down(struct net_device *netdev)
 	if (ops->stop)
 		ops->stop(priv->ae_handle);
 
+	hns3_free_rx_cpu_rmap(netdev);
+
 	/* free irq resources */
 	hns3_nic_uninit_irq(priv);
 
-	hns3_clear_all_ring(priv->ae_handle);
+	/* delay ring buffer clearing to hns3_reset_notify_uninit_enet
+	 * during reset process, because driver may not be able
+	 * to disable the ring through firmware when downing the netdev.
+	 */
+	if (!hns3_nic_resetting(netdev))
+		hns3_clear_all_ring(priv->ae_handle, false);
+
+	hns3_reset_tx_queue(priv->ae_handle);
 }
 
 static int hns3_nic_net_stop(struct net_device *netdev)
@@ -1493,12 +1534,12 @@ static void hns3_nic_get_stats64(struct net_device *netdev,
 static int hns3_setup_tc(struct net_device *netdev, void *type_data)
 {
 	struct tc_mqprio_qopt_offload *mqprio_qopt = type_data;
-	struct hnae3_handle *h = hns3_get_handle(netdev);
-	struct hnae3_knic_private_info *kinfo = &h->kinfo;
 	u8 *prio_tc = mqprio_qopt->qopt.prio_tc_map;
+	struct hnae3_knic_private_info *kinfo;
 	u8 tc = mqprio_qopt->qopt.num_tc;
 	u16 mode = mqprio_qopt->mode;
 	u8 hw = mqprio_qopt->qopt.hw;
+	struct hnae3_handle *h;
 
 	if (!((hw == TC_MQPRIO_HW_OFFLOAD_TCS &&
 	       mode == TC_MQPRIO_MODE_CHANNEL) || (!hw && tc == 0)))
@@ -1509,6 +1550,9 @@ static int hns3_setup_tc(struct net_device *netdev, void *type_data)
 
 	if (!netdev)
 		return -EINVAL;
+
+	h = hns3_get_handle(netdev);
+	kinfo = &h->kinfo;
 
 	return (kinfo->dcb_ops && kinfo->dcb_ops->setup_tc) ?
 		kinfo->dcb_ops->setup_tc(h, tc, prio_tc) : -EOPNOTSUPP;
@@ -1895,9 +1939,9 @@ static pci_ers_result_t hns3_error_detected(struct pci_dev *pdev,
 	if (state == pci_channel_io_perm_failure)
 		return PCI_ERS_RESULT_DISCONNECT;
 
-	if (!ae_dev) {
+	if (!ae_dev || !ae_dev->ops) {
 		dev_err(&pdev->dev,
-			"Can't recover - error happened during device init\n");
+			"Can't recover - error happened before device initialized\n");
 		return PCI_ERS_RESULT_NONE;
 	}
 
@@ -1915,6 +1959,9 @@ static pci_ers_result_t hns3_slot_reset(struct pci_dev *pdev)
 	struct device *dev = &pdev->dev;
 
 	dev_info(dev, "requesting reset due to PCI error\n");
+
+	if (!ae_dev || !ae_dev->ops)
+		return PCI_ERS_RESULT_NONE;
 
 	/* request the reset */
 	if (ae_dev->ops->reset_event) {
@@ -3331,8 +3378,6 @@ static void hns3_nic_uninit_vector_data(struct hns3_nic_priv *priv)
 		hns3_free_vector_ring_chain(tqp_vector, &vector_ring_chain);
 
 		if (tqp_vector->irq_init_flag == HNS3_VECTOR_INITED) {
-			irq_set_affinity_notifier(tqp_vector->vector_irq,
-						  NULL);
 			irq_set_affinity_hint(tqp_vector->vector_irq, NULL);
 			free_irq(tqp_vector->vector_irq, tqp_vector);
 			tqp_vector->irq_init_flag = HNS3_VECTOR_NOT_INITED;
@@ -3858,7 +3903,7 @@ static void hns3_client_uninit(struct hnae3_handle *handle, bool reset)
 
 	hns3_del_all_fd_rules(netdev, true);
 
-	hns3_force_clear_all_rx_ring(handle);
+	hns3_clear_all_ring(handle, true);
 
 	hns3_uninit_phy(netdev);
 
@@ -4030,40 +4075,26 @@ static void hns3_force_clear_rx_ring(struct hns3_enet_ring *ring)
 	}
 }
 
-static void hns3_force_clear_all_rx_ring(struct hnae3_handle *h)
-{
-	struct net_device *ndev = h->kinfo.netdev;
-	struct hns3_nic_priv *priv = netdev_priv(ndev);
-	struct hns3_enet_ring *ring;
-	u32 i;
-
-	for (i = 0; i < h->kinfo.num_tqps; i++) {
-		ring = priv->ring_data[i + h->kinfo.num_tqps].ring;
-		hns3_force_clear_rx_ring(ring);
-	}
-}
-
-static void hns3_clear_all_ring(struct hnae3_handle *h)
+static void hns3_clear_all_ring(struct hnae3_handle *h, bool force)
 {
 	struct net_device *ndev = h->kinfo.netdev;
 	struct hns3_nic_priv *priv = netdev_priv(ndev);
 	u32 i;
 
 	for (i = 0; i < h->kinfo.num_tqps; i++) {
-		struct netdev_queue *dev_queue;
 		struct hns3_enet_ring *ring;
 
 		ring = priv->ring_data[i].ring;
 		hns3_clear_tx_ring(ring);
-		dev_queue = netdev_get_tx_queue(ndev,
-						priv->ring_data[i].queue_index);
-		netdev_tx_reset_queue(dev_queue);
 
 		ring = priv->ring_data[i + h->kinfo.num_tqps].ring;
 		/* Continue to clear other rings even if clearing some
 		 * rings failed.
 		 */
-		hns3_clear_rx_ring(ring);
+		if (force)
+			hns3_force_clear_rx_ring(ring);
+		else
+			hns3_clear_rx_ring(ring);
 	}
 }
 
@@ -4272,7 +4303,8 @@ static int hns3_reset_notify_uninit_enet(struct hnae3_handle *handle)
 		return 0;
 	}
 
-	hns3_force_clear_all_rx_ring(handle);
+	hns3_clear_all_ring(handle, true);
+	hns3_reset_tx_queue(priv->ae_handle);
 
 	hns3_nic_uninit_vector_data(priv);
 
