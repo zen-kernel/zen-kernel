@@ -2,7 +2,7 @@
 VERSION = 5
 PATCHLEVEL = 2
 SUBLEVEL = 8
-EXTRAVERSION = -zen
+EXTRAVERSION = -lqx1
 NAME = The Beauty and the Bug
 
 # *DOCUMENTATION*
