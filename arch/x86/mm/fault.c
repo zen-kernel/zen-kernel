@@ -770,9 +770,9 @@ show_signal_msg(struct pt_regs *regs, unsigned long error_code,
 	if (!printk_ratelimit())
 		return;
 
-	printk("%s%s[%d]: segfault at %lx ip %px sp %px error %lx",
+	printk("%s%s[%d]: segfault at %lx ip %px sp %px error %lx cpu %i",
 		loglvl, tsk->comm, task_pid_nr(tsk), address,
-		(void *)regs->ip, (void *)regs->sp, error_code);
+		(void *)regs->ip, (void *)regs->sp, error_code, raw_smp_processor_id());
 
 	print_vma_addr(KERN_CONT " in ", regs->ip);
 
