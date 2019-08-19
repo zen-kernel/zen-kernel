@@ -216,7 +216,7 @@ static void task_sample_cputime(struct task_struct *p, u64 *samples)
 	u64 stime, utime;
 
 	task_cputime(p, &utime, &stime);
-	store_samples(samples, stime, utime, p->se.sum_exec_runtime);
+	store_samples(samples, stime, utime, tsk_seruntime(p));
 }
 
 static void proc_sample_cputime_atomic(struct task_cputime_atomic *at,
@@ -859,6 +859,7 @@ static void collect_posix_cputimers(struct posix_cputimers *pct, u64 *samples,
 	}
 }
 
+#ifndef CONFIG_SCHED_ALT
 static inline void check_dl_overrun(struct task_struct *tsk)
 {
 	if (tsk->dl.dl_overrun) {
@@ -866,6 +867,7 @@ static inline void check_dl_overrun(struct task_struct *tsk)
 		__group_send_sig_info(SIGXCPU, SEND_SIG_PRIV, tsk);
 	}
 }
+#endif
 
 static bool check_rlimit(u64 time, u64 limit, int signo, bool rt, bool hard)
 {
@@ -893,8 +895,10 @@ static void check_thread_timers(struct task_struct *tsk,
 	u64 samples[CPUCLOCK_MAX];
 	unsigned long soft;
 
+#ifndef CONFIG_SCHED_ALT
 	if (dl_task(tsk))
 		check_dl_overrun(tsk);
+#endif
 
 	if (expiry_cache_is_inactive(pct))
 		return;
@@ -908,7 +912,7 @@ static void check_thread_timers(struct task_struct *tsk,
 	soft = task_rlimit(tsk, RLIMIT_RTTIME);
 	if (soft != RLIM_INFINITY) {
 		/* Task RT timeout is accounted in jiffies. RTTIME is usec */
-		unsigned long rttime = tsk->rt.timeout * (USEC_PER_SEC / HZ);
+		unsigned long rttime = tsk_rttimeout(tsk) * (USEC_PER_SEC / HZ);
 		unsigned long hard = task_rlimit_max(tsk, RLIMIT_RTTIME);
 
 		/* At the hard limit, send SIGKILL. No further action. */
@@ -1144,8 +1148,10 @@ static inline bool fastpath_timer_check(struct task_struct *tsk)
 			return true;
 	}
 
+#ifndef CONFIG_SCHED_ALT
 	if (dl_task(tsk) && tsk->dl.dl_overrun)
 		return true;
+#endif
 
 	return false;
 }
