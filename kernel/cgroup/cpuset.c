@@ -767,7 +767,7 @@ out:
 	return ret;
 }
 
-#ifdef CONFIG_SMP
+#if defined(CONFIG_SMP) && !defined(CONFIG_SCHED_ALT)
 
 /*
  * generate_sched_domains()
@@ -1011,7 +1011,7 @@ void rebuild_sched_domains_locked(void)
 	/* Have scheduler rebuild the domains */
 	partition_sched_domains(ndoms, doms, attr);
 }
-#else /* !CONFIG_SMP */
+#else /* !CONFIG_SMP || CONFIG_SCHED_ALT */
 void rebuild_sched_domains_locked(void)
 {
 }
