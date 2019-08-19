@@ -5,12 +5,14 @@
 
 #include "sched-pelt.h"
 
+#ifndef CONFIG_SCHED_ALT
 int __update_load_avg_blocked_se(u64 now, struct sched_entity *se);
 int __update_load_avg_se(u64 now, struct cfs_rq *cfs_rq, struct sched_entity *se);
 int __update_load_avg_cfs_rq(u64 now, struct cfs_rq *cfs_rq);
 int update_rt_rq_load_avg(u64 now, struct rq *rq, int running);
 int update_dl_rq_load_avg(u64 now, struct rq *rq, int running);
 bool update_other_load_avgs(struct rq *rq);
+#endif
 
 #ifdef CONFIG_SCHED_HW_PRESSURE
 int update_hw_load_avg(u64 now, struct rq *rq, u64 capacity);
@@ -49,6 +51,7 @@ static inline u32 get_pelt_divider(struct sched_avg *avg)
 	return PELT_MIN_DIVIDER + avg->period_contrib;
 }
 
+#ifndef CONFIG_SCHED_ALT
 static inline void cfs_se_util_change(struct sched_avg *avg)
 {
 	unsigned int enqueued;
@@ -185,5 +188,6 @@ static inline u64 cfs_rq_clock_pelt(struct cfs_rq *cfs_rq)
 	return rq_clock_pelt(rq_of(cfs_rq));
 }
 #endif /* !CONFIG_CFS_BANDWIDTH */
+#endif /* CONFIG_SCHED_ALT */
 
 #endif /* _KERNEL_SCHED_PELT_H */
