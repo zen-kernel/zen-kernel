@@ -763,8 +763,10 @@ struct task_struct {
 	unsigned int			flags;
 	unsigned int			ptrace;
 
-#ifdef CONFIG_SMP
+#if defined(CONFIG_SMP) || defined(CONFIG_SCHED_ALT)
 	int				on_cpu;
+#endif
+#if defined(CONFIG_SMP) && !defined(CONFIG_SCHED_ALT)
 	struct __call_single_node	wake_entry;
 	unsigned int			wakee_flips;
 	unsigned long			wakee_flip_decay_ts;
@@ -787,6 +789,17 @@ struct task_struct {
 	int				normal_prio;
 	unsigned int			rt_priority;
 
+#ifdef CONFIG_SCHED_ALT
+	u64				last_ran;
+	s64				time_slice;
+	int				boost_prio;
+#ifdef CONFIG_SCHED_BMQ
+	int				bmq_idx;
+	struct list_head		bmq_node;
+#endif /* CONFIG_SCHED_BMQ */
+	/* sched_clock time spent running */
+	u64				sched_time;
+#else /* !CONFIG_SCHED_ALT */
 	struct sched_entity		se;
 	struct sched_rt_entity		rt;
 	struct sched_dl_entity		dl;
@@ -797,6 +810,7 @@ struct task_struct {
 	unsigned long			core_cookie;
 	unsigned int			core_occupation;
 #endif
+#endif /* !CONFIG_SCHED_ALT */
 
 #ifdef CONFIG_CGROUP_SCHED
 	struct task_group		*sched_task_group;
@@ -1550,6 +1564,15 @@ struct task_struct {
 	 * Do not put anything below here!
 	 */
 };
+
+#ifdef CONFIG_SCHED_ALT
+#define tsk_seruntime(t)		((t)->sched_time)
+/* replace the uncertian rt_timeout with 0UL */
+#define tsk_rttimeout(t)		(0UL)
+#else /* CFS */
+#define tsk_seruntime(t)	((t)->se.sum_exec_runtime)
+#define tsk_rttimeout(t)	((t)->rt.timeout)
+#endif /* !CONFIG_SCHED_ALT */
 
 static inline struct pid *task_pid(struct task_struct *task)
 {
