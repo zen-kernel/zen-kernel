@@ -2,6 +2,10 @@
 /*
  * Scheduler internal types and methods:
  */
+#ifdef CONFIG_SCHED_ALT
+#include "alt_sched.h"
+#else
+
 #include <linux/sched.h>
 
 #include <linux/sched/autogroup.h>
@@ -3040,3 +3044,8 @@ extern int sched_dynamic_mode(const char *str);
 extern void sched_dynamic_update(int mode);
 #endif
 
+static inline int task_running_nice(struct task_struct *p)
+{
+	return (task_nice(p) > 0);
+}
+#endif /* !CONFIG_SCHED_ALT */
