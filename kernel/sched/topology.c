@@ -3,6 +3,7 @@
  * Scheduler topology setup/handling methods
  */
 
+#ifndef CONFIG_SCHED_ALT
 #include <linux/sched/isolation.h>
 #include <linux/bsearch.h>
 #include "sched.h"
@@ -1497,8 +1498,10 @@ static void asym_cpu_capacity_scan(void)
  */
 
 static int default_relax_domain_level = -1;
+#endif /* CONFIG_SCHED_ALT */
 int sched_domain_level_max;
 
+#ifndef CONFIG_SCHED_ALT
 static int __init setup_relax_domain_level(char *str)
 {
 	if (kstrtoint(str, 0, &default_relax_domain_level))
@@ -1731,6 +1734,7 @@ sd_init(struct sched_domain_topology_level *tl,
 
 	return sd;
 }
+#endif /* CONFIG_SCHED_ALT */
 
 /*
  * Topology list, bottom-up.
@@ -1767,6 +1771,7 @@ void __init set_sched_topology(struct sched_domain_topology_level *tl)
 	sched_domain_topology_saved = NULL;
 }
 
+#ifndef CONFIG_SCHED_ALT
 #ifdef CONFIG_NUMA
 
 static const struct cpumask *sd_numa_mask(int cpu)
@@ -2833,3 +2838,17 @@ void partition_sched_domains(int ndoms_new, cpumask_var_t doms_new[],
 	partition_sched_domains_locked(ndoms_new, doms_new, dattr_new);
 	sched_domains_mutex_unlock();
 }
+#else /* CONFIG_SCHED_ALT */
+void partition_sched_domains(int ndoms_new, cpumask_var_t doms_new[],
+			     struct sched_domain_attr *dattr_new)
+{}
+
+#ifdef CONFIG_NUMA
+int __read_mostly		node_reclaim_distance = RECLAIM_DISTANCE;
+
+int sched_numa_find_closest(const struct cpumask *cpus, int cpu)
+{
+	return best_mask_cpu(cpu, cpus);
+}
+#endif /* CONFIG_NUMA */
+#endif
