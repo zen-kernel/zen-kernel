@@ -161,6 +161,7 @@ static unsigned int get_next_freq(struct sugov_policy *sg_policy,
 	return cpufreq_driver_resolve_freq(policy, freq);
 }
 
+#ifndef CONFIG_SCHED_ALT
 static void sugov_get_util(struct sugov_cpu *sg_cpu)
 {
 	struct rq *rq = cpu_rq(sg_cpu->cpu);
@@ -171,6 +172,13 @@ static void sugov_get_util(struct sugov_cpu *sg_cpu)
 	sg_cpu->util = effective_cpu_util(sg_cpu->cpu, cpu_util_cfs(sg_cpu->cpu), max,
 					  FREQUENCY_UTIL, NULL);
 }
+#else /* CONFIG_SCHED_ALT */
+static unsigned long sugov_get_util(struct sugov_cpu *sg_cpu)
+{
+	sg_cpu->max = arch_scale_cpu_capacity(sg_cpu->cpu);
+	return sg_cpu->max;
+}
+#endif
 
 /**
  * sugov_iowait_reset() - Reset the IO boost status of a CPU.
@@ -312,7 +320,9 @@ static inline bool sugov_cpu_is_busy(struct sugov_cpu *sg_cpu) { return false; }
  */
 static inline void ignore_dl_rate_limit(struct sugov_cpu *sg_cpu)
 {
+#ifndef CONFIG_SCHED_ALT
 	if (cpu_bw_dl(cpu_rq(sg_cpu->cpu)) > sg_cpu->bw_dl)
+#endif
 		sg_cpu->sg_policy->limits_changed = true;
 }
 
@@ -607,6 +617,7 @@ static int sugov_kthread_create(struct sugov_policy *sg_policy)
 	}
 
 	ret = sched_setattr_nocheck(thread, &attr);
+
 	if (ret) {
 		kthread_stop(thread);
 		pr_warn("%s: failed to set SCHED_DEADLINE\n", __func__);
@@ -837,6 +848,7 @@ struct cpufreq_governor *cpufreq_default_governor(void)
 cpufreq_governor_init(schedutil_gov);
 
 #ifdef CONFIG_ENERGY_MODEL
+#ifndef CONFIG_SCHED_ALT
 static void rebuild_sd_workfn(struct work_struct *work)
 {
 	rebuild_sched_domains_energy();
@@ -860,4 +872,10 @@ void sched_cpufreq_governor_change(struct cpufreq_policy *policy,
 	}
 
 }
+#else /* CONFIG_SCHED_ALT */
+void sched_cpufreq_governor_change(struct cpufreq_policy *policy,
+				  struct cpufreq_governor *old_gov)
+{
+}
+#endif
 #endif
