@@ -178,6 +178,7 @@ static unsigned int get_next_freq(struct sugov_policy *sg_policy,
 	return cpufreq_driver_resolve_freq(policy, freq);
 }
 
+#ifndef CONFIG_SCHED_ALT
 unsigned long sugov_effective_cpu_perf(int cpu, unsigned long actual,
 				 unsigned long min,
 				 unsigned long max)
@@ -204,6 +205,13 @@ static void sugov_get_util(struct sugov_cpu *sg_cpu, unsigned long boost)
 	sg_cpu->bw_min = min;
 	sg_cpu->util = sugov_effective_cpu_perf(sg_cpu->cpu, util, min, max);
 }
+#else /* CONFIG_SCHED_ALT */
+static unsigned long sugov_get_util(struct sugov_cpu *sg_cpu)
+{
+	sg_cpu->max = arch_scale_cpu_capacity(sg_cpu->cpu);
+	return sg_cpu->max;
+}
+#endif
 
 /**
  * sugov_iowait_reset() - Reset the IO boost status of a CPU.
@@ -343,7 +351,9 @@ static inline bool sugov_cpu_is_busy(struct sugov_cpu *sg_cpu) { return false; }
  */
 static inline void ignore_dl_rate_limit(struct sugov_cpu *sg_cpu)
 {
+#ifndef CONFIG_SCHED_ALT
 	if (cpu_bw_dl(cpu_rq(sg_cpu->cpu)) > sg_cpu->bw_min)
+#endif
 		sg_cpu->sg_policy->limits_changed = true;
 }
 
@@ -676,6 +686,7 @@ static int sugov_kthread_create(struct sugov_policy *sg_policy)
 	}
 
 	ret = sched_setattr_nocheck(thread, &attr);
+
 	if (ret) {
 		kthread_stop(thread);
 		pr_warn("%s: failed to set SCHED_DEADLINE\n", __func__);
