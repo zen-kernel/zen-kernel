@@ -68,8 +68,10 @@
 # include "cpufreq_schedutil.c"
 #endif
 
+#ifdef CONFIG_SCHED_ALT
 #ifdef CONFIG_SCHED_DEBUG
 # include "debug.c"
+#endif
 #endif
 
 #ifdef CONFIG_SCHEDSTATS
@@ -84,7 +86,9 @@
 
 #ifdef CONFIG_SMP
 # include "cpupri.c"
+#ifdef CONFIG_SCHED_ALT
 # include "stop_task.c"
+#endif
 # include "topology.c"
 #endif
 
