@@ -18,6 +18,11 @@
 #define MAX_PRIO		(MAX_RT_PRIO + NICE_WIDTH)
 #define DEFAULT_PRIO		(MAX_RT_PRIO + NICE_WIDTH / 2)
 
+#ifdef CONFIG_SCHED_ALT
+/* +/- priority levels from the base priority */
+#define MAX_PRIORITY_ADJ	4
+#endif
+
 /*
  * Convert user-nice values [ -20 ... 0 ... 19 ]
  * to static priority [ MAX_RT_PRIO..MAX_PRIO-1 ],
