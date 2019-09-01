@@ -33,6 +33,7 @@
 #include <linux/miscdevice.h>
 #include <linux/poll.h>
 #include <linux/slab.h>
+#include <linux/scatterlist.h>
 #ifdef CONFIG_COMPAT
 #include <linux/compat.h>
 #endif
@@ -42,11 +43,6 @@
 #include <scsi/scsi_cmnd.h>
 #include <scsi/scsi_device.h>
 
-/* scatterlist.page_link and sg_page() were introduced in 2.6.24 */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24)
-#define USE_SG_PAGE
-#include <linux/scatterlist.h>
-#endif
 
 MODULE_AUTHOR("Chia-I Wu");
 MODULE_VERSION(VHBA_VERSION);
@@ -59,44 +55,17 @@ MODULE_LICENSE("GPL");
 #define DPRINTK(fmt, args...)
 #endif
 
-/* scmd_dbg was introduced in 3.15 */
-#ifndef scmd_dbg
-#define scmd_dbg(scmd, fmt, a...)       \
-    dev_dbg(&(scmd)->device->sdev_gendev, fmt, ##a)
-#endif
-
-#ifndef scmd_warn
-#define scmd_warn(scmd, fmt, a...)      \
-    dev_warn(&(scmd)->device->sdev_gendev, fmt, ##a)
-#endif
-
 #define VHBA_MAX_SECTORS_PER_IO 256
-#define VHBA_MAX_ID 32
+#define VHBA_MAX_BUS 16
+#define VHBA_MAX_ID 16 /* Usually 8 or 16 */
+#define VHBA_MAX_DEVICES (VHBA_MAX_BUS * (VHBA_MAX_ID-1))
 #define VHBA_CAN_QUEUE 32
-#define VHBA_INVALID_ID VHBA_MAX_ID
+#define VHBA_INVALID_BUS -1
+#define VHBA_INVALID_ID -1
 #define VHBA_KBUF_SIZE PAGE_SIZE
 
 #define DATA_TO_DEVICE(dir) ((dir) == DMA_TO_DEVICE || (dir) == DMA_BIDIRECTIONAL)
 #define DATA_FROM_DEVICE(dir) ((dir) == DMA_FROM_DEVICE || (dir) == DMA_BIDIRECTIONAL)
-
-
-/* SCSI macros were introduced in 2.6.23 */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 23)
-#define scsi_sg_count(cmd) ((cmd)->use_sg)
-#define scsi_sglist(cmd) ((cmd)->request_buffer)
-#define scsi_bufflen(cmd) ((cmd)->request_bufflen)
-#define scsi_set_resid(cmd, to_read) {(cmd)->resid = (to_read);}
-#endif
-
-/* 1-argument form of k[un]map_atomic was introduced in 2.6.37-rc1;
-   2-argument form was deprecated in 3.4-rc1 */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 37)
-#define vhba_kmap_atomic kmap_atomic
-#define vhba_kunmap_atomic kunmap_atomic
-#else
-#define vhba_kmap_atomic(page) kmap_atomic(page, KM_USER0)
-#define vhba_kunmap_atomic(page) kunmap_atomic(page, KM_USER0)
-#endif
 
 
 enum vhba_req_state {
@@ -115,7 +84,9 @@ struct vhba_command {
 };
 
 struct vhba_device {
-    uint id;
+    int bus; /* aka. channel */
+    int id;
+    int num;
     spinlock_t cmd_lock;
     struct list_head cmd_list;
     wait_queue_head_t cmd_wq;
@@ -133,10 +104,10 @@ struct vhba_host {
     int cmd_next;
     struct vhba_command commands[VHBA_CAN_QUEUE];
     spinlock_t dev_lock;
-    struct vhba_device *devices[VHBA_MAX_ID];
+    struct vhba_device *devices[VHBA_MAX_DEVICES];
     int num_devices;
-    DECLARE_BITMAP(chgmap, VHBA_MAX_ID);
-    int chgtype[VHBA_MAX_ID];
+    DECLARE_BITMAP(chgmap, VHBA_MAX_DEVICES);
+    int chgtype[VHBA_MAX_DEVICES];
     struct work_struct scan_devices;
 };
 
@@ -170,6 +141,7 @@ static struct vhba_device *vhba_device_alloc (void)
         return NULL;
     }
 
+    vdev->bus = VHBA_INVALID_BUS;
     vdev->id = VHBA_INVALID_ID;
     spin_lock_init(&vdev->cmd_lock);
     INIT_LIST_HEAD(&vdev->cmd_list);
@@ -182,6 +154,20 @@ static struct vhba_device *vhba_device_alloc (void)
     vdev->cmd_count = 0;
 
     return vdev;
+}
+
+static void devnum_to_bus_and_id(int devnum, int *bus, int *id)
+{
+    int a = devnum / (VHBA_MAX_ID-1);
+    int b = devnum % (VHBA_MAX_ID-1);
+
+    *bus = a;
+    *id  = b + 1;
+}
+
+static int bus_and_id_to_devnum(int bus, int id)
+{
+    return (bus * (VHBA_MAX_ID-1)) + id - 1;
 }
 
 static void vhba_device_put (struct vhba_device *vdev)
@@ -256,29 +242,29 @@ static int vhba_device_dequeue (struct vhba_device *vdev, struct scsi_cmnd *cmd)
     return retval;
 }
 
-static inline void vhba_scan_devices_add (struct vhba_host *vhost, int id)
+static inline void vhba_scan_devices_add (struct vhba_host *vhost, int bus, int id)
 {
     struct scsi_device *sdev;
 
-    sdev = scsi_device_lookup(vhost->shost, 0, id, 0);
+    sdev = scsi_device_lookup(vhost->shost, bus, id, 0);
     if (!sdev) {
-        scsi_add_device(vhost->shost, 0, id, 0);
+        scsi_add_device(vhost->shost, bus, id, 0);
     } else {
-        dev_warn(&vhost->shost->shost_gendev, "tried to add an already-existing device 0:%d:0!\n", id);
+        dev_warn(&vhost->shost->shost_gendev, "tried to add an already-existing device %d:%d:0!\n", bus, id);
         scsi_device_put(sdev);
     }
 }
 
-static inline void vhba_scan_devices_remove (struct vhba_host *vhost, int id)
+static inline void vhba_scan_devices_remove (struct vhba_host *vhost, int bus, int id)
 {
     struct scsi_device *sdev;
 
-    sdev = scsi_device_lookup(vhost->shost, 0, id, 0);
+    sdev = scsi_device_lookup(vhost->shost, bus, id, 0);
     if (sdev) {
         scsi_remove_device(sdev);
         scsi_device_put(sdev);
     } else {
-        dev_warn(&vhost->shost->shost_gendev, "tried to remove non-existing device 0:%d:0!\n", id);
+        dev_warn(&vhost->shost->shost_gendev, "tried to remove non-existing device %d:%d:0!\n", bus, id);
     }
 }
 
@@ -286,41 +272,44 @@ static void vhba_scan_devices (struct work_struct *work)
 {
     struct vhba_host *vhost = container_of(work, struct vhba_host, scan_devices);
     unsigned long flags;
-    int id, change, exists;
+    int devnum, change, exists;
+    int bus, id;
 
     while (1) {
         spin_lock_irqsave(&vhost->dev_lock, flags);
 
-        id = find_first_bit(vhost->chgmap, vhost->shost->max_id);
-        if (id >= vhost->shost->max_id) {
+        devnum = find_first_bit(vhost->chgmap, VHBA_MAX_DEVICES);
+        if (devnum >= VHBA_MAX_DEVICES) {
             spin_unlock_irqrestore(&vhost->dev_lock, flags);
             break;
         }
-        change = vhost->chgtype[id];
-        exists = vhost->devices[id] != NULL;
+        change = vhost->chgtype[devnum];
+        exists = vhost->devices[devnum] != NULL;
 
-        vhost->chgtype[id] = 0;
-        clear_bit(id, vhost->chgmap);
+        vhost->chgtype[devnum] = 0;
+        clear_bit(devnum, vhost->chgmap);
 
         spin_unlock_irqrestore(&vhost->dev_lock, flags);
 
+        devnum_to_bus_and_id(devnum, &bus, &id);
+
         if (change < 0) {
-            dev_dbg(&vhost->shost->shost_gendev, "trying to remove target 0:%d:0\n", id);
-            vhba_scan_devices_remove(vhost, id);
+            dev_dbg(&vhost->shost->shost_gendev, "trying to remove target %d:%d:0\n", bus, id);
+            vhba_scan_devices_remove(vhost, bus, id);
         } else if (change > 0) {
-            dev_dbg(&vhost->shost->shost_gendev, "trying to add target 0:%d:0\n", id);
-            vhba_scan_devices_add(vhost, id);
+            dev_dbg(&vhost->shost->shost_gendev, "trying to add target %d:%d:0\n", bus, id);
+            vhba_scan_devices_add(vhost, bus, id);
         } else {
             /* quick sequence of add/remove or remove/add; we determine
                which one it was by checking if device structure exists */
             if (exists) {
                 /* remove followed by add: remove and (re)add */
-                dev_dbg(&vhost->shost->shost_gendev, "trying to (re)add target 0:%d:0\n", id);
-                vhba_scan_devices_remove(vhost, id);
-                vhba_scan_devices_add(vhost, id);
+                dev_dbg(&vhost->shost->shost_gendev, "trying to (re)add target %d:%d:0\n", bus, id);
+                vhba_scan_devices_remove(vhost, bus, id);
+                vhba_scan_devices_add(vhost, bus, id);
             } else {
                 /* add followed by remove: no-op */
-                dev_dbg(&vhost->shost->shost_gendev, "no-op for target 0:%d:0\n", id);
+                dev_dbg(&vhost->shost->shost_gendev, "no-op for target %d:%d:0\n", bus, id);
             }
         }
     }
@@ -331,25 +320,30 @@ static int vhba_add_device (struct vhba_device *vdev)
     struct vhba_host *vhost;
     int i;
     unsigned long flags;
+    int bus, id;
 
     vhost = platform_get_drvdata(&vhba_platform_device);
 
     vhba_device_get(vdev);
 
     spin_lock_irqsave(&vhost->dev_lock, flags);
-    if (vhost->num_devices >= vhost->shost->max_id) {
+    if (vhost->num_devices >= VHBA_MAX_DEVICES) {
         spin_unlock_irqrestore(&vhost->dev_lock, flags);
         vhba_device_put(vdev);
         return -EBUSY;
     }
 
-    for (i = 0; i < vhost->shost->max_id; i++) {
+    for (i = 0; i < VHBA_MAX_DEVICES; i++) {
+        devnum_to_bus_and_id(i, &bus, &id);
+
         if (vhost->devices[i] == NULL) {
-            vdev->id = i;
+            vdev->bus = bus;
+            vdev->id  = id;
+            vdev->num = i;
             vhost->devices[i] = vdev;
             vhost->num_devices++;
-            set_bit(vdev->id, vhost->chgmap);
-            vhost->chgtype[vdev->id]++;
+            set_bit(i, vhost->chgmap);
+            vhost->chgtype[i]++;
             break;
         }
     }
@@ -368,10 +362,11 @@ static int vhba_remove_device (struct vhba_device *vdev)
     vhost = platform_get_drvdata(&vhba_platform_device);
 
     spin_lock_irqsave(&vhost->dev_lock, flags);
-    set_bit(vdev->id, vhost->chgmap);
-    vhost->chgtype[vdev->id]--;
-    vhost->devices[vdev->id] = NULL;
+    set_bit(vdev->num, vhost->chgmap);
+    vhost->chgtype[vdev->num]--;
+    vhost->devices[vdev->num] = NULL;
     vhost->num_devices--;
+    vdev->bus = VHBA_INVALID_BUS;
     vdev->id = VHBA_INVALID_ID;
     spin_unlock_irqrestore(&vhost->dev_lock, flags);
 
@@ -382,7 +377,7 @@ static int vhba_remove_device (struct vhba_device *vdev)
     return 0;
 }
 
-static struct vhba_device *vhba_lookup_device (int id)
+static struct vhba_device *vhba_lookup_device (int devnum)
 {
     struct vhba_host *vhost;
     struct vhba_device *vdev = NULL;
@@ -390,9 +385,9 @@ static struct vhba_device *vhba_lookup_device (int id)
 
     vhost = platform_get_drvdata(&vhba_platform_device);
 
-    if (likely(id < vhost->shost->max_id)) {
+    if (likely(devnum < VHBA_MAX_DEVICES)) {
         spin_lock_irqsave(&vhost->dev_lock, flags);
-        vdev = vhost->devices[id];
+        vdev = vhost->devices[devnum];
         if (vdev) {
             vdev = vhba_device_get(vdev);
         }
@@ -460,7 +455,7 @@ static int vhba_queuecommand_lck (struct scsi_cmnd *cmd, void (*done)(struct scs
 
     scmd_dbg(cmd, "queue %p\n", cmd);
 
-    vdev = vhba_lookup_device(cmd->device->id);
+    vdev = vhba_lookup_device(bus_and_id_to_devnum(cmd->device->channel, cmd->device->id));
     if (!vdev) {
         scmd_dbg(cmd, "no such device\n");
 
@@ -489,9 +484,9 @@ static int vhba_abort (struct scsi_cmnd *cmd)
     struct vhba_device *vdev;
     int retval = SUCCESS;
 
-    scmd_warn(cmd, "abort %p\n", cmd);
+    scmd_dbg(cmd, "abort %p\n", cmd);
 
-    vdev = vhba_lookup_device(cmd->device->id);
+    vdev = vhba_lookup_device(bus_and_id_to_devnum(cmd->device->channel, cmd->device->id));
     if (vdev) {
         retval = vhba_device_dequeue(vdev, cmd);
         vhba_device_put(vdev);
@@ -523,7 +518,7 @@ static ssize_t do_request (struct vhba_device *vdev, unsigned long cmd_serial_nu
     struct vhba_request vreq;
     ssize_t ret;
 
-    scmd_dbg(cmd, "request %lu (%p), cdb 0x%x, bufflen %d, use_sg %d\n",
+    scmd_dbg(cmd, "request %lu (%p), cdb 0x%x, bufflen %d, sg count %d\n",
         cmd_serial_number, cmd, cmd->cmnd[0], scsi_bufflen(cmd), scsi_sg_count(cmd));
 
     ret = sizeof(vreq);
@@ -532,7 +527,7 @@ static ssize_t do_request (struct vhba_device *vdev, unsigned long cmd_serial_nu
     }
 
     if (ret > buf_len) {
-        scmd_warn(cmd, "buffer too small (%zd < %zd) for a request\n", buf_len, ret);
+        scmd_dbg(cmd, "buffer too small (%zd < %zd) for a request\n", buf_len, ret);
         return -EIO;
     }
 
@@ -551,26 +546,23 @@ static ssize_t do_request (struct vhba_device *vdev, unsigned long cmd_serial_nu
 
         if (scsi_sg_count(cmd)) {
             unsigned char *kaddr, *uaddr;
-            struct scatterlist *sg = scsi_sglist(cmd);
+            struct scatterlist *sglist = scsi_sglist(cmd);
+            struct scatterlist *sg;
             int i;
 
             uaddr = (unsigned char *) buf;
 
-            for (i = 0; i < scsi_sg_count(cmd); i++) {
-                size_t len = sg[i].length;
+            for_each_sg(sglist, sg, scsi_sg_count(cmd), i) {
+                size_t len = sg->length;
 
                 if (len > vdev->kbuf_size) {
-                    scmd_warn(cmd, "segment size (%zu) exceeds kbuf size (%zu)!", len, vdev->kbuf_size);
+                    scmd_dbg(cmd, "segment size (%zu) exceeds kbuf size (%zu)!", len, vdev->kbuf_size);
                     len = vdev->kbuf_size;
                 }
 
-#ifdef USE_SG_PAGE
-                kaddr = vhba_kmap_atomic(sg_page(&sg[i]));
-#else
-                kaddr = vhba_kmap_atomic(sg[i].page);
-#endif
-                memcpy(vdev->kbuf, kaddr + sg[i].offset, len);
-                vhba_kunmap_atomic(kaddr);
+                kaddr = kmap_atomic(sg_page(sg));
+                memcpy(vdev->kbuf, kaddr + sg->offset, len);
+                kunmap_atomic(kaddr);
 
                 if (copy_to_user(uaddr, vdev->kbuf, len)) {
                     return -EFAULT;
@@ -591,14 +583,14 @@ static ssize_t do_response (struct vhba_device *vdev, unsigned long cmd_serial_n
 {
     ssize_t ret = 0;
 
-    scmd_dbg(cmd, "response %lu (%p), status %x, data len %d, use_sg %d\n",
+    scmd_dbg(cmd, "response %lu (%p), status %x, data len %d, sg count %d\n",
          cmd_serial_number, cmd, res->status, res->data_len, scsi_sg_count(cmd));
 
     if (res->status) {
         unsigned char sense_stack[SCSI_SENSE_BUFFERSIZE];
 
         if (res->data_len > SCSI_SENSE_BUFFERSIZE) {
-            scmd_warn(cmd, "truncate sense (%d < %d)", SCSI_SENSE_BUFFERSIZE, res->data_len);
+            scmd_dbg(cmd, "truncate sense (%d < %d)", SCSI_SENSE_BUFFERSIZE, res->data_len);
             res->data_len = SCSI_SENSE_BUFFERSIZE;
         }
 
@@ -616,7 +608,7 @@ static ssize_t do_response (struct vhba_device *vdev, unsigned long cmd_serial_n
         size_t to_read;
 
         if (res->data_len > scsi_bufflen(cmd)) {
-            scmd_warn(cmd, "truncate data (%d < %d)\n", scsi_bufflen(cmd), res->data_len);
+            scmd_dbg(cmd, "truncate data (%d < %d)\n", scsi_bufflen(cmd), res->data_len);
             res->data_len = scsi_bufflen(cmd);
         }
 
@@ -624,16 +616,17 @@ static ssize_t do_response (struct vhba_device *vdev, unsigned long cmd_serial_n
 
         if (scsi_sg_count(cmd)) {
             unsigned char *kaddr, *uaddr;
-            struct scatterlist *sg = scsi_sglist(cmd);
+            struct scatterlist *sglist = scsi_sglist(cmd);
+            struct scatterlist *sg;
             int i;
 
             uaddr = (unsigned char *)buf;
 
-            for (i = 0; i < scsi_sg_count(cmd); i++) {
-                size_t len = (sg[i].length < to_read) ? sg[i].length : to_read;
+            for_each_sg(sglist, sg, scsi_sg_count(cmd), i) {
+                size_t len = (sg->length < to_read) ? sg->length : to_read;
 
                 if (len > vdev->kbuf_size) {
-                    scmd_warn(cmd, "segment size (%zu) exceeds kbuf size (%zu)!", len, vdev->kbuf_size);
+                    scmd_dbg(cmd, "segment size (%zu) exceeds kbuf size (%zu)!", len, vdev->kbuf_size);
                     len = vdev->kbuf_size;
                 }
 
@@ -642,13 +635,9 @@ static ssize_t do_response (struct vhba_device *vdev, unsigned long cmd_serial_n
                 }
                 uaddr += len;
 
-#ifdef USE_SG_PAGE
-                kaddr = vhba_kmap_atomic(sg_page(&sg[i]));
-#else
-                kaddr = vhba_kmap_atomic(sg[i].page);
-#endif
-                memcpy(kaddr + sg[i].offset, vdev->kbuf, len);
-                vhba_kunmap_atomic(kaddr);
+                kaddr = kmap_atomic(sg_page(sg));
+                memcpy(kaddr + sg->offset, vdev->kbuf, len);
+                kunmap_atomic(kaddr);
 
                 to_read -= len;
                 if (to_read == 0) {
@@ -835,7 +824,7 @@ static long vhba_ctl_ioctl (struct file *file, unsigned int cmd, unsigned long a
     switch (cmd) {
         case 0xBEEF001: {
             vhost = platform_get_drvdata(&vhba_platform_device);
-            sdev = scsi_device_lookup(vhost->shost, 0, vdev->id, 0);
+            sdev = scsi_device_lookup(vhost->shost, vdev->bus, vdev->id, 0);
 
             if (sdev) {
                 int id[4] = {
@@ -935,7 +924,7 @@ static int vhba_ctl_release (struct inode *inode, struct file *file)
     list_for_each_entry(vcmd, &vdev->cmd_list, entry) {
         WARN_ON(vcmd->status == VHBA_REQ_READING || vcmd->status == VHBA_REQ_WRITING);
 
-        scmd_warn(vcmd->cmd, "device released with command %lu (%p)\n", vcmd->serial_number, vcmd->cmd);
+        scmd_dbg(vcmd->cmd, "device released with command %lu (%p)\n", vcmd->serial_number, vcmd->cmd);
         vcmd->cmd->result = DID_NO_CONNECT << 16;
         vcmd->cmd->scsi_done(vcmd->cmd);
 
@@ -982,6 +971,7 @@ static int vhba_probe (struct platform_device *pdev)
         return -ENOMEM;
     }
 
+    shost->max_channel = VHBA_MAX_BUS-1;
     shost->max_id = VHBA_MAX_ID;
     /* we don't support lun > 0 */
     shost->max_lun = 1;
