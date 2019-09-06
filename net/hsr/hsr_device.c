@@ -229,7 +229,6 @@ static int hsr_dev_xmit(struct sk_buff *skb, struct net_device *dev)
 	master = hsr_port_get_hsr(hsr, HSR_PT_MASTER);
 	skb->dev = master->dev;
 	hsr_forward_skb(skb, master);
-
 	return NETDEV_TX_OK;
 }
 
@@ -344,8 +343,9 @@ static void hsr_announce(struct timer_list *t)
 	rcu_read_unlock();
 }
 
-/* According to comments in the declaration of struct net_device, this function
- * is "Called from unregister, can be used to call free_netdev". Ok then...
+/* This has to be called after all the readers are gone.
+ * Otherwise we would have to check the return value of
+ * hsr_port_get_hsr().
  */
 static void hsr_dev_destroy(struct net_device *hsr_dev)
 {
@@ -356,15 +356,14 @@ static void hsr_dev_destroy(struct net_device *hsr_dev)
 
 	hsr_debugfs_term(hsr);
 
-	rtnl_lock();
 	hsr_for_each_port(hsr, port)
 		hsr_del_port(port);
-	rtnl_unlock();
 
 	del_timer_sync(&hsr->prune_timer);
 	del_timer_sync(&hsr->announce_timer);
 
-	synchronize_rcu();
+	hsr_del_self_node(&hsr->self_node_db);
+	hsr_del_nodes(&hsr->node_db);
 }
 
 static const struct net_device_ops hsr_device_ops = {
@@ -373,6 +372,7 @@ static const struct net_device_ops hsr_device_ops = {
 	.ndo_stop = hsr_dev_close,
 	.ndo_start_xmit = hsr_dev_xmit,
 	.ndo_fix_features = hsr_fix_features,
+	.ndo_uninit = hsr_dev_destroy,
 };
 
 static struct device_type hsr_type = {
@@ -391,7 +391,6 @@ void hsr_dev_setup(struct net_device *dev)
 	dev->priv_flags |= IFF_NO_QUEUE;
 
 	dev->needs_free_netdev = true;
-	dev->priv_destructor = hsr_dev_destroy;
 
 	dev->hw_features = NETIF_F_SG | NETIF_F_FRAGLIST | NETIF_F_HIGHDMA |
 			   NETIF_F_GSO_MASK | NETIF_F_HW_CSUM |
@@ -495,7 +494,7 @@ fail:
 	hsr_for_each_port(hsr, port)
 		hsr_del_port(port);
 err_add_port:
-	hsr_del_node(&hsr->self_node_db);
+	hsr_del_self_node(&hsr->self_node_db);
 
 	return res;
 }

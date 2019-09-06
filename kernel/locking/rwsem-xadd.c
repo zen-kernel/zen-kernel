@@ -454,6 +454,8 @@ __rwsem_down_read_failed_common(struct rw_semaphore *sem, int state)
 		 * been set in the count.
 		 */
 		if (atomic_long_read(&sem->count) >= 0) {
+			/* Provide lock ACQUIRE */
+			smp_acquire__after_ctrl_dep();
 			raw_spin_unlock_irq(&sem->wait_lock);
 			rwsem_set_reader_owned(sem);
 			lockevent_inc(rwsem_rlock_fast);
@@ -483,8 +485,10 @@ __rwsem_down_read_failed_common(struct rw_semaphore *sem, int state)
 	/* wait to be given the lock */
 	while (true) {
 		set_current_state(state);
-		if (!waiter.task)
+		if (!smp_load_acquire(&waiter.task)) {
+			/* Orders against rwsem_mark_wake()'s smp_store_release() */
 			break;
+		}
 		if (signal_pending_state(state, current)) {
 			raw_spin_lock_irq(&sem->wait_lock);
 			if (waiter.task)
