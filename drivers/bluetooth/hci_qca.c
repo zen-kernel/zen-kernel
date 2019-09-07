@@ -1319,9 +1319,6 @@ static int qca_power_off(struct hci_dev *hdev)
 {
 	struct hci_uart *hu = hci_get_drvdata(hdev);
 
-	/* Perform pre shutdown command */
-	qca_send_pre_shutdown_cmd(hdev);
-
 	qca_power_shutdown(hu);
 	return 0;
 }

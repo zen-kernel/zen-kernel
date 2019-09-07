@@ -3792,7 +3792,7 @@ static int lan78xx_probe(struct usb_interface *intf,
 	ret = register_netdev(netdev);
 	if (ret != 0) {
 		netif_err(dev, probe, netdev, "couldn't register the device\n");
-		goto out4;
+		goto out3;
 	}
 
 	usb_set_intfdata(intf, dev);
@@ -3807,14 +3807,12 @@ static int lan78xx_probe(struct usb_interface *intf,
 
 	ret = lan78xx_phy_init(dev);
 	if (ret < 0)
-		goto out5;
+		goto out4;
 
 	return 0;
 
-out5:
-	unregister_netdev(netdev);
 out4:
-	usb_free_urb(dev->urb_intr);
+	unregister_netdev(netdev);
 out3:
 	lan78xx_unbind(dev, intf);
 out2:

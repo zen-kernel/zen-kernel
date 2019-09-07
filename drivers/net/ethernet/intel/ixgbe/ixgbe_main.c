@@ -7893,8 +7893,11 @@ static void ixgbe_service_task(struct work_struct *work)
 		return;
 	}
 	if (ixgbe_check_fw_error(adapter)) {
-		if (!test_bit(__IXGBE_DOWN, &adapter->state))
+		if (!test_bit(__IXGBE_DOWN, &adapter->state)) {
+			rtnl_lock();
 			unregister_netdev(adapter->netdev);
+			rtnl_unlock();
+		}
 		ixgbe_service_event_complete(adapter);
 		return;
 	}
