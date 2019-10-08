@@ -56,6 +56,8 @@ struct vkms_plane_state {
 struct vkms_crtc_state {
 	struct drm_crtc_state base;
 	struct work_struct crc_work;
+
+	bool crc_pending;
 	u64 frame_start;
 	u64 frame_end;
 };
@@ -113,10 +115,10 @@ bool vkms_get_vblank_timestamp(struct drm_device *dev, unsigned int pipe,
 			       int *max_error, ktime_t *vblank_time,
 			       bool in_vblank_irq);
 
-int vkms_output_init(struct vkms_device *vkmsdev);
+int vkms_output_init(struct vkms_device *vkmsdev, int index);
 
 struct drm_plane *vkms_plane_init(struct vkms_device *vkmsdev,
-				  enum drm_plane_type type);
+				  enum drm_plane_type type, int index);
 
 /* Gem stuff */
 struct drm_gem_object *vkms_gem_create(struct drm_device *dev,
