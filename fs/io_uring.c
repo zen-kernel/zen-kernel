@@ -2354,7 +2354,8 @@ static void io_destruct_skb(struct sk_buff *skb)
 {
 	struct io_ring_ctx *ctx = skb->sk->sk_user_data;
 
-	io_finish_async(ctx);
+	if (ctx->sqo_wq)
+		flush_workqueue(ctx->sqo_wq);
 	unix_destruct_scm(skb);
 }
 
