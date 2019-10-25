@@ -1175,6 +1175,7 @@ menu "Scheduler Debugging"
 config SCHED_DEBUG
 	bool "Collect scheduler debugging info"
 	depends on DEBUG_KERNEL && PROC_FS
+	depends on !SCHED_MUQSS
 	default y
 	help
 	  If you say Y here, the /proc/sched_debug file will be provided

@@ -122,6 +122,14 @@ static unsigned long long_max = LONG_MAX;
 static int one_hundred = 100;
 static int two_hundred = 200;
 static int one_thousand = 1000;
+static int zero = 0;
+static int one = 1;
+#ifdef CONFIG_SCHED_MUQSS
+extern int rr_interval;
+extern int sched_interactive;
+extern int sched_iso_cpu;
+extern int sched_yield_type;
+#endif
 #ifdef CONFIG_PRINTK
 static int ten_thousand = 10000;
 #endif
@@ -188,6 +196,10 @@ static enum sysctl_writes_mode sysctl_writes_strict = SYSCTL_WRITES_STRICT;
     defined(CONFIG_ARCH_WANT_DEFAULT_TOPDOWN_MMAP_LAYOUT)
 int sysctl_legacy_va_layout;
 #endif
+
+
+
+
 
 #ifdef CONFIG_COMPACTION
 static int min_extfrag_threshold;
@@ -1730,6 +1742,7 @@ int proc_do_static_key(struct ctl_table *table, int write,
 }
 
 static struct ctl_table kern_table[] = {
+#ifndef CONFIG_SCHED_MUQSS
 	{
 		.procname	= "sched_child_runs_first",
 		.data		= &sysctl_sched_child_runs_first,
@@ -1737,6 +1750,7 @@ static struct ctl_table kern_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
 	},
+
 #ifdef CONFIG_SCHEDSTATS
 	{
 		.procname	= "sched_schedstats",
@@ -1748,19 +1762,10 @@ static struct ctl_table kern_table[] = {
 		.extra2		= SYSCTL_ONE,
 	},
 #endif /* CONFIG_SCHEDSTATS */
-#ifdef CONFIG_TASK_DELAY_ACCT
-	{
-		.procname	= "task_delayacct",
-		.data		= NULL,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= sysctl_delayacct,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
-	},
-#endif /* CONFIG_TASK_DELAY_ACCT */
+
 #ifdef CONFIG_NUMA_BALANCING
 	{
+
 		.procname	= "numa_balancing",
 		.data		= NULL, /* filled in by handler */
 		.maxlen		= sizeof(unsigned int),
@@ -1770,6 +1775,7 @@ static struct ctl_table kern_table[] = {
 		.extra2		= SYSCTL_ONE,
 	},
 #endif /* CONFIG_NUMA_BALANCING */
+
 	{
 		.procname	= "sched_rt_period_us",
 		.data		= &sysctl_sched_rt_period,
@@ -1849,6 +1855,56 @@ static struct ctl_table kern_table[] = {
 		.extra1		= SYSCTL_ONE,
 	},
 #endif
+#elif defined(CONFIG_SCHED_MUQSS)
+	{
+		.procname	= "rr_interval",
+		.data		= &rr_interval,
+		.maxlen		= sizeof (int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= &one,
+		.extra2		= &one_thousand,
+	},
+	{
+		.procname	= "interactive",
+		.data		= &sched_interactive,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &one,
+	},
+	{
+		.procname	= "iso_cpu",
+		.data		= &sched_iso_cpu,
+		.maxlen		= sizeof (int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &one_hundred,
+	},
+	{
+		.procname	= "yield_type",
+		.data		= &sched_yield_type,
+		.maxlen		= sizeof (int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &two,
+	},
+#if defined(CONFIG_SMP) && defined(CONFIG_SCHEDSTATS)
+	{
+		.procname	= "sched_schedstats",
+		.data		= NULL,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= sysctl_schedstats,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+#endif /* CONFIG_SMP && CONFIG_SCHEDSTATS */
+#endif /* CONFIG_SCHED_MUQSS */
+
 #if defined(CONFIG_ENERGY_MODEL) && defined(CONFIG_CPU_FREQ_GOV_SCHEDUTIL)
 	{
 		.procname	= "sched_energy_aware",
@@ -2635,6 +2691,7 @@ static struct ctl_table kern_table[] = {
 		.proc_handler	= bpf_unpriv_handler,
 		.extra1		= SYSCTL_ZERO,
 		.extra2		= &two,
+
 	},
 	{
 		.procname	= "bpf_stats_enabled",
