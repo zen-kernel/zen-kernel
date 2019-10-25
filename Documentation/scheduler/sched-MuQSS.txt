@@ -1,0 +1,373 @@
+MuQSS - The Multiple Queue Skiplist Scheduler by Con Kolivas.
+
+MuQSS is a per-cpu runqueue variant of the original BFS scheduler with
+one 8 level skiplist per runqueue, and fine grained locking for much more
+scalability.
+
+
+Goals.
+
+The goal of the Multiple Queue Skiplist Scheduler, referred to as MuQSS from
+here on (pronounced mux) is to completely do away with the complex designs of
+the past for the cpu process scheduler and instead implement one that is very
+simple in basic design. The main focus of MuQSS is to achieve excellent desktop
+interactivity and responsiveness without heuristics and tuning knobs that are
+difficult to understand, impossible to model and predict the effect of, and when
+tuned to one workload cause massive detriment to another, while still being
+scalable to many CPUs and processes.
+
+
+Design summary.
+
+MuQSS is best described as per-cpu multiple runqueue, O(log n) insertion, O(1)
+lookup, earliest effective virtual deadline first tickless design, loosely based
+on EEVDF (earliest eligible virtual deadline first) and my previous Staircase
+Deadline scheduler, and evolved from the single runqueue O(n) BFS scheduler.
+Each component shall be described in order to understand the significance of,
+and reasoning for it.
+
+
+Design reasoning.
+
+In BFS, the use of a single runqueue across all CPUs meant that each CPU would
+need to scan the entire runqueue looking for the process with the earliest
+deadline and schedule that next, regardless of which CPU it originally came
+from. This made BFS deterministic with respect to latency and provided
+guaranteed latencies dependent on number of processes and CPUs. The single
+runqueue, however, meant that all CPUs would compete for the single lock
+protecting it, which would lead to increasing lock contention as the number of
+CPUs rose and appeared to limit scalability of common workloads beyond 16
+logical CPUs. Additionally, the O(n) lookup of the runqueue list obviously
+increased overhead proportionate to the number of queued proecesses and led to
+cache thrashing while iterating over the linked list.
+
+MuQSS is an evolution of BFS, designed to maintain the same scheduling
+decision mechanism and be virtually deterministic without relying on the
+constrained design of the single runqueue by splitting out the single runqueue
+to be per-CPU and use skiplists instead of linked lists.
+
+The original reason for going back to a single runqueue design for BFS was that
+once multiple runqueues are introduced, per-CPU or otherwise, there will be
+complex interactions as each runqueue will be responsible for the scheduling
+latency and fairness of the tasks only on its own runqueue, and to achieve
+fairness and low latency across multiple CPUs, any advantage in throughput of
+having CPU local tasks causes other disadvantages. This is due to requiring a
+very complex balancing system to at best achieve some semblance of fairness
+across CPUs and can only maintain relatively low latency for tasks bound to the
+same CPUs, not across them. To increase said fairness and latency across CPUs,
+the advantage of local runqueue locking, which makes for better scalability, is
+lost due to having to grab multiple locks.
+
+MuQSS works around the problems inherent in multiple runqueue designs by
+making its skip lists priority ordered and through novel use of lockless
+examination of each other runqueue it can decide if it should take the earliest
+deadline task from another runqueue for latency reasons, or for CPU balancing
+reasons. It still does not have a balancing system, choosing to allow the
+next task scheduling decision and task wakeup CPU choice to allow balancing to
+happen by virtue of its choices.
+
+As a further evolution of the design, MuQSS normally configures sharing of
+runqueues in a logical fashion for when CPU resources are shared for improved
+latency and throughput. By default it shares runqueues and locks between
+multicore siblings. Optionally it can be configured to run with sharing of
+SMT siblings only, all SMP packages or no sharing at all. Additionally it can
+be selected at boot time.
+
+
+Design details.
+
+Custom skip list implementation:
+
+To avoid the overhead of building up and tearing down skip list structures,
+the variant used by MuQSS has a number of optimisations making it specific for
+its use case in the scheduler. It uses static arrays of 8 'levels' instead of
+building up and tearing down structures dynamically. This makes each runqueue
+only scale O(log N) up to 64k tasks. However as there is one runqueue per CPU
+it means that it scales O(log N) up to 64k x number of logical CPUs which is
+far beyond the realistic task limits each CPU could handle. By being 8 levels
+it also makes the array exactly one cacheline in size. Additionally, each
+skip list node is bidirectional making insertion and removal amortised O(1),
+being O(k) where k is 1-8. Uniquely, we are only ever interested in the very
+first entry in each list at all times with MuQSS, so there is never a need to
+do a search and thus look up is always O(1). In interactive mode, the queues
+will be searched beyond their first entry if the first task is not suitable
+for affinity or SMT nice reasons.
+
+Task insertion:
+
+MuQSS inserts tasks into a per CPU runqueue as an O(log N) insertion into
+a custom skip list as described above (based on the original design by William
+Pugh). Insertion is ordered in such a way that there is never a need to do a
+search by ordering tasks according to static priority primarily, and then
+virtual deadline at the time of insertion.
+
+Niffies:
+
+Niffies are a monotonic forward moving timer not unlike the "jiffies" but are
+of nanosecond resolution. Niffies are calculated per-runqueue from the high
+resolution TSC timers, and in order to maintain fairness are synchronised
+between CPUs whenever both runqueues are locked concurrently.
+
+Virtual deadline:
+
+The key to achieving low latency, scheduling fairness, and "nice level"
+distribution in MuQSS is entirely in the virtual deadline mechanism. The one
+tunable in MuQSS is the rr_interval, or "round robin interval". This is the
+maximum time two SCHED_OTHER (or SCHED_NORMAL, the common scheduling policy)
+tasks of the same nice level will be running for, or looking at it the other
+way around, the longest duration two tasks of the same nice level will be
+delayed for. When a task requests cpu time, it is given a quota (time_slice)
+equal to the rr_interval and a virtual deadline. The virtual deadline is
+offset from the current time in niffies by this equation:
+
+	niffies + (prio_ratio * rr_interval)
+
+The prio_ratio is determined as a ratio compared to the baseline of nice -20
+and increases by 10% per nice level. The deadline is a virtual one only in that
+no guarantee is placed that a task will actually be scheduled by this time, but
+it is used to compare which task should go next. There are three components to
+how a task is next chosen. First is time_slice expiration. If a task runs out
+of its time_slice, it is descheduled, the time_slice is refilled, and the
+deadline reset to that formula above. Second is sleep, where a task no longer
+is requesting CPU for whatever reason. The time_slice and deadline are _not_
+adjusted in this case and are just carried over for when the task is next
+scheduled. Third is preemption, and that is when a newly waking task is deemed
+higher priority than a currently running task on any cpu by virtue of the fact
+that it has an earlier virtual deadline than the currently running task. The
+earlier deadline is the key to which task is next chosen for the first and
+second cases.
+
+The CPU proportion of different nice tasks works out to be approximately the
+
+	(prio_ratio difference)^2
+
+The reason it is squared is that a task's deadline does not change while it is
+running unless it runs out of time_slice. Thus, even if the time actually
+passes the deadline of another task that is queued, it will not get CPU time
+unless the current running task deschedules, and the time "base" (niffies) is
+constantly moving.
+
+Task lookup:
+
+As tasks are already pre-ordered according to anticipated scheduling order in
+the skip lists, lookup for the next suitable task per-runqueue is always a
+matter of simply selecting the first task in the 0th level skip list entry.
+In order to maintain optimal latency and fairness across CPUs, MuQSS does a
+novel examination of every other runqueue in cache locality order, choosing the
+best task across all runqueues. This provides near-determinism of how long any
+task across the entire system may wait before receiving CPU time. The other
+runqueues are first examine lockless and then trylocked to minimise the
+potential lock contention if they are likely to have a suitable better task.
+Each other runqueue lock is only held for as long as it takes to examine the
+entry for suitability. In "interactive" mode, the default setting, MuQSS will
+look for the best deadline task across all CPUs, while in !interactive mode,
+it will only select a better deadline task from another CPU if it is more
+heavily laden than the current one.
+
+Lookup is therefore O(k) where k is number of CPUs.
+
+
+Latency.
+
+Through the use of virtual deadlines to govern the scheduling order of normal
+tasks, queue-to-activation latency per runqueue is guaranteed to be bound by
+the rr_interval tunable which is set to 6ms by default. This means that the
+longest a CPU bound task will wait for more CPU is proportional to the number
+of running tasks and in the common case of 0-2 running tasks per CPU, will be
+under the 7ms threshold for human perception of jitter. Additionally, as newly
+woken tasks will have an early deadline from their previous runtime, the very
+tasks that are usually latency sensitive will have the shortest interval for
+activation, usually preempting any existing CPU bound tasks.
+
+Tickless expiry:
+
+A feature of MuQSS is that it is not tied to the resolution of the chosen tick
+rate in Hz, instead depending entirely on the high resolution timers where
+possible for sub-millisecond accuracy on timeouts regarless of the underlying
+tick rate. This allows MuQSS to be run with the low overhead of low Hz rates
+such as 100 by default, benefiting from the improved throughput and lower
+power usage it provides. Another advantage of this approach is that in
+combination with the Full No HZ option, which disables ticks on running task
+CPUs instead of just idle CPUs, the tick can be disabled at all times
+regardless of how many tasks are running instead of being limited to just one
+running task. Note that this option is NOT recommended for regular desktop
+users.
+
+
+Scalability and balancing.
+
+Unlike traditional approaches where balancing is a combination of CPU selection
+at task wakeup and intermittent balancing based on a vast array of rules set
+according to architecture, busyness calculations and special case management,
+MuQSS indirectly balances on the fly at task wakeup and next task selection.
+During initialisation, MuQSS creates a cache coherency ordered list of CPUs for
+each logical CPU and uses this to aid task/CPU selection when CPUs are busy.
+Additionally it selects any idle CPUs, if they are available, at any time over
+busy CPUs according to the following preference:
+
+ * Same thread, idle or busy cache, idle or busy threads
+ * Other core, same cache, idle or busy cache, idle threads.
+ * Same node, other CPU, idle cache, idle threads.
+ * Same node, other CPU, busy cache, idle threads.
+ * Other core, same cache, busy threads.
+ * Same node, other CPU, busy threads.
+ * Other node, other CPU, idle cache, idle threads.
+ * Other node, other CPU, busy cache, idle threads.
+ * Other node, other CPU, busy threads.
+
+Mux is therefore SMT, MC and Numa aware without the need for extra
+intermittent balancing to maintain CPUs busy and make the most of cache
+coherency.
+
+
+Features
+
+As the initial prime target audience for MuQSS was the average desktop user, it
+was designed to not need tweaking, tuning or have features set to obtain benefit
+from it. Thus the number of knobs and features has been kept to an absolute
+minimum and should not require extra user input for the vast majority of cases.
+There are 3 optional tunables, and 2 extra scheduling policies. The rr_interval,
+interactive, and iso_cpu tunables, and the SCHED_ISO and SCHED_IDLEPRIO
+policies. In addition to this, MuQSS also uses sub-tick accounting. What MuQSS
+does _not_ now feature is support for CGROUPS. The average user should neither
+need to know what these are, nor should they need to be using them to have good
+desktop behaviour. However since some applications refuse to work without
+cgroups, one can enable them with MuQSS as a stub and the filesystem will be
+created which will allow the applications to work.
+
+rr_interval:
+
+	/proc/sys/kernel/rr_interval
+
+The value is in milliseconds, and the default value is set to 6. Valid values
+are from 1 to 1000 Decreasing the value will decrease latencies at the cost of
+decreasing throughput, while increasing it will improve throughput, but at the
+cost of worsening latencies. It is based on the fact that humans can detect
+jitter at approximately 7ms, so aiming for much lower latencies is pointless
+under most circumstances. It is worth noting this fact when comparing the
+latency performance of MuQSS to other schedulers. Worst case latencies being
+higher than 7ms are far worse than average latencies not being in the
+microsecond range.
+
+interactive:
+
+	/proc/sys/kernel/interactive
+
+The value is a simple boolean of 1 for on and 0 for off and is set to on by
+default. Disabling this will disable the near-determinism of MuQSS when
+selecting the next task by not examining all CPUs for the earliest deadline
+task, or which CPU to wake to, instead prioritising CPU balancing for improved
+throughput. Latency will still be bound by rr_interval, but on a per-CPU basis
+instead of across the whole system.
+
+Runqueue sharing.
+
+By default MuQSS chooses to share runqueue resources (specifically the skip
+list and locking) between multicore siblings. It is configurable at build time
+to select between None, SMT, MC and SMP, corresponding to no sharing, sharing
+only between simultaneous mulithreading siblings, multicore siblings, or
+symmetric multiprocessing physical packages. Additionally it can be se at
+bootime with the use of the rqshare parameter. The reason for configurability
+is that some architectures have CPUs with many multicore siblings (>= 16)
+where it may be detrimental to throughput to share runqueues and another
+sharing option may be desirable. Additionally, more sharing than usual can
+improve latency on a system-wide level at the expense of throughput if desired.
+
+The options are:
+none, smt, mc, smp
+
+eg:
+	rqshare=mc
+
+Isochronous scheduling:
+
+Isochronous scheduling is a unique scheduling policy designed to provide
+near-real-time performance to unprivileged (ie non-root) users without the
+ability to starve the machine indefinitely. Isochronous tasks (which means
+"same time") are set using, for example, the schedtool application like so:
+
+	schedtool -I -e amarok
+
+This will start the audio application "amarok" as SCHED_ISO. How SCHED_ISO works
+is that it has a priority level between true realtime tasks and SCHED_NORMAL
+which would allow them to preempt all normal tasks, in a SCHED_RR fashion (ie,
+if multiple SCHED_ISO tasks are running, they purely round robin at rr_interval
+rate). However if ISO tasks run for more than a tunable finite amount of time,
+they are then demoted back to SCHED_NORMAL scheduling. This finite amount of
+time is the percentage of CPU available per CPU, configurable as a percentage in
+the following "resource handling" tunable (as opposed to a scheduler tunable):
+
+iso_cpu:
+
+	/proc/sys/kernel/iso_cpu
+
+and is set to 70% by default. It is calculated over a rolling 5 second average
+Because it is the total CPU available, it means that on a multi CPU machine, it
+is possible to have an ISO task running as realtime scheduling indefinitely on
+just one CPU, as the other CPUs will be available. Setting this to 100 is the
+equivalent of giving all users SCHED_RR access and setting it to 0 removes the
+ability to run any pseudo-realtime tasks.
+
+A feature of MuQSS is that it detects when an application tries to obtain a
+realtime policy (SCHED_RR or SCHED_FIFO) and the caller does not have the
+appropriate privileges to use those policies. When it detects this, it will
+give the task SCHED_ISO policy instead. Thus it is transparent to the user.
+
+
+Idleprio scheduling:
+
+Idleprio scheduling is a scheduling policy designed to give out CPU to a task
+_only_ when the CPU would be otherwise idle. The idea behind this is to allow
+ultra low priority tasks to be run in the background that have virtually no
+effect on the foreground tasks. This is ideally suited to distributed computing
+clients (like setiathome, folding, mprime etc) but can also be used to start a
+video encode or so on without any slowdown of other tasks. To avoid this policy
+from grabbing shared resources and holding them indefinitely, if it detects a
+state where the task is waiting on I/O, the machine is about to suspend to ram
+and so on, it will transiently schedule them as SCHED_NORMAL. Once a task has
+been scheduled as IDLEPRIO, it cannot be put back to SCHED_NORMAL without
+superuser privileges since it is effectively a lower scheduling policy. Tasks
+can be set to start as SCHED_IDLEPRIO with the schedtool command like so:
+
+schedtool -D -e ./mprime
+
+Subtick accounting:
+
+It is surprisingly difficult to get accurate CPU accounting, and in many cases,
+the accounting is done by simply determining what is happening at the precise
+moment a timer tick fires off. This becomes increasingly inaccurate as the timer
+tick frequency (HZ) is lowered. It is possible to create an application which
+uses almost 100% CPU, yet by being descheduled at the right time, records zero
+CPU usage. While the main problem with this is that there are possible security
+implications, it is also difficult to determine how much CPU a task really does
+use. Mux uses sub-tick accounting from the TSC clock to determine real CPU
+usage. Thus, the amount of CPU reported as being used by MuQSS will more
+accurately represent how much CPU the task itself is using (as is shown for
+example by the 'time' application), so the reported values may be quite
+different to other schedulers. When comparing throughput of MuQSS to other
+designs, it is important to compare the actual completed work in terms of total
+wall clock time taken and total work done, rather than the reported "cpu usage".
+
+Symmetric MultiThreading (SMT) aware nice:
+
+SMT, a.k.a. hyperthreading, is a very common feature on modern CPUs. While the
+logical CPU count rises by adding thread units to each CPU core, allowing more
+than one task to be run simultaneously on the same core, the disadvantage of it
+is that the CPU power is shared between the tasks, not summating to the power
+of two CPUs. The practical upshot of this is that two tasks running on
+separate threads of the same core run significantly slower than if they had one
+core each to run on. While smart CPU selection allows each task to have a core
+to itself whenever available (as is done on MuQSS), it cannot offset the
+slowdown that occurs when the cores are all loaded and only a thread is left.
+Most of the time this is harmless as the CPU is effectively overloaded at this
+point and the extra thread is of benefit. However when running a niced task in
+the presence of an un-niced task (say nice 19 v nice 0), the nice task gets
+precisely the same amount of CPU power as the unniced one. MuQSS has an
+optional configuration feature known as SMT-NICE which selectively idles the
+secondary niced thread for a period proportional to the nice difference,
+allowing CPU distribution according to nice level to be maintained, at the
+expense of a small amount of extra overhead. If this is configured in on a
+machine without SMT threads, the overhead is minimal.
+
+
+Con Kolivas <kernel@kolivas.org> Sat, 29th October 2016
