@@ -132,7 +132,7 @@ config CONTEXT_TRACKING
 
 config CONTEXT_TRACKING_FORCE
 	bool "Force context tracking"
-	depends on CONTEXT_TRACKING
+	depends on CONTEXT_TRACKING && !SCHED_MUQSS
 	default y if !NO_HZ_FULL
 	help
 	  The major pre-requirement for full dynticks to work is to

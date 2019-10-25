@@ -467,7 +467,11 @@ void rq_attach_root(struct rq *rq, struct root_domain *rd)
 	struct root_domain *old_rd = NULL;
 	unsigned long flags;
 
+#ifdef CONFIG_SCHED_MUQSS
+	raw_spin_lock_irqsave(rq->lock, flags);
+#else
 	raw_spin_lock_irqsave(&rq->lock, flags);
+#endif
 
 	if (rq->rd) {
 		old_rd = rq->rd;
@@ -493,7 +497,11 @@ void rq_attach_root(struct rq *rq, struct root_domain *rd)
 	if (cpumask_test_cpu(rq->cpu, cpu_active_mask))
 		set_rq_online(rq);
 
+#ifdef CONFIG_SCHED_MUQSS
+	raw_spin_unlock_irqrestore(rq->lock, flags);
+#else
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
+#endif
 
 	if (old_rd)
 		call_rcu(&old_rd->rcu, free_rootdomain);

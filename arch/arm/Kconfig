@@ -1211,6 +1211,8 @@ config SCHED_SMT
 	  MultiThreading at a cost of slightly increased overhead in some
 	  places. If unsure say N here.
 
+source "kernel/Kconfig.MuQSS"
+
 config HAVE_ARM_SCU
 	bool
 	help

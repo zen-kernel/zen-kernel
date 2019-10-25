@@ -674,6 +674,8 @@ config HZ
 	default 1200 if HZ_1200
 	default 1024
 
+source "kernel/Kconfig.MuQSS"
+
 config SRM_ENV
 	tristate "SRM environment through procfs"
 	depends on PROC_FS

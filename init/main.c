@@ -1439,6 +1439,8 @@ static int __ref kernel_init(void *unused)
 
 	do_sysctl_args();
 
+	print_scheduler_version();
+
 	if (ramdisk_execute_command) {
 		ret = run_init_process(ramdisk_execute_command);
 		if (!ret)
