@@ -640,7 +640,11 @@ static struct elevator_type *elevator_get_default(struct request_queue *q)
 			!blk_mq_is_sbitmap_shared(q->tag_set->flags))
 		return NULL;
 
+#if defined(CONFIG_MQ_IOSCHED_DEADLINE_NODEFAULT)
+	return elevator_get(q, "mq-deadline-nodefault", false);
+#else
 	return elevator_get(q, "mq-deadline", false);
+#endif
 }
 
 /*
