@@ -711,6 +711,14 @@ static const struct dmi_system_id intel_no_lvds[] = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "P845"),
 		},
 	},
+	{
+		.callback = intel_no_lvds_dmi_callback,
+		.ident = "Thinkpad X230 Nitrocaster Mod",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "2325M54"), /* replace with your DMI_PRODUCT_NAME using `dmesg | grep DMI` */
+		},
+	},
 
 	{ }	/* terminating entry */
 };
