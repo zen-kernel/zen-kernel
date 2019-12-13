@@ -21,6 +21,7 @@
 #define FUTEX_WAKE_BITSET	10
 #define FUTEX_WAIT_REQUEUE_PI	11
 #define FUTEX_CMP_REQUEUE_PI	12
+#define FUTEX_WAIT_MULTIPLE	13
 
 #define FUTEX_PRIVATE_FLAG	128
 #define FUTEX_CLOCK_REALTIME	256
@@ -39,6 +40,8 @@
 #define FUTEX_WAIT_REQUEUE_PI_PRIVATE	(FUTEX_WAIT_REQUEUE_PI | \
 					 FUTEX_PRIVATE_FLAG)
 #define FUTEX_CMP_REQUEUE_PI_PRIVATE	(FUTEX_CMP_REQUEUE_PI | \
+					 FUTEX_PRIVATE_FLAG)
+#define FUTEX_WAIT_MULTIPLE_PRIVATE	(FUTEX_WAIT_MULTIPLE | \
 					 FUTEX_PRIVATE_FLAG)
 
 /*
@@ -149,5 +152,22 @@ struct robust_list_head {
 #define FUTEX_OP(op, oparg, cmp, cmparg) \
   (((op & 0xf) << 28) | ((cmp & 0xf) << 24)		\
    | ((oparg & 0xfff) << 12) | (cmparg & 0xfff))
+
+/*
+ * Maximum number of multiple futexes to wait for
+ */
+#define FUTEX_MULTIPLE_MAX_COUNT	128
+
+/**
+ * struct futex_wait_block - Block of futexes to be waited for
+ * @uaddr:	User address of the futex
+ * @val:	Futex value expected by userspace
+ * @bitset:	Bitset for the optional bitmasked wakeup
+ */
+struct futex_wait_block {
+	__u32 __user *uaddr;
+	__u32 val;
+	__u32 bitset;
+};
 
 #endif /* _UAPI_LINUX_FUTEX_H */
