@@ -148,7 +148,7 @@ bool intel_dp_is_edp(struct intel_dp *intel_dp)
 {
 	struct intel_digital_port *intel_dig_port = dp_to_dig_port(intel_dp);
 
-	return intel_dig_port->base.type == INTEL_OUTPUT_EDP;
+	return intel_dig_port->base.type == INTEL_OUTPUT_EDP || strncmp(intel_dp->attached_connector->base.name, "DP-3", 4) == 0;
 }
 
 static struct intel_dp *intel_attached_dp(struct drm_connector *connector)
@@ -6332,7 +6332,7 @@ bool intel_dp_is_port_edp(struct drm_i915_private *dev_priv, enum port port)
 	if (INTEL_GEN(dev_priv) < 5)
 		return false;
 
-	if (INTEL_GEN(dev_priv) < 9 && port == PORT_A)
+	if (INTEL_GEN(dev_priv) < 9 && port == PORT_D)
 		return true;
 
 	return intel_bios_is_port_edp(dev_priv, port);
