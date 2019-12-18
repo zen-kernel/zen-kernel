@@ -716,18 +716,12 @@ qla2x00_sp_compl(void *ptr, int res)
 	struct scsi_cmnd *cmd = GET_CMD_SP(sp);
 	struct completion *comp = sp->comp;
 
-	if (WARN_ON_ONCE(atomic_read(&sp->ref_count) == 0))
-		return;
-
-	atomic_dec(&sp->ref_count);
-
 	sp->free(sp);
 	cmd->result = res;
 	CMD_SP(cmd) = NULL;
 	cmd->scsi_done(cmd);
 	if (comp)
 		complete(comp);
-	qla2x00_rel_sp(sp);
 }
 
 void
@@ -821,18 +815,12 @@ qla2xxx_qpair_sp_compl(void *ptr, int res)
 	struct scsi_cmnd *cmd = GET_CMD_SP(sp);
 	struct completion *comp = sp->comp;
 
-	if (WARN_ON_ONCE(atomic_read(&sp->ref_count) == 0))
-		return;
-
-	atomic_dec(&sp->ref_count);
-
 	sp->free(sp);
 	cmd->result = res;
 	CMD_SP(cmd) = NULL;
 	cmd->scsi_done(cmd);
 	if (comp)
 		complete(comp);
-	qla2xxx_rel_qpair_sp(sp->qpair, sp);
 }
 
 static int
@@ -925,13 +913,12 @@ qla2xxx_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *cmd)
 	else
 		goto qc24_target_busy;
 
-	sp = qla2x00_get_sp(vha, fcport, GFP_ATOMIC);
-	if (!sp)
-		goto qc24_host_busy;
+	sp = scsi_cmd_priv(cmd);
+	qla2xxx_init_sp(sp, vha, vha->hw->base_qpair, fcport);
 
 	sp->u.scmd.cmd = cmd;
 	sp->type = SRB_SCSI_CMD;
-	atomic_set(&sp->ref_count, 1);
+
 	CMD_SP(cmd) = (void *)sp;
 	sp->free = qla2x00_sp_free_dma;
 	sp->done = qla2x00_sp_compl;
@@ -947,9 +934,6 @@ qla2xxx_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *cmd)
 
 qc24_host_busy_free_sp:
 	sp->free(sp);
-
-qc24_host_busy:
-	return SCSI_MLQUEUE_HOST_BUSY;
 
 qc24_target_busy:
 	return SCSI_MLQUEUE_TARGET_BUSY;
@@ -1011,24 +995,21 @@ qla2xxx_mqueuecommand(struct Scsi_Host *host, struct scsi_cmnd *cmd,
 	else
 		goto qc24_target_busy;
 
-	sp = qla2xxx_get_qpair_sp(vha, qpair, fcport, GFP_ATOMIC);
-	if (!sp)
-		goto qc24_host_busy;
+	sp = scsi_cmd_priv(cmd);
+	qla2xxx_init_sp(sp, vha, qpair, fcport);
 
 	sp->u.scmd.cmd = cmd;
 	sp->type = SRB_SCSI_CMD;
-	atomic_set(&sp->ref_count, 1);
 	CMD_SP(cmd) = (void *)sp;
 	sp->free = qla2xxx_qpair_sp_free_dma;
 	sp->done = qla2xxx_qpair_sp_compl;
-	sp->qpair = qpair;
 
 	rval = ha->isp_ops->start_scsi_mq(sp);
 	if (rval != QLA_SUCCESS) {
 		ql_dbg(ql_dbg_io + ql_dbg_verbose, vha, 0x3078,
 		    "Start scsi failed rval=%d for cmd=%p.\n", rval, cmd);
 		if (rval == QLA_INTERFACE_ERROR)
-			goto qc24_fail_command;
+			goto qc24_free_sp_fail_command;
 		goto qc24_host_busy_free_sp;
 	}
 
@@ -1037,11 +1018,13 @@ qla2xxx_mqueuecommand(struct Scsi_Host *host, struct scsi_cmnd *cmd,
 qc24_host_busy_free_sp:
 	sp->free(sp);
 
-qc24_host_busy:
-	return SCSI_MLQUEUE_HOST_BUSY;
-
 qc24_target_busy:
 	return SCSI_MLQUEUE_TARGET_BUSY;
+
+qc24_free_sp_fail_command:
+	sp->free(sp);
+	CMD_SP(cmd) = NULL;
+	qla2xxx_rel_qpair_sp(sp->qpair, sp);
 
 qc24_fail_command:
 	cmd->scsi_done(cmd);
@@ -1212,16 +1195,6 @@ qla2x00_wait_for_chip_reset(scsi_qla_host_t *vha)
 	return return_status;
 }
 
-static int
-sp_get(struct srb *sp)
-{
-	if (!refcount_inc_not_zero((refcount_t *)&sp->ref_count))
-		/* kref get fail */
-		return ENXIO;
-	else
-		return 0;
-}
-
 #define ISP_REG_DISCONNECT 0xffffffffU
 /**************************************************************************
 * qla2x00_isp_reg_stat
@@ -1270,14 +1243,16 @@ static int
 qla2xxx_eh_abort(struct scsi_cmnd *cmd)
 {
 	scsi_qla_host_t *vha = shost_priv(cmd->device->host);
+	DECLARE_COMPLETION_ONSTACK(comp);
 	srb_t *sp;
 	int ret;
 	unsigned int id;
 	uint64_t lun;
-	unsigned long flags;
 	int rval;
 	struct qla_hw_data *ha = vha->hw;
+	uint32_t ratov_j;
 	struct qla_qpair *qpair;
+	unsigned long flags;
 
 	if (qla2x00_isp_reg_stat(ha)) {
 		ql_log(ql_log_info, vha, 0x8042,
@@ -1289,28 +1264,27 @@ qla2xxx_eh_abort(struct scsi_cmnd *cmd)
 	if (ret != 0)
 		return ret;
 
-	sp = (srb_t *) CMD_SP(cmd);
-	if (!sp)
-		return SUCCESS;
-
+	sp = scsi_cmd_priv(cmd);
 	qpair = sp->qpair;
-	if (!qpair)
+
+	if ((sp->fcport && sp->fcport->deleted) || !qpair)
 		return SUCCESS;
 
 	spin_lock_irqsave(qpair->qp_lock_ptr, flags);
-	if (sp->type != SRB_SCSI_CMD || GET_CMD_SP(sp) != cmd) {
-		/* there's a chance an interrupt could clear
-		   the ptr as part of done & free */
+	if (sp->completed) {
 		spin_unlock_irqrestore(qpair->qp_lock_ptr, flags);
 		return SUCCESS;
 	}
 
-	if (sp_get(sp)){
-		/* ref_count is already 0 */
+	if (sp->abort || sp->aborted) {
 		spin_unlock_irqrestore(qpair->qp_lock_ptr, flags);
-		return SUCCESS;
+		return FAILED;
 	}
+
+	sp->abort = 1;
+	sp->comp = &comp;
 	spin_unlock_irqrestore(qpair->qp_lock_ptr, flags);
+
 
 	id = cmd->device->id;
 	lun = cmd->device->lun;
@@ -1319,27 +1293,36 @@ qla2xxx_eh_abort(struct scsi_cmnd *cmd)
 	    "Aborting from RISC nexus=%ld:%d:%llu sp=%p cmd=%p handle=%x\n",
 	    vha->host_no, id, lun, sp, cmd, sp->handle);
 
+	/*
+	 * Abort will release the original Command/sp from FW. Let the
+	 * original command call scsi_done. In return, he will wakeup
+	 * this sleeping thread.
+	 */
 	rval = ha->isp_ops->abort_command(sp);
+
 	ql_dbg(ql_dbg_taskm, vha, 0x8003,
 	       "Abort command mbx cmd=%p, rval=%x.\n", cmd, rval);
 
+	/* Wait for the command completion. */
+	ratov_j = ha->r_a_tov/10 * 4 * 1000;
+	ratov_j = msecs_to_jiffies(ratov_j);
 	switch (rval) {
 	case QLA_SUCCESS:
-		/*
-		 * The command has been aborted. That means that the firmware
-		 * won't report a completion.
-		 */
-		sp->done(sp, DID_ABORT << 16);
-		ret = SUCCESS;
+		if (!wait_for_completion_timeout(&comp, ratov_j)) {
+			ql_dbg(ql_dbg_taskm, vha, 0xffff,
+			    "%s: Abort wait timer (4 * R_A_TOV[%d]) expired\n",
+			    __func__, ha->r_a_tov/10);
+			ret = FAILED;
+		} else {
+			ret = SUCCESS;
+		}
 		break;
 	default:
-		/*
-		 * Either abort failed or abort and completion raced. Let
-		 * the SCSI core retry the abort in the former case.
-		 */
 		ret = FAILED;
 		break;
 	}
+
+	sp->comp = NULL;
 
 	ql_log(ql_log_info, vha, 0x801c,
 	    "Abort command issued nexus=%ld:%d:%llu -- %x.\n",
@@ -1723,29 +1706,52 @@ static void qla2x00_abort_srb(struct qla_qpair *qp, srb_t *sp, const int res,
 	scsi_qla_host_t *vha = qp->vha;
 	struct qla_hw_data *ha = vha->hw;
 	int rval;
+	bool ret_cmd;
+	uint32_t ratov_j;
 
-	if (sp_get(sp))
+	if (qla2x00_chip_is_down(vha)) {
+		sp->done(sp, res);
 		return;
+	}
 
 	if (sp->type == SRB_NVME_CMD || sp->type == SRB_NVME_LS ||
 	    (sp->type == SRB_SCSI_CMD && !ha->flags.eeh_busy &&
 	     !test_bit(ABORT_ISP_ACTIVE, &vha->dpc_flags) &&
 	     !qla2x00_isp_reg_stat(ha))) {
-		sp->comp = &comp;
-		spin_unlock_irqrestore(qp->qp_lock_ptr, *flags);
-		rval = ha->isp_ops->abort_command(sp);
+		if (sp->comp) {
+			sp->done(sp, res);
+			return;
+		}
 
+		sp->comp = &comp;
+		sp->abort =  1;
+		spin_unlock_irqrestore(qp->qp_lock_ptr, *flags);
+
+		rval = ha->isp_ops->abort_command(sp);
+		/* Wait for command completion. */
+		ret_cmd = false;
+		ratov_j = ha->r_a_tov/10 * 4 * 1000;
+		ratov_j = msecs_to_jiffies(ratov_j);
 		switch (rval) {
 		case QLA_SUCCESS:
-			sp->done(sp, res);
+			if (wait_for_completion_timeout(&comp, ratov_j)) {
+				ql_dbg(ql_dbg_taskm, vha, 0xffff,
+				    "%s: Abort wait timer (4 * R_A_TOV[%d]) expired\n",
+				    __func__, ha->r_a_tov/10);
+				ret_cmd = true;
+			}
+			/* else FW return SP to driver */
 			break;
-		case QLA_FUNCTION_PARAMETER_ERROR:
-			wait_for_completion(&comp);
+		default:
+			ret_cmd = true;
 			break;
 		}
 
 		spin_lock_irqsave(qp->qp_lock_ptr, *flags);
-		sp->comp = NULL;
+		if (ret_cmd && (!sp->completed || !sp->aborted))
+			sp->done(sp, res);
+	} else {
+		sp->done(sp, res);
 	}
 }
 
@@ -1768,7 +1774,6 @@ __qla2x00_abort_all_cmds(struct qla_qpair *qp, int res)
 	for (cnt = 1; cnt < req->num_outstanding_cmds; cnt++) {
 		sp = req->outstanding_cmds[cnt];
 		if (sp) {
-			req->outstanding_cmds[cnt] = NULL;
 			switch (sp->cmd_type) {
 			case TYPE_SRB:
 				qla2x00_abort_srb(qp, sp, res, &flags);
@@ -1790,6 +1795,7 @@ __qla2x00_abort_all_cmds(struct qla_qpair *qp, int res)
 			default:
 				break;
 			}
+			req->outstanding_cmds[cnt] = NULL;
 		}
 	}
 	spin_unlock_irqrestore(qp->qp_lock_ptr, flags);
@@ -4671,7 +4677,8 @@ qla2x00_mem_free(struct qla_hw_data *ha)
 	ha->sfp_data = NULL;
 
 	if (ha->flt)
-		dma_free_coherent(&ha->pdev->dev, SFP_DEV_SIZE,
+		dma_free_coherent(&ha->pdev->dev,
+		    sizeof(struct qla_flt_header) + FLT_REGIONS_SIZE,
 		    ha->flt, ha->flt_dma);
 	ha->flt = NULL;
 	ha->flt_dma = 0;
@@ -7168,6 +7175,7 @@ struct scsi_host_template qla2xxx_driver_template = {
 
 	.supported_mode		= MODE_INITIATOR,
 	.track_queue_depth	= 1,
+	.cmd_size		= sizeof(srb_t),
 };
 
 static const struct pci_error_handlers qla2xxx_err_handler = {

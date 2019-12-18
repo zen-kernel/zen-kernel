@@ -99,9 +99,39 @@ static void qla24xx_abort_iocb_timeout(void *data)
 {
 	srb_t *sp = data;
 	struct srb_iocb *abt = &sp->u.iocb_cmd;
+	struct qla_qpair *qpair = sp->qpair;
+	u32 handle;
+	unsigned long flags;
+
+	if (sp->cmd_sp)
+		ql_dbg(ql_dbg_async, sp->vha, 0x507c,
+		    "Abort timeout - cmd hdl=%x, cmd type=%x hdl=%x, type=%x\n",
+		    sp->cmd_sp->handle, sp->cmd_sp->type,
+		    sp->handle, sp->type);
+	else
+		ql_dbg(ql_dbg_async, sp->vha, 0x507c,
+		    "Abort timeout 2 - hdl=%x, type=%x\n",
+		    sp->handle, sp->type);
+
+	spin_lock_irqsave(qpair->qp_lock_ptr, flags);
+	for (handle = 1; handle < qpair->req->num_outstanding_cmds; handle++) {
+		if (sp->cmd_sp && (qpair->req->outstanding_cmds[handle] ==
+		    sp->cmd_sp))
+			qpair->req->outstanding_cmds[handle] = NULL;
+
+		/* removing the abort */
+		if (qpair->req->outstanding_cmds[handle] == sp) {
+			qpair->req->outstanding_cmds[handle] = NULL;
+			break;
+		}
+	}
+	spin_unlock_irqrestore(qpair->qp_lock_ptr, flags);
+
+	if (sp->cmd_sp)
+		sp->cmd_sp->done(sp->cmd_sp, QLA_OS_TIMER_EXPIRED);
 
 	abt->u.abt.comp_status = CS_TIMEOUT;
-	sp->done(sp, QLA_FUNCTION_TIMEOUT);
+	sp->done(sp, QLA_OS_TIMER_EXPIRED);
 }
 
 static void qla24xx_abort_sp_done(void *ptr, int res)
@@ -109,7 +139,8 @@ static void qla24xx_abort_sp_done(void *ptr, int res)
 	srb_t *sp = ptr;
 	struct srb_iocb *abt = &sp->u.iocb_cmd;
 
-	if (del_timer(&sp->u.iocb_cmd.timer)) {
+	if ((res == QLA_OS_TIMER_EXPIRED) ||
+	    del_timer(&sp->u.iocb_cmd.timer)) {
 		if (sp->flags & SRB_WAKEUP_ON_COMP)
 			complete(&abt->u.abt.comp);
 		else
@@ -133,6 +164,7 @@ static int qla24xx_async_abort_cmd(srb_t *cmd_sp, bool wait)
 	sp->type = SRB_ABT_CMD;
 	sp->name = "abort";
 	sp->qpair = cmd_sp->qpair;
+	sp->cmd_sp = cmd_sp;
 	if (wait)
 		sp->flags = SRB_WAKEUP_ON_COMP;
 
@@ -364,9 +396,6 @@ qla2x00_async_logout(struct scsi_qla_host *vha, fc_port_t *fcport)
 	struct srb_iocb *lio;
 	int rval = QLA_FUNCTION_FAILED;
 
-	if (!vha->flags.online || (fcport->flags & FCF_ASYNC_SENT))
-		return rval;
-
 	fcport->flags |= FCF_ASYNC_SENT;
 	sp = qla2x00_get_sp(vha, fcport, GFP_KERNEL);
 	if (!sp)
@@ -513,6 +542,7 @@ static int qla_post_els_plogi_work(struct scsi_qla_host *vha, fc_port_t *fcport)
 
 	e->u.fcport.fcport = fcport;
 	fcport->flags |= FCF_ASYNC_ACTIVE;
+	fcport->disc_state = DSC_LOGIN_PEND;
 	return qla2x00_post_work(vha, e);
 }
 
@@ -813,6 +843,15 @@ static void qla24xx_handle_gnl_done_event(scsi_qla_host_t *vha,
 			fcport->fw_login_state = current_login_state;
 			fcport->d_id = id;
 			switch (current_login_state) {
+			case DSC_LS_PRLI_PEND:
+				/*
+				 * In the middle of PRLI. Let it finish.
+				 * Allow relogin code to recheck state again
+				 * with GNL. Push disc_state back to DELETED
+				 * so GNL can go out again
+				 */
+				fcport->disc_state = DSC_DELETED;
+				break;
 			case DSC_LS_PRLI_COMP:
 				if ((e->prli_svc_param_word_3[0] & BIT_4) == 0)
 					fcport->port_type = FCT_INITIATOR;
@@ -1131,13 +1170,11 @@ void qla24xx_async_gpdb_sp_done(void *s, int res)
 	    "Async done-%s res %x, WWPN %8phC mb[1]=%x mb[2]=%x \n",
 	    sp->name, res, fcport->port_name, mb[1], mb[2]);
 
-	if (res == QLA_FUNCTION_TIMEOUT) {
-		dma_pool_free(sp->vha->hw->s_dma_pool, sp->u.iocb_cmd.u.mbx.in,
-			sp->u.iocb_cmd.u.mbx.in_dma);
-		return;
-	}
-
 	fcport->flags &= ~(FCF_ASYNC_SENT | FCF_ASYNC_ACTIVE);
+
+	if (res == QLA_FUNCTION_TIMEOUT)
+		goto done;
+
 	memset(&ea, 0, sizeof(ea));
 	ea.event = FCME_GPDB_DONE;
 	ea.fcport = fcport;
@@ -1145,6 +1182,7 @@ void qla24xx_async_gpdb_sp_done(void *s, int res)
 
 	qla2x00_fcport_event_handler(vha, &ea);
 
+done:
 	dma_pool_free(ha->s_dma_pool, sp->u.iocb_cmd.u.mbx.in,
 		sp->u.iocb_cmd.u.mbx.in_dma);
 
@@ -1488,7 +1526,7 @@ int qla24xx_fcport_handle_login(struct scsi_qla_host *vha, fc_port_t *fcport)
 	u64 wwn;
 	u16 sec;
 
-	ql_dbg(ql_dbg_disc + ql_dbg_verbose, vha, 0x20d8,
+	ql_dbg(ql_dbg_disc, vha, 0x20d8,
 	    "%s %8phC DS %d LS %d P %d fl %x confl %p rscn %d|%d login %d lid %d scan %d\n",
 	    __func__, fcport->port_name, fcport->disc_state,
 	    fcport->fw_login_state, fcport->login_pause, fcport->flags,
@@ -1499,6 +1537,7 @@ int qla24xx_fcport_handle_login(struct scsi_qla_host *vha, fc_port_t *fcport)
 		return 0;
 
 	if ((fcport->loop_id != FC_NO_LOOP_ID) &&
+	    qla_dual_mode_enabled(vha) &&
 	    ((fcport->fw_login_state == DSC_LS_PLOGI_PEND) ||
 	     (fcport->fw_login_state == DSC_LS_PRLI_PEND)))
 		return 0;
@@ -1668,21 +1707,10 @@ void qla24xx_handle_relogin_event(scsi_qla_host_t *vha,
 	    fcport->last_login_gen, fcport->login_gen,
 	    fcport->flags);
 
-	if ((fcport->fw_login_state == DSC_LS_PLOGI_PEND) ||
-	    (fcport->fw_login_state == DSC_LS_PRLI_PEND))
-		return;
-
-	if (fcport->fw_login_state == DSC_LS_PLOGI_COMP) {
-		if (time_before_eq(jiffies, fcport->plogi_nack_done_deadline)) {
-			set_bit(RELOGIN_NEEDED, &vha->dpc_flags);
-			return;
-		}
-	}
-
 	if (fcport->last_rscn_gen != fcport->rscn_gen) {
-		ql_dbg(ql_dbg_disc, vha, 0x20e9, "%s %d %8phC post gidpn\n",
+		ql_dbg(ql_dbg_disc, vha, 0x20e9, "%s %d %8phC post gnl\n",
 		    __func__, __LINE__, fcport->port_name);
-
+		qla24xx_post_gnl_work(vha, fcport);
 		return;
 	}
 
@@ -3288,6 +3316,8 @@ try_eft:
 		ql_dbg(ql_dbg_init, vha, 0x00c3,
 		    "Allocated (%d KB) EFT ...\n", EFT_SIZE / 1024);
 		eft_size = EFT_SIZE;
+		ha->eft_dma = tc_dma;
+		ha->eft = tc;
 	}
 
 	if (IS_QLA27XX(ha) || IS_QLA28XX(ha)) {
@@ -7595,8 +7625,12 @@ qla27xx_get_active_image(struct scsi_qla_host *vha,
 		goto check_sec_image;
 	}
 
-	qla24xx_read_flash_data(vha, (void *)(&pri_image_status),
-	    ha->flt_region_img_status_pri, sizeof(pri_image_status) >> 2);
+	if (qla24xx_read_flash_data(vha, (void *)(&pri_image_status),
+	    ha->flt_region_img_status_pri, sizeof(pri_image_status) >> 2) !=
+	    QLA_SUCCESS) {
+		WARN_ON_ONCE(true);
+		goto check_sec_image;
+	}
 	qla27xx_print_image(vha, "Primary image", &pri_image_status);
 
 	if (qla27xx_check_image_status_signature(&pri_image_status)) {
@@ -8350,7 +8384,7 @@ qla81xx_nvram_config(scsi_qla_host_t *vha)
 		    active_regions.aux.vpd_nvram == QLA27XX_PRIMARY_IMAGE ?
 		    "primary" : "secondary");
 	}
-	qla24xx_read_flash_data(vha, ha->vpd, faddr, ha->vpd_size >> 2);
+	ha->isp_ops->read_optrom(vha, ha->vpd, faddr << 2, ha->vpd_size);
 
 	/* Get NVRAM data into cache and calculate checksum. */
 	faddr = ha->flt_region_nvram;
@@ -8362,7 +8396,7 @@ qla81xx_nvram_config(scsi_qla_host_t *vha)
 	    "Loading %s nvram image.\n",
 	    active_regions.aux.vpd_nvram == QLA27XX_PRIMARY_IMAGE ?
 	    "primary" : "secondary");
-	qla24xx_read_flash_data(vha, ha->nvram, faddr, ha->nvram_size >> 2);
+	ha->isp_ops->read_optrom(vha, ha->nvram, faddr << 2, ha->nvram_size);
 
 	dptr = (uint32_t *)nv;
 	for (cnt = 0, chksum = 0; cnt < ha->nvram_size >> 2; cnt++, dptr++)
@@ -9092,8 +9126,6 @@ int qla2xxx_delete_qpair(struct scsi_qla_host *vha, struct qla_qpair *qpair)
 	struct qla_hw_data *ha = qpair->hw;
 
 	qpair->delete_in_progress = 1;
-	while (atomic_read(&qpair->ref_count))
-		msleep(500);
 
 	ret = qla25xx_delete_req_que(vha, qpair->req);
 	if (ret != QLA_SUCCESS)

@@ -3029,7 +3029,7 @@ static void qla24xx_async_gpsc_sp_done(void *s, int res)
 	fcport->flags &= ~(FCF_ASYNC_SENT | FCF_ASYNC_ACTIVE);
 
 	if (res == QLA_FUNCTION_TIMEOUT)
-		return;
+		goto done;
 
 	if (res == (DID_ERROR << 16)) {
 		/* entry status error */
@@ -3674,7 +3674,6 @@ void qla24xx_async_gnnft_done(scsi_qla_host_t *vha, srb_t *sp)
 		list_for_each_entry(fcport, &vha->vp_fcports, list) {
 			if (memcmp(rp->port_name, fcport->port_name, WWN_SIZE))
 				continue;
-			fcport->scan_needed = 0;
 			fcport->scan_state = QLA_FCPORT_FOUND;
 			found = true;
 			/*
@@ -3683,10 +3682,12 @@ void qla24xx_async_gnnft_done(scsi_qla_host_t *vha, srb_t *sp)
 			if ((fcport->flags & FCF_FABRIC_DEVICE) == 0) {
 				qla2x00_clear_loop_id(fcport);
 				fcport->flags |= FCF_FABRIC_DEVICE;
-			} else if (fcport->d_id.b24 != rp->id.b24) {
+			} else if (fcport->d_id.b24 != rp->id.b24 ||
+				fcport->scan_needed) {
 				qlt_schedule_sess_for_deletion(fcport);
 			}
 			fcport->d_id.b24 = rp->id.b24;
+			fcport->scan_needed = 0;
 			break;
 		}
 
@@ -4152,7 +4153,7 @@ int qla24xx_async_gpnft(scsi_qla_host_t *vha, u8 fc4_type, srb_t *sp)
 								rspsz,
 								&sp->u.iocb_cmd.u.ctarg.rsp_dma,
 								GFP_KERNEL);
-		sp->u.iocb_cmd.u.ctarg.rsp_allocated_size = sizeof(struct ct_sns_pkt);
+		sp->u.iocb_cmd.u.ctarg.rsp_allocated_size = rspsz;
 		if (!sp->u.iocb_cmd.u.ctarg.rsp) {
 			ql_log(ql_log_warn, vha, 0xffff,
 			    "Failed to allocate ct_sns request.\n");

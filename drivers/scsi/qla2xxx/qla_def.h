@@ -531,18 +531,23 @@ typedef struct srb {
 	 */
 	uint8_t cmd_type;
 	uint8_t pad[3];
-	atomic_t ref_count;
 	struct kref cmd_kref;	/* need to migrate ref_count over to this */
 	void *priv;
 	wait_queue_head_t nvme_ls_waitq;
 	struct fc_port *fcport;
 	struct scsi_qla_host *vha;
+	unsigned int start_timer:1;
+	unsigned int abort:1;
+	unsigned int aborted:1;
+	unsigned int completed:1;
+
 	uint32_t handle;
 	uint16_t flags;
 	uint16_t type;
 	const char *name;
 	int iocbs;
 	struct qla_qpair *qpair;
+	struct srb *cmd_sp;
 	struct list_head elem;
 	u32 gen1;	/* scratch */
 	u32 gen2;	/* scratch */
@@ -560,7 +565,6 @@ typedef struct srb {
 } srb_t;
 
 #define GET_CMD_SP(sp) (sp->u.scmd.cmd)
-#define SET_CMD_SP(sp, cmd) (sp->u.scmd.cmd = cmd)
 #define GET_CMD_CTX_SP(sp) (sp->u.scmd.ctx)
 
 #define GET_CMD_SENSE_LEN(sp) \
@@ -4629,6 +4633,7 @@ struct secure_flash_update_block_pk {
 #define QLA_SUSPENDED			0x106
 #define QLA_BUSY			0x107
 #define QLA_ALREADY_REGISTERED		0x109
+#define QLA_OS_TIMER_EXPIRED		0x10a
 
 #define NVRAM_DELAY()		udelay(10)
 
