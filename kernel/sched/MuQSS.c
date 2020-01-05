@@ -160,7 +160,12 @@ int sched_iso_cpu __read_mostly = 70;
  * 1: Yield only to better priority/deadline tasks. (default)
  * 2: Expire timeslice and recalculate deadline.
  */
+
+#ifdef CONFIG_ZEN_INTERACTIVE
+int sched_yield_type __read_mostly = 0;
+#else
 int sched_yield_type __read_mostly = 1;
+#endif
 
 /*
  * The relative length of deadline for each priority(nice) level.
