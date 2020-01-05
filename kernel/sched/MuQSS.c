@@ -203,7 +203,7 @@ int sched_iso_cpu __read_mostly = 70;
  */
 
 #ifdef CONFIG_ZEN_INTERACTIVE
-int sched_yield_type __read_mostly = 2;
+int sched_yield_type __read_mostly = 0;
 #else
 int sched_yield_type __read_mostly = 1;
 #endif
