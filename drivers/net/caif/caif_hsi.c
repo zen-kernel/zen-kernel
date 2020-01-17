@@ -939,7 +939,7 @@ static void cfhsi_wake_down(struct work_struct *work)
 			break;
 
 		set_current_state(TASK_INTERRUPTIBLE);
-		schedule_min_hrtimeout();
+		schedule_timeout(1);
 		retry--;
 	}
 

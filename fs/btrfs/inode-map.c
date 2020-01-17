@@ -91,7 +91,7 @@ again:
 				btrfs_release_path(path);
 				root->ino_cache_progress = last;
 				up_read(&fs_info->commit_root_sem);
-				schedule_min_hrtimeout();
+				schedule_timeout(1);
 				goto again;
 			} else
 				continue;

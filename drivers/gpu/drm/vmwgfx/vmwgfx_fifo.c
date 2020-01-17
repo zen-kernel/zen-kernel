@@ -237,7 +237,7 @@ static int vmw_fifo_wait_noirq(struct vmw_private *dev_priv,
 			DRM_ERROR("SVGA device lockup.\n");
 			break;
 		}
-		schedule_min_hrtimeout();
+		schedule_timeout(1);
 		if (interruptible && signal_pending(current)) {
 			ret = -ERESTARTSYS;
 			break;
