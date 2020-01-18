@@ -2798,6 +2798,12 @@ static int io_sq_thread(void *data)
 			}
 		}
 
+		if (current->mm != ctx->sqo_mm ||
+		    current_cred() != ctx->creds) {
+			ret = -EPERM;
+			goto out;
+		}
+
 		to_submit = min(to_submit, ctx->sq_entries);
 		inflight += io_submit_sqes(ctx, to_submit, cur_mm != NULL,
 					   mm_fault);
