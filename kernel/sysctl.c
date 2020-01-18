@@ -142,8 +142,10 @@ extern int rr_interval;
 extern int sched_interactive;
 extern int sched_iso_cpu;
 extern int sched_yield_type;
+extern int hrtimer_granularity_us;
+extern int hrtimeout_min_us;
 #endif
-#ifdef CONFIG_PRINTK
+#if defined(CONFIG_PRINTK) || defined(CONFIG_SCHED_MUQSS)
 static int ten_thousand = 10000;
 #endif
 #ifdef CONFIG_PERF_EVENTS
@@ -1128,6 +1130,24 @@ static struct ctl_table kern_table[] = {
 		.proc_handler	= &proc_dointvec_minmax,
 		.extra1		= &zero,
 		.extra2		= &two,
+	},
+	{
+		.procname	= "hrtimer_granularity_us",
+		.data		= &hrtimer_granularity_us,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= &one,
+		.extra2		= &ten_thousand,
+	},
+	{
+		.procname	= "hrtimeout_min_us",
+		.data		= &hrtimeout_min_us,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= &one,
+		.extra2		= &ten_thousand,
 	},
 #endif
 #if defined(CONFIG_S390) && defined(CONFIG_SMP)

@@ -4742,7 +4742,7 @@ static int cs5529_wait_for_idle(struct comedi_device *dev)
 		if ((status & NI67XX_CAL_STATUS_BUSY) == 0)
 			break;
 		set_current_state(TASK_INTERRUPTIBLE);
-		if (schedule_timeout(1))
+		if (schedule_min_hrtimeout())
 			return -EIO;
 	}
 	if (i == timeout) {

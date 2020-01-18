@@ -81,11 +81,11 @@ static void gpio_reset_seq(struct cx18 *cx, u32 active_lo, u32 active_hi,
 
 	/* Assert */
 	gpio_update(cx, mask, ~active_lo);
-	schedule_timeout_uninterruptible(msecs_to_jiffies(assert_msecs));
+	schedule_msec_hrtimeout_uninterruptible((assert_msecs));
 
 	/* Deassert */
 	gpio_update(cx, mask, ~active_hi);
-	schedule_timeout_uninterruptible(msecs_to_jiffies(recovery_msecs));
+	schedule_msec_hrtimeout_uninterruptible((recovery_msecs));
 }
 
 /*
