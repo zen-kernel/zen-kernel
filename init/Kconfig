@@ -111,6 +111,14 @@ config ZEN_INTERACTIVE
 	    Mem dirty before sync writeback:  20 %  ->  50 %
 	    Background-reclaim hugepages...:    no  -> yes
 
+	  --- CFS CPU Scheduler ----------------------------------
+
+	    Scheduling latency.............:   6    ->   4    ms
+	    Minimal granularity............:   0.75 ->   0.4  ms
+	    Wakeup granularity.............:   1    ->   0.5  ms
+	    CPU migration cost.............:   0.5  ->   0.25 ms
+	    Bandwidth slice size...........:   5    ->   3    ms
+
 config BROKEN
 	bool
 
