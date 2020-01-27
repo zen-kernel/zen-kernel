@@ -638,11 +638,15 @@ static struct elevator_type *elevator_get_default(struct request_queue *q)
 	if (q->tag_set && q->tag_set->flags & BLK_MQ_F_NO_SCHED_BY_DEFAULT)
 		return NULL;
 
+#ifndef CONFIG_ZEN_INTERACTIVE
 	if (q->nr_hw_queues != 1 &&
 	    !blk_mq_is_shared_tags(q->tag_set->flags))
 		return NULL;
+#endif
 
-#if defined(CONFIG_MQ_IOSCHED_DEADLINE_NODEFAULT)
+#if defined(CONFIG_ZEN_INTERACTIVE) && defined(CONFIG_IOSCHED_BFQ)
+	return elevator_get(q, "bfq", false);
+#elif defined(CONFIG_MQ_IOSCHED_DEADLINE_NODEFAULT)
 	return elevator_get(q, "mq-deadline-nodefault", false);
 #else
 	return elevator_get(q, "mq-deadline", false);
