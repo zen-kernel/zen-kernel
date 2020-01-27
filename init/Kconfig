@@ -101,6 +101,10 @@ config ZEN_INTERACTIVE
 	help
 	  Tunes the kernel for responsiveness at the cost of throughput and power usage.
 
+	  --- Block Layer ----------------------------------------
+
+	    Default scheduler.........: mq-deadline -> bfq
+
 config BROKEN
 	bool
 
