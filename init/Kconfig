@@ -130,6 +130,12 @@ config ZEN_INTERACTIVE
 	    Bandwidth slice size...........:   5    ->   3    ms
 	    Task rebalancing threshold.....:  32    ->  64
 
+	  --- CPUFreq Settings -----------------------------------
+
+	    Ondemand sampling down factor..:   1    ->   5
+	    Ondemand default up threshold..:  80    ->  55
+	    Ondemand micro up threshold....:  95    ->  60
+
 config BROKEN
 	bool
 
