@@ -740,7 +740,11 @@ void elv_update_nr_hw_queues(struct request_queue *q, struct elevator_type *e,
 void elevator_set_default(struct request_queue *q)
 {
 	struct elv_change_ctx ctx = {
+#if defined(CONFIG_ZEN_INTERACTIVE) && defined(CONFIG_IOSCHED_BFQ)
+		.name = "bfq",
+#else
 		.name = "mq-deadline",
+#endif
 		.no_uevent = true,
 	};
 	int err;
