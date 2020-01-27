@@ -117,6 +117,10 @@ config ZEN_INTERACTIVE
 
 	    Default scheduler.........: mq-deadline -> bfq
 
+	  --- Virtual Memory Subsystem ---------------------------
+
+	    Background-reclaim hugepages...:   no   ->   yes
+
 config BROKEN
 	bool
 
