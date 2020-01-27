@@ -109,6 +109,7 @@ config ZEN_INTERACTIVE
 
 	    Mem dirty before bg writeback..:  10 %  ->  20 %
 	    Mem dirty before sync writeback:  20 %  ->  50 %
+	    Background-reclaim hugepages...:    no  -> yes
 
 config BROKEN
 	bool
