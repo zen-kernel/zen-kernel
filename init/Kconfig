@@ -143,6 +143,10 @@ config ZEN_INTERACTIVE
 	    Default scheduler for SQ..: mq-deadline ->   bfq
 	    Default scheduler for MQ..:        none ->   kyber
 
+	  --- Virtual Memory Subsystem ---------------------------
+
+	    Background-reclaim hugepages...:   no   ->   yes
+
 config BROKEN
 	bool
 
