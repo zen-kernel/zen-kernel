@@ -2446,6 +2446,8 @@ extern void check_preempt_curr(struct rq *rq, struct task_struct *p, int flags);
 
 #ifdef CONFIG_PREEMPT_RT
 #define SCHED_NR_MIGRATE_BREAK 8
+#elif defined(CONFIG_ZEN_INTERACTIVE)
+#define SCHED_NR_MIGRATE_BREAK 64
 #else
 #define SCHED_NR_MIGRATE_BREAK 32
 #endif
