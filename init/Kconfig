@@ -119,6 +119,12 @@ config ZEN_INTERACTIVE
 	    CPU migration cost.............:   0.5  ->   0.25 ms
 	    Bandwidth slice size...........:   5    ->   3    ms
 
+	  --- MuQSS CPU Scheduler --------------------------------
+
+	    Scheduling interval............:   6    ->   4    ms
+	    ISO task max realtime use......:  70 %  ->  25 %
+	    Yield type.....................:   1    ->   0
+
 config BROKEN
 	bool
 
