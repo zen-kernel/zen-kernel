@@ -118,12 +118,16 @@ config ZEN_INTERACTIVE
 	    Wakeup granularity.............:   1    ->   0.5  ms
 	    CPU migration cost.............:   0.5  ->   0.25 ms
 	    Bandwidth slice size...........:   5    ->   3    ms
+	    Ondemand sampling down factor..:   1    ->   5
 
 	  --- MuQSS CPU Scheduler --------------------------------
 
 	    Scheduling interval............:   6    ->   4    ms
 	    ISO task max realtime use......:  70 %  ->  25 %
 	    Yield type.....................:   1    ->   0
+	    Ondemand default freq up thresh:  80    ->  40
+	    Ondemand micro freq up thresh..:  95    ->  45
+	    Ondemand sampling down factor..:   1    ->   5
 
 config BROKEN
 	bool
