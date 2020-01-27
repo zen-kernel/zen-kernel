@@ -568,7 +568,11 @@ static struct elevator_type *elevator_get_default(struct request_queue *q)
 	    !blk_mq_is_shared_tags(q->tag_set->flags))
 		return NULL;
 
+#if defined(CONFIG_ZEN_INTERACTIVE) && defined(CONFIG_IOSCHED_BFQ)
+	return elevator_find_get("bfq");
+#else
 	return elevator_find_get("mq-deadline");
+#endif
 }
 
 /*
