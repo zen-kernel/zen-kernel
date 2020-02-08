@@ -4005,7 +4005,7 @@ futex_init_timeout(u32 cmd, u32 op, struct timespec64 *ts, ktime_t *t)
 		return -EINVAL;
 
 	*t = timespec64_to_ktime(*ts);
-	if (cmd == FUTEX_WAIT)
+	if (cmd == FUTEX_WAIT || cmd == FUTEX_WAIT_MULTIPLE)
 		*t = ktime_add_safe(ktime_get(), *t);
 	else if (cmd != FUTEX_LOCK_PI && !(op & FUTEX_CLOCK_REALTIME))
 		*t = timens_ktime_to_host(CLOCK_MONOTONIC, *t);
@@ -4258,6 +4258,7 @@ err_unlock:
  */
 struct compat_futex_wait_block {
 	compat_uptr_t	uaddr;
+	__u32 pad;
 	__u32 val;
 	__u32 bitset;
 };
