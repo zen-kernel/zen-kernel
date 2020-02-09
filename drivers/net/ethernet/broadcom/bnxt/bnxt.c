@@ -7892,7 +7892,7 @@ static void bnxt_setup_msix(struct bnxt *bp)
 	int tcs, i;
 
 	tcs = netdev_get_num_tc(dev);
-	if (tcs > 1) {
+	if (tcs) {
 		int i, off, count;
 
 		for (i = 0; i < tcs; i++) {
@@ -9240,6 +9240,17 @@ void bnxt_half_close_nic(struct bnxt *bp)
 	bnxt_free_mem(bp, false);
 }
 
+static void bnxt_reenable_sriov(struct bnxt *bp)
+{
+	if (BNXT_PF(bp)) {
+		struct bnxt_pf_info *pf = &bp->pf;
+		int n = pf->active_vfs;
+
+		if (n)
+			bnxt_cfg_hw_sriov(bp, &n, true);
+	}
+}
+
 static int bnxt_open(struct net_device *dev)
 {
 	struct bnxt *bp = netdev_priv(dev);
@@ -9258,15 +9269,10 @@ static int bnxt_open(struct net_device *dev)
 		bnxt_hwrm_if_change(bp, false);
 	} else {
 		if (test_and_clear_bit(BNXT_STATE_FW_RESET_DET, &bp->state)) {
-			if (BNXT_PF(bp)) {
-				struct bnxt_pf_info *pf = &bp->pf;
-				int n = pf->active_vfs;
-
-				if (n)
-					bnxt_cfg_hw_sriov(bp, &n, true);
-			}
-			if (!test_bit(BNXT_STATE_IN_FW_RESET, &bp->state))
+			if (!test_bit(BNXT_STATE_IN_FW_RESET, &bp->state)) {
 				bnxt_ulp_start(bp, 0);
+				bnxt_reenable_sriov(bp);
+			}
 		}
 		bnxt_hwmon_open(bp);
 	}
@@ -9306,10 +9312,6 @@ static void __bnxt_close_nic(struct bnxt *bp, bool irq_re_init,
 	bnxt_debug_dev_exit(bp);
 	bnxt_disable_napi(bp);
 	del_timer_sync(&bp->timer);
-	if (test_bit(BNXT_STATE_IN_FW_RESET, &bp->state) &&
-	    pci_is_enabled(bp->pdev))
-		pci_disable_device(bp->pdev);
-
 	bnxt_free_skbs(bp);
 
 	/* Save ring stats before shutdown */
@@ -10087,9 +10089,16 @@ static void bnxt_reset(struct bnxt *bp, bool silent)
 static void bnxt_fw_reset_close(struct bnxt *bp)
 {
 	bnxt_ulp_stop(bp);
+	/* When firmware is fatal state, disable PCI device to prevent
+	 * any potential bad DMAs before freeing kernel memory.
+	 */
+	if (test_bit(BNXT_STATE_FW_FATAL_COND, &bp->state))
+		pci_disable_device(bp->pdev);
 	__bnxt_close_nic(bp, true, false);
 	bnxt_clear_int_mode(bp);
 	bnxt_hwrm_func_drv_unrgtr(bp);
+	if (pci_is_enabled(bp->pdev))
+		pci_disable_device(bp->pdev);
 	bnxt_free_ctx_mem(bp);
 	kfree(bp->ctx);
 	bp->ctx = NULL;
@@ -10822,6 +10831,8 @@ static void bnxt_fw_reset_task(struct work_struct *work)
 		smp_mb__before_atomic();
 		clear_bit(BNXT_STATE_IN_FW_RESET, &bp->state);
 		bnxt_ulp_start(bp, rc);
+		if (!rc)
+			bnxt_reenable_sriov(bp);
 		bnxt_dl_health_status_update(bp, true);
 		rtnl_unlock();
 		break;
@@ -11433,9 +11444,9 @@ static void bnxt_remove_one(struct pci_dev *pdev)
 		bnxt_sriov_disable(bp);
 
 	bnxt_dl_fw_reporters_destroy(bp, true);
-	bnxt_dl_unregister(bp);
 	pci_disable_pcie_error_reporting(pdev);
 	unregister_netdev(dev);
+	bnxt_dl_unregister(bp);
 	bnxt_shutdown_tc(bp);
 	bnxt_cancel_sp_work(bp);
 	bp->sp_event = 0;
@@ -11905,11 +11916,14 @@ static int bnxt_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		bnxt_init_tc(bp);
 	}
 
+	bnxt_dl_register(bp);
+
 	rc = register_netdev(dev);
 	if (rc)
-		goto init_err_cleanup_tc;
+		goto init_err_cleanup;
 
-	bnxt_dl_register(bp);
+	if (BNXT_PF(bp))
+		devlink_port_type_eth_set(&bp->dl_port, bp->dev);
 	bnxt_dl_fw_reporters_create(bp);
 
 	netdev_info(dev, "%s found at mem %lx, node addr %pM\n",
@@ -11919,7 +11933,8 @@ static int bnxt_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	return 0;
 
-init_err_cleanup_tc:
+init_err_cleanup:
+	bnxt_dl_unregister(bp);
 	bnxt_shutdown_tc(bp);
 	bnxt_clear_int_mode(bp);
 
