@@ -647,6 +647,11 @@ static struct thermal_cooling_device_ops powerclamp_cooling_ops = {
 	.set_cur_state = powerclamp_set_cur_state,
 };
 
+static const struct x86_cpu_id amd_cpu[] = {
+	{ X86_VENDOR_AMD },
+	{},
+};
+
 static const struct x86_cpu_id __initconst intel_powerclamp_ids[] = {
 	X86_MATCH_VENDOR_FEATURE(INTEL, X86_FEATURE_MWAIT, NULL),
 	{}
@@ -655,6 +660,11 @@ MODULE_DEVICE_TABLE(x86cpu, intel_powerclamp_ids);
 
 static int __init powerclamp_probe(void)
 {
+
+	if (x86_match_cpu(amd_cpu)){
+		pr_info("Intel PowerClamp does not support AMD CPUs\n");
+		return -ENODEV;
+	}
 
 	if (!x86_match_cpu(intel_powerclamp_ids)) {
 		pr_err("CPU does not support MWAIT\n");
