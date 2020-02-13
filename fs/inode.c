@@ -431,26 +431,101 @@ static void inode_lru_list_add(struct inode *inode)
 		inode->i_state |= I_REFERENCED;
 }
 
+static void inode_lru_list_del(struct inode *inode)
+{
+	if (list_lru_del(&inode->i_sb->s_inode_lru, &inode->i_lru))
+		this_cpu_dec(nr_unused);
+}
+
 /*
  * Add inode to LRU if needed (inode is unused and clean).
  *
  * Needs inode->i_lock held.
  */
-void inode_add_lru(struct inode *inode)
+bool inode_add_lru(struct inode *inode)
 {
-	if (!(inode->i_state & (I_DIRTY_ALL | I_SYNC |
-				I_FREEING | I_WILL_FREE)) &&
-	    !atomic_read(&inode->i_count) && inode->i_sb->s_flags & SB_ACTIVE)
-		inode_lru_list_add(inode);
+	if (inode->i_state &
+	    (I_DIRTY_ALL | I_SYNC | I_FREEING | I_WILL_FREE | I_PAGES))
+		return false;
+	if (atomic_read(&inode->i_count))
+		return false;
+	if (!(inode->i_sb->s_flags & SB_ACTIVE))
+		return false;
+	inode_lru_list_add(inode);
+	return true;
 }
 
+/*
+ * Usually, inodes become reclaimable when they are no longer
+ * referenced and their page cache has been reclaimed. The following
+ * API allows the VM to communicate cache population state to the VFS.
+ *
+ * However, on CONFIG_HIGHMEM we can't wait for the page cache to go
+ * away: cache pages allocated in a large highmem zone could pin
+ * struct inode memory allocated in relatively small lowmem zones. So
+ * when CONFIG_HIGHMEM is enabled, we tie cache to the inode lifetime.
+ */
 
-static void inode_lru_list_del(struct inode *inode)
+#ifndef CONFIG_HIGHMEM
+/**
+ * inode_pages_set - mark the inode as holding page cache
+ * @inode: the inode whose first cache page was just added
+ *
+ * Tell the VFS that this inode has populated page cache and must not
+ * be reclaimed by the inode shrinker.
+ *
+ * The caller must hold the page lock of the just-added page: by
+ * pinning the page, the page cache cannot become depopulated, and we
+ * can safely set I_PAGES without a race check under the i_pages lock.
+ *
+ * This function acquires the i_lock.
+ */
+void inode_pages_set(struct inode *inode)
 {
-
-	if (list_lru_del(&inode->i_sb->s_inode_lru, &inode->i_lru))
-		this_cpu_dec(nr_unused);
+	spin_lock(&inode->i_lock);
+	if (!(inode->i_state & I_PAGES)) {
+		inode->i_state |= I_PAGES;
+		if (!list_empty(&inode->i_lru)) {
+			count_vm_event(PGINODERESCUE);
+			inode_lru_list_del(inode);
+		}
+	}
+	spin_unlock(&inode->i_lock);
 }
+
+/**
+ * inode_pages_clear - mark the inode as not holding page cache
+ * @inode: the inode whose last cache page was just removed
+ *
+ * Tell the VFS that the inode no longer holds page cache and that its
+ * lifetime is to be handed over to the inode shrinker LRU.
+ *
+ * This function acquires the i_lock and the i_pages lock.
+ */
+void inode_pages_clear(struct inode *inode)
+{
+	struct address_space *mapping = &inode->i_data;
+	bool add_to_lru = false;
+	unsigned long flags;
+
+	spin_lock(&inode->i_lock);
+
+	xa_lock_irqsave(&mapping->i_pages, flags);
+	if ((inode->i_state & I_PAGES) && mapping_empty(mapping)) {
+		inode->i_state &= ~I_PAGES;
+		add_to_lru = true;
+	}
+	xa_unlock_irqrestore(&mapping->i_pages, flags);
+
+	if (add_to_lru) {
+		WARN_ON_ONCE(!list_empty(&inode->i_lru));
+		if (inode_add_lru(inode))
+			__count_vm_event(PGINODEDELAYED);
+	}
+
+	spin_unlock(&inode->i_lock);
+}
+#endif /* CONFIG_HIGHMEM */
 
 /**
  * inode_sb_list_add - add inode to the superblock list of inodes
@@ -743,6 +818,8 @@ static enum lru_status inode_lru_isolate(struct list_head *item,
 	if (!spin_trylock(&inode->i_lock))
 		return LRU_SKIP;
 
+	WARN_ON_ONCE(inode->i_state & I_PAGES);
+
 	/*
 	 * Referenced or dirty inodes are still in use. Give them another pass
 	 * through the LRU as we canot reclaim them now.
@@ -762,7 +839,18 @@ static enum lru_status inode_lru_isolate(struct list_head *item,
 		return LRU_ROTATE;
 	}
 
-	if (inode_has_buffers(inode) || inode->i_data.nrpages) {
+	/*
+	 * Usually, populated inodes shouldn't be on the shrinker LRU,
+	 * but they can be briefly visible when a new page is added to
+	 * an inode that was already linked but inode_pages_set()
+	 * hasn't run yet to move them off.
+	 *
+	 * The other exception is on HIGHMEM systems: highmem cache
+	 * can pin lowmem struct inodes, and we might be in dire
+	 * straits in the lower zones. Purge cache to free the inode.
+	 */
+	if (inode_has_buffers(inode) || !mapping_empty(&inode->i_data)) {
+#ifdef CONFIG_HIGHMEM
 		__iget(inode);
 		spin_unlock(&inode->i_lock);
 		spin_unlock(lru_lock);
@@ -779,6 +867,12 @@ static enum lru_status inode_lru_isolate(struct list_head *item,
 		iput(inode);
 		spin_lock(lru_lock);
 		return LRU_RETRY;
+#else
+		list_lru_isolate(lru, &inode->i_lru);
+		spin_unlock(&inode->i_lock);
+		this_cpu_dec(nr_unused);
+		return LRU_REMOVED;
+#endif
 	}
 
 	WARN_ON(inode->i_state & I_NEW);

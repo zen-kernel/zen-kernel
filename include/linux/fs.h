@@ -572,6 +572,11 @@ static inline void mapping_allow_writable(struct address_space *mapping)
 	atomic_inc(&mapping->i_mmap_writable);
 }
 
+static inline bool mapping_empty(struct address_space *mapping)
+{
+	return mapping->nrpages + mapping->nrexceptional == 0;
+}
+
 /*
  * Use sequence counter to get consistent i_size on 32-bit processors.
  */
@@ -2136,6 +2141,9 @@ static inline void kiocb_clone(struct kiocb *kiocb, struct kiocb *kiocb_src,
  *			Used to detect that mark_inode_dirty() should not move
  * 			inode between dirty lists.
  *
+ * I_PAGES		Inode is holding page cache that needs to get reclaimed
+ *			first before the inode can go onto the shrinker LRU.
+ *
  * Q: What is the difference between I_WILL_FREE and I_FREEING?
  */
 #define I_DIRTY_SYNC		(1 << 0)
@@ -2158,6 +2166,7 @@ static inline void kiocb_clone(struct kiocb *kiocb, struct kiocb *kiocb_src,
 #define I_CREATING		(1 << 15)
 #define I_DONTCACHE		(1 << 16)
 #define I_SYNC_QUEUED		(1 << 17)
+#define I_PAGES			(1 << 18)
 
 #define I_DIRTY_INODE (I_DIRTY_SYNC | I_DIRTY_DATASYNC)
 #define I_DIRTY (I_DIRTY_INODE | I_DIRTY_PAGES)
@@ -3000,6 +3009,14 @@ static inline void remove_inode_hash(struct inode *inode)
 	if (!inode_unhashed(inode) && !hlist_fake(&inode->i_hash))
 		__remove_inode_hash(inode);
 }
+
+#ifndef CONFIG_HIGHMEM
+extern void inode_pages_set(struct inode *inode);
+extern void inode_pages_clear(struct inode *inode);
+#else
+static inline void inode_pages_set(struct inode *inode) {}
+static inline void inode_pages_clear(struct inode *inode) {}
+#endif
 
 extern void inode_sb_list_add(struct inode *inode);
 
