@@ -624,10 +624,11 @@ static int pagefault_real_mr(struct mlx5_ib_mr *mr, struct ib_umem_odp *odp,
 	bool downgrade = flags & MLX5_PF_FLAGS_DOWNGRADE;
 	unsigned long current_seq;
 	u64 access_mask;
-	u64 start_idx;
+	u64 start_idx, page_mask;
 
 	page_shift = odp->page_shift;
-	start_idx = (user_va - ib_umem_start(odp)) >> page_shift;
+	page_mask = ~(BIT(page_shift) - 1);
+	start_idx = (user_va - (mr->mmkey.iova & page_mask)) >> page_shift;
 	access_mask = ODP_READ_ALLOWED_BIT;
 
 	if (odp->umem.writable && !downgrade)
@@ -766,19 +767,11 @@ static int pagefault_mr(struct mlx5_ib_mr *mr, u64 io_virt, size_t bcnt,
 {
 	struct ib_umem_odp *odp = to_ib_umem_odp(mr->umem);
 
-	if (unlikely(io_virt < mr->mmkey.iova))
-		return -EFAULT;
-
 	if (!odp->is_implicit_odp) {
-		u64 user_va;
-
-		if (check_add_overflow(io_virt - mr->mmkey.iova,
-				       (u64)odp->umem.address, &user_va))
+		if (unlikely(io_virt < ib_umem_start(odp) ||
+			     ib_umem_end(odp) - io_virt < bcnt))
 			return -EFAULT;
-		if (unlikely(user_va >= ib_umem_end(odp) ||
-			     ib_umem_end(odp) - user_va < bcnt))
-			return -EFAULT;
-		return pagefault_real_mr(mr, odp, user_va, bcnt, bytes_mapped,
+		return pagefault_real_mr(mr, odp, io_virt, bcnt, bytes_mapped,
 					 flags);
 	}
 	return pagefault_implicit_mr(mr, odp, io_virt, bcnt, bytes_mapped,

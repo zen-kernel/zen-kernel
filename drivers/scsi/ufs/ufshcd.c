@@ -7030,8 +7030,7 @@ static int ufshcd_probe_hba(struct ufs_hba *hba)
 			ufshcd_init_icc_levels(hba);
 
 		/* Add required well known logical units to scsi mid layer */
-		ret = ufshcd_scsi_add_wlus(hba);
-		if (ret)
+		if (ufshcd_scsi_add_wlus(hba))
 			goto out;
 
 		/* Initialize devfreq after UFS device is detected */

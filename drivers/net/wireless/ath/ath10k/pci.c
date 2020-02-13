@@ -1604,22 +1604,11 @@ static int ath10k_pci_dump_memory_reg(struct ath10k *ar,
 {
 	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
 	u32 i;
-	int ret;
-
-	mutex_lock(&ar->conf_mutex);
-	if (ar->state != ATH10K_STATE_ON) {
-		ath10k_warn(ar, "Skipping pci_dump_memory_reg invalid state\n");
-		ret = -EIO;
-		goto done;
-	}
 
 	for (i = 0; i < region->len; i += 4)
 		*(u32 *)(buf + i) = ioread32(ar_pci->mem + region->start + i);
 
-	ret = region->len;
-done:
-	mutex_unlock(&ar->conf_mutex);
-	return ret;
+	return region->len;
 }
 
 /* if an error happened returns < 0, otherwise the length */
@@ -1715,11 +1704,7 @@ static void ath10k_pci_dump_memory(struct ath10k *ar,
 			count = ath10k_pci_dump_memory_sram(ar, current_region, buf);
 			break;
 		case ATH10K_MEM_REGION_TYPE_IOREG:
-			ret = ath10k_pci_dump_memory_reg(ar, current_region, buf);
-			if (ret < 0)
-				break;
-
-			count = ret;
+			count = ath10k_pci_dump_memory_reg(ar, current_region, buf);
 			break;
 		default:
 			ret = ath10k_pci_dump_memory_generic(ar, current_region, buf);
