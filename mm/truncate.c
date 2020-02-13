@@ -31,24 +31,31 @@
  * itself locked.  These unlocked entries need verification under the tree
  * lock.
  */
-static inline void __clear_shadow_entry(struct address_space *mapping,
-				pgoff_t index, void *entry)
+static bool __must_check __clear_shadow_entry(struct address_space *mapping,
+					      pgoff_t index, void *entry)
 {
 	XA_STATE(xas, &mapping->i_pages, index);
 
 	xas_set_update(&xas, workingset_update_node);
 	if (xas_load(&xas) != entry)
-		return;
+		return 0;
 	xas_store(&xas, NULL);
 	mapping->nrexceptional--;
+
+	return mapping_empty(mapping);
 }
 
 static void clear_shadow_entry(struct address_space *mapping, pgoff_t index,
 			       void *entry)
 {
+	bool empty;
+
 	xa_lock_irq(&mapping->i_pages);
-	__clear_shadow_entry(mapping, index, entry);
+	empty = __clear_shadow_entry(mapping, index, entry);
 	xa_unlock_irq(&mapping->i_pages);
+
+	if (empty)
+		inode_pages_clear(mapping->host);
 }
 
 /*
@@ -61,7 +68,7 @@ static void truncate_exceptional_pvec_entries(struct address_space *mapping,
 				pgoff_t end)
 {
 	int i, j;
-	bool dax, lock;
+	bool dax, lock, empty = false;
 
 	/* Handled by shmem itself */
 	if (shmem_mapping(mapping))
@@ -96,11 +103,16 @@ static void truncate_exceptional_pvec_entries(struct address_space *mapping,
 			continue;
 		}
 
-		__clear_shadow_entry(mapping, index, page);
+		if (__clear_shadow_entry(mapping, index, page))
+			empty = true;
 	}
 
 	if (lock)
 		xa_unlock_irq(&mapping->i_pages);
+
+	if (empty)
+		inode_pages_clear(mapping->host);
+
 	pvec->nr = j;
 }
 
@@ -300,7 +312,7 @@ void truncate_inode_pages_range(struct address_space *mapping,
 	pgoff_t		index;
 	int		i;
 
-	if (mapping->nrpages == 0 && mapping->nrexceptional == 0)
+	if (mapping_empty(mapping))
 		goto out;
 
 	/* Offsets within partial pages */
@@ -636,6 +648,7 @@ static int
 invalidate_complete_page2(struct address_space *mapping, struct page *page)
 {
 	unsigned long flags;
+	bool empty;
 
 	if (page->mapping != mapping)
 		return 0;
@@ -648,8 +661,11 @@ invalidate_complete_page2(struct address_space *mapping, struct page *page)
 		goto failed;
 
 	BUG_ON(page_has_private(page));
-	__delete_from_page_cache(page, NULL);
+	empty = __delete_from_page_cache(page, NULL);
 	xa_unlock_irqrestore(&mapping->i_pages, flags);
+
+	if (empty)
+		inode_pages_clear(mapping->host);
 
 	if (mapping->a_ops->freepage)
 		mapping->a_ops->freepage(page);
@@ -692,7 +708,7 @@ int invalidate_inode_pages2_range(struct address_space *mapping,
 	int ret2 = 0;
 	int did_range_unmap = 0;
 
-	if (mapping->nrpages == 0 && mapping->nrexceptional == 0)
+	if (mapping_empty(mapping))
 		goto out;
 
 	pagevec_init(&pvec);

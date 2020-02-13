@@ -116,8 +116,8 @@
  *   ->tasklist_lock            (memory_failure, collect_procs_ao)
  */
 
-static void page_cache_delete(struct address_space *mapping,
-				   struct page *page, void *shadow)
+static bool __must_check page_cache_delete(struct address_space *mapping,
+					   struct page *page, void *shadow)
 {
 	XA_STATE(xas, &mapping->i_pages, page->index);
 	unsigned int nr = 1;
@@ -151,6 +151,8 @@ static void page_cache_delete(struct address_space *mapping,
 		smp_wmb();
 	}
 	mapping->nrpages -= nr;
+
+	return mapping_empty(mapping);
 }
 
 static void unaccount_page_cache_page(struct address_space *mapping,
@@ -227,15 +229,18 @@ static void unaccount_page_cache_page(struct address_space *mapping,
  * Delete a page from the page cache and free it. Caller has to make
  * sure the page is locked and that nobody else uses it - or that usage
  * is safe.  The caller must hold the i_pages lock.
+ *
+ * If this returns true, the caller must call inode_pages_clear()
+ * after dropping the i_pages lock.
  */
-void __delete_from_page_cache(struct page *page, void *shadow)
+bool __must_check __delete_from_page_cache(struct page *page, void *shadow)
 {
 	struct address_space *mapping = page->mapping;
 
 	trace_mm_filemap_delete_from_page_cache(page);
 
 	unaccount_page_cache_page(mapping, page);
-	page_cache_delete(mapping, page, shadow);
+	return page_cache_delete(mapping, page, shadow);
 }
 
 static void page_cache_free_page(struct address_space *mapping,
@@ -267,11 +272,15 @@ void delete_from_page_cache(struct page *page)
 {
 	struct address_space *mapping = page_mapping(page);
 	unsigned long flags;
+	bool empty;
 
 	BUG_ON(!PageLocked(page));
 	xa_lock_irqsave(&mapping->i_pages, flags);
-	__delete_from_page_cache(page, NULL);
+	empty = __delete_from_page_cache(page, NULL);
 	xa_unlock_irqrestore(&mapping->i_pages, flags);
+
+	if (empty)
+		inode_pages_clear(mapping->host);
 
 	page_cache_free_page(mapping, page);
 }
@@ -291,8 +300,8 @@ EXPORT_SYMBOL(delete_from_page_cache);
  *
  * The function expects the i_pages lock to be held.
  */
-static void page_cache_delete_batch(struct address_space *mapping,
-			     struct pagevec *pvec)
+static bool __must_check page_cache_delete_batch(struct address_space *mapping,
+						 struct pagevec *pvec)
 {
 	XA_STATE(xas, &mapping->i_pages, pvec->pages[0]->index);
 	int total_pages = 0;
@@ -337,12 +346,15 @@ static void page_cache_delete_batch(struct address_space *mapping,
 		total_pages++;
 	}
 	mapping->nrpages -= total_pages;
+
+	return mapping_empty(mapping);
 }
 
 void delete_from_page_cache_batch(struct address_space *mapping,
 				  struct pagevec *pvec)
 {
 	int i;
+	bool empty;
 	unsigned long flags;
 
 	if (!pagevec_count(pvec))
@@ -354,8 +366,11 @@ void delete_from_page_cache_batch(struct address_space *mapping,
 
 		unaccount_page_cache_page(mapping, pvec->pages[i]);
 	}
-	page_cache_delete_batch(mapping, pvec);
+	empty = page_cache_delete_batch(mapping, pvec);
 	xa_unlock_irqrestore(&mapping->i_pages, flags);
+
+	if (empty)
+		inode_pages_clear(mapping->host);
 
 	for (i = 0; i < pagevec_count(pvec); i++)
 		page_cache_free_page(mapping, pvec->pages[i]);
@@ -832,8 +847,9 @@ static int __add_to_page_cache_locked(struct page *page,
 				      void **shadowp)
 {
 	XA_STATE(xas, &mapping->i_pages, offset);
-	int huge = PageHuge(page);
 	int error;
+	int huge = PageHuge(page);
+	bool populated = false;
 	void *old;
 
 	VM_BUG_ON_PAGE(!PageLocked(page), page);
@@ -859,6 +875,7 @@ static int __add_to_page_cache_locked(struct page *page,
 		if (xas_error(&xas))
 			goto unlock;
 
+		populated = mapping_empty(mapping);
 		if (xa_is_value(old)) {
 			mapping->nrexceptional--;
 			if (shadowp)
@@ -879,6 +896,10 @@ unlock:
 	}
 
 	trace_mm_filemap_add_to_page_cache(page);
+
+	if (populated)
+		inode_pages_set(mapping->host);
+
 	return 0;
 error:
 	page->mapping = NULL;

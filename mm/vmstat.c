@@ -1211,9 +1211,11 @@ const char * const vmstat_text[] = {
 #ifdef CONFIG_NUMA
 	"zone_reclaim_failed",
 #endif
-	"pginodesteal",
 	"slabs_scanned",
+	"pginodesteal",
 	"kswapd_inodesteal",
+	"pginoderescue",
+	"pginodedelayed",
 	"kswapd_low_wmark_hit_quickly",
 	"kswapd_high_wmark_hit_quickly",
 	"pageoutrun",

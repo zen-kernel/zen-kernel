@@ -510,6 +510,7 @@ static enum lru_status shadow_lru_isolate(struct list_head *item,
 	struct xa_node *node = container_of(item, struct xa_node, private_list);
 	XA_STATE(xas, node->array, 0);
 	struct address_space *mapping;
+	bool empty = false;
 	int ret;
 
 	/*
@@ -548,6 +549,7 @@ static enum lru_status shadow_lru_isolate(struct list_head *item,
 	if (WARN_ON_ONCE(node->count != node->nr_values))
 		goto out_invalid;
 	mapping->nrexceptional -= node->nr_values;
+	empty = mapping_empty(mapping);
 	xas.xa_node = xa_parent_locked(&mapping->i_pages, node);
 	xas.xa_offset = node->offset;
 	xas.xa_shift = node->shift + XA_CHUNK_SHIFT;
@@ -561,6 +563,8 @@ static enum lru_status shadow_lru_isolate(struct list_head *item,
 
 out_invalid:
 	xa_unlock_irq(&mapping->i_pages);
+	if (empty)
+		inode_pages_clear(mapping->host);
 	ret = LRU_REMOVED_RETRY;
 out:
 	cond_resched();
