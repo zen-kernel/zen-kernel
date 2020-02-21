@@ -36,7 +36,6 @@ void enetc_sched_speed_set(struct net_device *ndev)
 	case SPEED_10:
 	default:
 		pspeed = ENETC_PMR_PSPEED_10M;
-		netdev_err(ndev, "Qbv PSPEED set speed link down.\n");
 	}
 
 	priv->speed = speed;
@@ -192,7 +191,6 @@ int enetc_setup_tc_cbs(struct net_device *ndev, void *type_data)
 	u32 hi_credit_bit, hi_credit_reg;
 	u32 max_interference_size;
 	u32 port_frame_max_size;
-	u32 tc_max_sized_frame;
 	u8 tc = cbs->queue;
 	u8 prio_top, prio_next;
 	int bw_sum = 0;
@@ -250,7 +248,7 @@ int enetc_setup_tc_cbs(struct net_device *ndev, void *type_data)
 		return -EINVAL;
 	}
 
-	tc_max_sized_frame = enetc_port_rd(&si->hw, ENETC_PTCMSDUR(tc));
+	enetc_port_rd(&si->hw, ENETC_PTCMSDUR(tc));
 
 	/* For top prio TC, the max_interfrence_size is maxSizedFrame.
 	 *
