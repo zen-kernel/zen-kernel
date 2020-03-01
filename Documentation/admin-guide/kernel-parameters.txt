@@ -432,6 +432,11 @@
 			embedded devices based on command line input.
 			See Documentation/block/cmdline-partition.rst
 
+	bmq.timeslice=	[KNL] Time slice in us for BMQ scheduler.
+			Format: <int> (must be >= 1000)
+			Default: 4000
+			See Documentation/scheduler/sched-BMQ.txt
+
 	boot_delay=	Milliseconds to delay each printk during boot.
 			Values larger than 10 seconds (10000) are changed to
 			no delay (0).

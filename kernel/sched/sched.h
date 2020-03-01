@@ -2,6 +2,10 @@
 /*
  * Scheduler internal types and methods:
  */
+#ifdef CONFIG_SCHED_BMQ
+#include "bmq_sched.h"
+#else
+
 #include <linux/sched.h>
 
 #include <linux/sched/autogroup.h>
@@ -2487,3 +2491,9 @@ static inline void membarrier_switch_mm(struct rq *rq,
 {
 }
 #endif
+
+static inline int task_running_nice(struct task_struct *p)
+{
+	return (task_nice(p) > 0);
+}
+#endif /* !CONFIG_SCHED_BMQ */
