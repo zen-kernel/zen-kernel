@@ -706,9 +706,20 @@ config GENERIC_SCHED_CLOCK
 
 menu "Scheduler features"
 
+config SCHED_BMQ
+	bool "BMQ CPU scheduler"
+	help
+	  The BitMap Queue CPU scheduler for excellent interactivity and
+	  responsiveness on the desktop and solid scalability on normal
+	  hardware and commodity servers.
+
+          Say Y here.
+	default y
+
 config UCLAMP_TASK
 	bool "Enable utilization clamping for RT/FAIR tasks"
 	depends on CPU_FREQ_GOV_SCHEDUTIL
+	depends on !SCHED_BMQ
 	help
 	  This feature enables the scheduler to track the clamped utilization
 	  of each CPU based on RUNNABLE tasks scheduled on that CPU.
@@ -796,6 +807,7 @@ config NUMA_BALANCING
 	depends on !ARCH_WANT_NUMA_VARIABLE_LOCALITY
 	depends on SMP && NUMA && MIGRATION
 	depends on !SCHED_MUQSS
+	depends on !SCHED_BMQ
 	help
 	  This option adds support for automatic NUMA aware memory/task placement.
 	  The mechanism is quite primitive and is based on migrating memory when
@@ -901,7 +913,7 @@ menuconfig CGROUP_SCHED
 	  with applications that will only work if this control group is
 	  present.
 
-if CGROUP_SCHED && !SCHED_MUQSS
+
 config FAIR_GROUP_SCHED
 	bool "Group scheduling for SCHED_OTHER"
 	depends on CGROUP_SCHED
@@ -1149,7 +1161,7 @@ config CHECKPOINT_RESTORE
 
 config SCHED_AUTOGROUP
 	bool "Automatic process group scheduling"
-	depends on !SCHED_MUQSS
+
 	select CGROUPS
 	select CGROUP_SCHED
 	select FAIR_GROUP_SCHED

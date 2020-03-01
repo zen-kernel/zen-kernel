@@ -16,22 +16,39 @@ ifneq ($(CONFIG_SCHED_OMIT_FRAME_POINTER),y)
 CFLAGS_core.o := $(PROFILING) -fno-omit-frame-pointer
 endif
 
+alt_scheduler = 0
 ifdef CONFIG_SCHED_MUQSS
-obj-y += MuQSS.o clock.o cputime.o
-obj-y += idle.o
-obj-y += wait.o wait_bit.o swait.o completion.o
-
-obj-$(CONFIG_SMP) += topology.o
-else
-obj-y += core.o loadavg.o clock.o cputime.o
-obj-y += idle.o fair.o rt.o deadline.o
-obj-y += wait.o wait_bit.o swait.o completion.o
-
-obj-$(CONFIG_SMP) += cpupri.o cpudeadline.o topology.o stop_task.o pelt.o
-obj-$(CONFIG_SCHED_AUTOGROUP) += autogroup.o
-obj-$(CONFIG_SCHED_DEBUG) += debug.o
-obj-$(CONFIG_CGROUP_CPUACCT) += cpuacct.o
+	alt_scheduler = 1
 endif
+ifdef CONFIG_SCHED_BMQ
+	alt_scheduler = 1
+endif
+
+ifeq ($(alt_scheduler), 1)
+	ifdef CONFIG_SCHED_MUQSS
+		obj-y += MuQSS.o clock.o cputime.o
+		obj-y += idle.o
+		obj-y += wait.o wait_bit.o swait.o completion.o
+
+		obj-$(CONFIG_SMP) += topology.o
+	endif
+	ifdef CONFIG_SCHED_BMQ
+		obj-y += bmq.o
+	endif
+else
+	obj-y += core.o fair.o rt.o deadline.o
+	obj-$(CONFIG_SMP) += cpudeadline.o topology.o stop_task.o
+	obj-$(CONFIG_SCHED_AUTOGROUP) += autogroup.o
+	obj-$(CONFIG_SCHED_DEBUG) += debug.o
+endif
+
+ifndef CONFIG_SCHED_MUQSS
+	obj-y += loadavg.o clock.o cputime.o idle.o
+	obj-y += wait.o wait_bit.o swait.o completion.o
+	obj-$(CONFIG_SMP) += cpupri.o pelt.o
+	obj-$(CONFIG_CGROUP_CPUACCT) += cpuacct.o
+endif
+
 obj-$(CONFIG_SCHEDSTATS) += stats.o
 obj-$(CONFIG_CPU_FREQ) += cpufreq.o
 obj-$(CONFIG_CPU_FREQ_GOV_SCHEDUTIL) += cpufreq_schedutil.o

@@ -2,6 +2,12 @@
 /*
  * Scheduler internal types and methods:
  */
+#if defined(CONFIG_SCHED_MUQSS) || defined(CONFIG_SCHED_BMQ)
+
+#ifdef CONFIG_SCHED_BMQ
+#include "bmq_sched.h"
+#endif
+
 #ifdef CONFIG_SCHED_MUQSS
 #include "MuQSS.h"
 
@@ -9,11 +15,11 @@
 #define rq_rt_nr_running(rq) ((rq)->rt_nr_running)
 #define rq_h_nr_running(rq) ((rq)->nr_running)
 
-#else /* CONFIG_SCHED_MUQSS */
+#endif /* CONFIG_SCHED_MUQSS */
+#else
 
 #define rq_rt_nr_running(rq) ((rq)->rt.rt_nr_running)
 #define rq_h_nr_running(rq) ((rq)->cfs.h_nr_running)
-
 
 #include <linux/sched.h>
 
@@ -2526,4 +2532,9 @@ static inline u64 read_sum_exec_runtime(struct task_struct *t)
 	return ns;
 }
 #endif
-#endif /* CONFIG_SCHED_MUQSS */
+
+static inline int task_running_nice(struct task_struct *p)
+{
+	return (task_nice(p) > 0);
+}
+#endif /* !CONFIG_SCHED_MUQSS && !CONFIG_SCHED_BMQ */
