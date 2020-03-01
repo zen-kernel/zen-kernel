@@ -1048,8 +1048,8 @@ static int trace_wakeup_test_thread(void *data)
 {
 	/* Make this a -deadline thread */
 	static const struct sched_attr attr = {
-#ifdef CONFIG_SCHED_MUQSS
-		/* No deadline on MuQSS, use RR */
+#if defined(CONFIG_SCHED_MUQSS) || defined(CONFIG_SCHED_BMQ)
+		/* No deadline on MuQSS or BMQ, use RR */
 		.sched_policy = SCHED_RR,
 #else
 		.sched_policy = SCHED_DEADLINE,

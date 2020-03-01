@@ -21,6 +21,7 @@
 
 #define MAX_USER_RT_PRIO	100
 
+
 #ifdef CONFIG_SCHED_MUQSS
 /* Note different MAX_RT_PRIO */
 #define MAX_RT_PRIO		(MAX_USER_RT_PRIO + 1)
@@ -36,6 +37,11 @@
 
 #define MAX_PRIO		(MAX_RT_PRIO + NICE_WIDTH)
 #define DEFAULT_PRIO		(MAX_RT_PRIO + NICE_WIDTH / 2)
+
+#ifdef CONFIG_SCHED_BMQ
+/* +/- priority levels from the base priority */
+#define MAX_PRIORITY_ADJ	4
+#endif
 
 /*
  * Convert user-nice values [ -20 ... 0 ... 19 ]

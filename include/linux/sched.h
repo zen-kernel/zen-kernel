@@ -680,15 +680,18 @@ struct task_struct {
 	unsigned int			flags;
 	unsigned int			ptrace;
 
-#if defined(CONFIG_SMP) || defined(CONFIG_SCHED_MUQSS)
-	int on_cpu;
+#if defined(CONFIG_SMP) && !defined(CONFIG_SCHED_BMQ)
+	struct llist_node		wake_entry;
+#endif
+#if defined(CONFIG_SMP) || defined(CONFIG_SCHED_BMQ) || defined(CONFIG_SCHED_MUQSS)
+	int				on_cpu;
 #endif
 #ifdef CONFIG_SMP
-	struct llist_node		wake_entry;
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 	/* Current CPU: */
 	unsigned int			cpu;
 #endif
+#ifndef CONFIG_SCHED_BMQ
 	unsigned int			wakee_flips;
 	unsigned long			wakee_flip_decay_ts;
 	struct task_struct		*last_wakee;
@@ -702,6 +705,7 @@ struct task_struct {
 	 */
 	int				recent_used_cpu;
 	int				wake_cpu;
+#endif /* !CONFIG_SCHED_BMQ */
 #endif
 	int				on_rq;
 
@@ -709,6 +713,8 @@ struct task_struct {
 	int				static_prio;
 	int				normal_prio;
 	unsigned int			rt_priority;
+
+#if defined(CONFIG_SCHED_MUQSS) || defined(CONFIG_SCHED_BMQ)
 #ifdef CONFIG_SCHED_MUQSS
 	int time_slice;
 	u64 deadline;
@@ -722,16 +728,28 @@ struct task_struct {
 	bool zerobound; /* Bound to CPU0 for hotplug */
 #endif
 	unsigned long rt_timeout;
-#else /* CONFIG_SCHED_MUQSS */
+#endif /* CONFIG_SCHED_MUQSS */
 
+#ifdef CONFIG_SCHED_BMQ
+	u64				last_ran;
+	s64				time_slice;
+	int				boost_prio;
+	int				bmq_idx;
+	struct list_head		bmq_node;
+	/* sched_clock time spent running */
+	u64				sched_time;
+#endif /* !CONFIG_SCHED_BMQ */
+#else
 	const struct sched_class	*sched_class;
 	struct sched_entity		se;
 	struct sched_rt_entity		rt;
 #endif
+#ifndef CONFIG_SCHED_BMQ
+	struct sched_dl_entity		dl;
+#endif
 #ifdef CONFIG_CGROUP_SCHED
 	struct task_group		*sched_task_group;
 #endif
-	struct sched_dl_entity		dl;
 
 #ifdef CONFIG_UCLAMP_TASK
 	/* Clamp values requested for a scheduling entity */
@@ -1350,8 +1368,13 @@ struct task_struct {
 	 */
 };
 
-#ifdef CONFIG_SCHED_MUQSS
+#if defined(CONFIG_SCHED_MUQSS) || defined(CONFIG_SCHED_BMQ)
 #define tsk_seruntime(t)		((t)->sched_time)
+#ifdef CONFIG_SCHED_BMQ
+/* replace the uncertian rt_timeout with 0UL */
+#define tsk_rttimeout(t)		(0UL)
+#endif
+#ifdef CONFIG_SCHED_MUQSS
 #define tsk_rttimeout(t)		((t)->rt_timeout)
 
 static inline void tsk_cpus_current(struct task_struct *p)
@@ -1364,9 +1387,11 @@ static inline bool iso_task(struct task_struct *p)
 {
 	return (p->policy == SCHED_ISO);
 }
+#endif
 #else /* CFS */
 #define tsk_seruntime(t)	((t)->se.sum_exec_runtime)
 #define tsk_rttimeout(t)	((t)->rt.timeout)
+#endif /* !CONFIG_SCHED_BMQ && !CONFIG_SCHED_MUQSS */
 
 static inline void tsk_cpus_current(struct task_struct *p)
 {
@@ -1382,7 +1407,6 @@ static inline bool iso_task(struct task_struct *p)
 {
 	return false;
 }
-#endif /* CONFIG_SCHED_MUQSS */
 
 static inline struct pid *task_pid(struct task_struct *task)
 {
