@@ -24,9 +24,9 @@
 # error "Invalid value for CONFIG_PHYSICAL_ALIGN"
 #endif
 
-#if CONFIG_KERNEL_BZIP2 || CONFIG_KERNEL_ZSTD
+#ifdef CONFIG_KERNEL_BZIP2
 # define BOOT_HEAP_SIZE		0x400000
-#else /* !(CONFIG_KERNEL_BZIP2 || CONFIG_KERNEL_ZSTD)  */
+#else /* !CONFIG_KERNEL_BZIP2 */
 # define BOOT_HEAP_SIZE		 0x10000
 #endif
 

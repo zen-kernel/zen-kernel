@@ -337,9 +337,6 @@ quiet_cmd_lz4 = LZ4     $@
       cmd_lz4 = { cat $(real-prereqs) | lz4c -l -c1 stdin stdout; \
                   $(size_append); } > $@
 
-quiet_cmd_zstd = ZSTD    $@
-      cmd_zstd = { cat $(real-prereqs) | zstd -19 --zstd=wlog=21; $(size_append); } > $@
-
 # U-Boot mkimage
 # ---------------------------------------------------------------------------
 

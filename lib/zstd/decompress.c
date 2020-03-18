@@ -42,11 +42,9 @@
 /*-*************************************
 *  Macros
 ***************************************/
-#ifndef PREBOOT
 #define ZSTD_isError ERR_isError /* for inlining */
 #define FSE_isError ERR_isError
 #define HUF_isError ERR_isError
-#endif
 
 /*_*******************************************************
 *  Memory operations

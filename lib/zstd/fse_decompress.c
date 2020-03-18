@@ -54,13 +54,12 @@
 /* **************************************************************
 *  Error Management
 ****************************************************************/
+#define FSE_isError ERR_isError
 #define FSE_STATIC_ASSERT(c)                                   \
 	{                                                      \
 		enum { FSE_static_assert = 1 / (int)(!!(c)) }; \
 	} /* use only *after* variable declarations */
 
-#ifndef PREBOOT
-#define FSE_isError ERR_isError
 /* check and forward error code */
 #define CHECK_F(f)                  \
 	{                           \
@@ -68,7 +67,6 @@
 		if (FSE_isError(e)) \
 			return e;   \
 	}
-#endif
 
 /* **************************************************************
 *  Templates

@@ -220,16 +220,13 @@ config HAVE_KERNEL_LZO
 config HAVE_KERNEL_LZ4
 	bool
 
-config HAVE_KERNEL_ZSTD
-	bool
-
 config HAVE_KERNEL_UNCOMPRESSED
 	bool
 
 choice
 	prompt "Kernel compression mode"
 	default KERNEL_GZIP
-	depends on HAVE_KERNEL_GZIP || HAVE_KERNEL_BZIP2 || HAVE_KERNEL_LZMA || HAVE_KERNEL_XZ || HAVE_KERNEL_LZO || HAVE_KERNEL_LZ4 || HAVE_KERNEL_ZSTD || HAVE_KERNEL_UNCOMPRESSED
+	depends on HAVE_KERNEL_GZIP || HAVE_KERNEL_BZIP2 || HAVE_KERNEL_LZMA || HAVE_KERNEL_XZ || HAVE_KERNEL_LZO || HAVE_KERNEL_LZ4 || HAVE_KERNEL_UNCOMPRESSED
 	help
 	  The linux kernel is a kind of self-extracting executable.
 	  Several compression algorithms are available, which differ
@@ -307,16 +304,6 @@ config KERNEL_LZ4
 	  Its compression ratio is worse than LZO. The size of the kernel
 	  is about 8% bigger than LZO. But the decompression speed is
 	  faster than LZO.
-
-config KERNEL_ZSTD
-	bool "ZSTD"
-	depends on HAVE_KERNEL_ZSTD
-	help
-	  Its compression ratio is roughly 10% worst than xz, but the
-	  decompression is 10x faster. Currently, this is one of the optimal
-	  algorithms available in the kernel, as there isn't an algorithm,
-	  which would provide a better compression ratio and a shorter
-	  decompression time.
 
 config KERNEL_UNCOMPRESSED
 	bool "None"

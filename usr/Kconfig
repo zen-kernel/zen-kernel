@@ -106,15 +106,6 @@ config RD_LZ4
 	  Support loading of a LZ4 encoded initial ramdisk or cpio buffer
 	  If unsure, say N.
 
-config RD_ZSTD
-	bool "Support initial ramdisk/ramfs compressed using ZSTD"
-	default y
-	depends on BLK_DEV_INITRD
-	select DECOMPRESS_ZSTD
-	help
-	  Support loading of a ZSTD encoded initial ramdisk or cpio buffer
-	  If unsure, say N.
-
 choice
 	prompt "Built-in initramfs compression mode"
 	depends on INITRAMFS_SOURCE!=""
@@ -223,19 +214,6 @@ config INITRAMFS_COMPRESSION_LZ4
 	  If you choose this, keep in mind that most distros don't provide lz4
 	  by default which could cause a build failure.
 
-config INITRAMFS_COMPRESSION_ZSTD
-	bool "ZSTD"
-	depends on RD_ZSTD
-	help
-	  Its compression ratio is roughly 10% worst than xz, but the
-	  decompression is 10x faster. Currently, this is one of the optimal
-	  algorithms available in the kernel, as there isn't an algorithm,
-	  which would provide a better compression ratio and a shorter
-	  decompression time.
-
-	  If you choose this, keep in mind that you may need to install the zstd
-	  tool to be able to compress the initram.
-
 endchoice
 
 config INITRAMFS_COMPRESSION
@@ -248,12 +226,10 @@ config INITRAMFS_COMPRESSION
 	default ".xz"   if INITRAMFS_COMPRESSION_XZ
 	default ".lzo"  if INITRAMFS_COMPRESSION_LZO
 	default ".lz4"  if INITRAMFS_COMPRESSION_LZ4
-	default ".zst"  if INITRAMFS_COMPRESSION_ZSTD
 	default ".gz"   if RD_GZIP
 	default ".lz4"  if RD_LZ4
 	default ".lzo"  if RD_LZO
 	default ".xz"   if RD_XZ
 	default ".lzma" if RD_LZMA
 	default ".bz2"  if RD_BZIP2
-	default ".zst"  if RD_ZSTD
 	default ""
