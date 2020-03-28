@@ -276,7 +276,11 @@ const char * const migratetype_names[MIGRATE_TYPES] = {
 
 int min_free_kbytes = 1024;
 int user_min_free_kbytes = -1;
+#ifdef CONFIG_ZEN_INTERACTIVE
+static int watermark_boost_factor __read_mostly;
+#else
 static int watermark_boost_factor __read_mostly = 15000;
+#endif
 static int watermark_scale_factor = 10;
 int defrag_mode;
 
