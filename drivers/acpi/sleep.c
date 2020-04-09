@@ -977,7 +977,7 @@ static int acpi_s2idle_prepare_late(void)
 	return 0;
 }
 
-static void acpi_s2idle_wake(void)
+static void acpi_s2idle_sync(void)
 {
 	/*
 	 * The EC driver uses the system workqueue and an additional special
