@@ -2452,9 +2452,11 @@ static void steal_suitable_fallback(struct zone *zone, struct page *page,
 	 * likelihood of future fallbacks. Wake kswapd now as the node
 	 * may be balanced overall and kswapd will not wake naturally.
 	 */
-	boost_watermark(zone);
-	if (alloc_flags & ALLOC_KSWAPD)
-		set_bit(ZONE_BOOSTED_WATERMARK, &zone->flags);
+	if (alloc_flags & ALLOC_KSWAPD) {
+		boost_watermark(zone);
+		if (zone->watermark_boost)
+			set_bit(ZONE_BOOSTED_WATERMARK, &zone->flags);
+	}
 
 	/* We are not allowed to try stealing from the whole block */
 	if (!whole_block)
