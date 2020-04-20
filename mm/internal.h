@@ -822,6 +822,7 @@ void post_alloc_hook(struct page *page, unsigned int order, gfp_t gfp_flags);
 extern bool free_pages_prepare(struct page *page, unsigned int order);
 
 extern int user_min_free_kbytes;
+extern atomic_long_t kswapd_waiters;
 
 struct page *__alloc_frozen_pages_noprof(gfp_t, unsigned int order, int nid,
 		nodemask_t *);
