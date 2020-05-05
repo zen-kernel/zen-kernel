@@ -113,7 +113,7 @@
 
 void print_scheduler_version(void)
 {
-	printk(KERN_INFO "MuQSS CPU scheduler v0.199 by Con Kolivas.\n");
+	printk(KERN_INFO "MuQSS CPU scheduler v0.200 by Con Kolivas.\n");
 }
 
 /* Define RQ share levels */
@@ -755,17 +755,15 @@ static inline int rq_load(struct rq *rq)
 static void update_load_avg(struct rq *rq, unsigned int flags)
 {
 	long us_interval, load;
-	unsigned long curload;
 
 	us_interval = NS_TO_US(rq->niffies - rq->load_update);
 	if (unlikely(us_interval <= 0))
 		return;
 
-	curload = rq_load(rq);
 	load = rq->load_avg - (rq->load_avg * us_interval * 5 / 262144);
 	if (unlikely(load < 0))
 		load = 0;
-	load += curload * curload * SCHED_CAPACITY_SCALE * us_interval * 5 / 262144;
+	load += rq_load(rq) * SCHED_CAPACITY_SCALE * us_interval * 5 / 262144;
 	rq->load_avg = load;
 
 	rq->load_update = rq->niffies;
@@ -782,17 +780,15 @@ static void update_load_avg(struct rq *rq, unsigned int flags)
 static void update_irq_load_avg(struct rq *rq, long delta)
 {
 	long us_interval, load;
-	unsigned long curload;
 
 	us_interval = NS_TO_US(rq->niffies - rq->irq_load_update);
 	if (unlikely(us_interval <= 0))
 		return;
 
-	curload = NS_TO_US(delta) / us_interval;
 	load = rq->irq_load_avg - (rq->irq_load_avg * us_interval * 5 / 262144);
 	if (unlikely(load < 0))
 		load = 0;
-	load += curload * curload * SCHED_CAPACITY_SCALE * us_interval * 5 / 262144;
+	load += NS_TO_US(delta) * SCHED_CAPACITY_SCALE * 5 / 262144;
 	rq->irq_load_avg = load;
 
 	rq->irq_load_update = rq->niffies;
@@ -3491,7 +3487,7 @@ static void sched_tick_remote(struct work_struct *work)
 		 * Make sure the next tick runs within a reasonable
 		 * amount of time.
 		 */
-		delta = rq_clock_task(rq) - curr->se.exec_start;
+		delta = rq_clock_task(rq) - curr->last_ran;
 		WARN_ON_ONCE(delta > (u64)NSEC_PER_SEC * 3);
 	}
 	task_tick(rq);
