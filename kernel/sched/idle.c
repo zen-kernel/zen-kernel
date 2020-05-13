@@ -231,8 +231,6 @@ exit_idle:
 static void do_idle(void)
 {
 	int cpu = smp_processor_id();
-	bool pending = false;
-
 	/*
 	 * If the arch has a polling bit, we maintain an invariant:
 	 *
@@ -243,10 +241,7 @@ static void do_idle(void)
 	 */
 
 	__current_set_polling();
-	if (unlikely(softirq_pending(cpu)))
-		pending = true;
-	else
-		tick_nohz_idle_enter();
+	tick_nohz_idle_enter();
 
 	while (!need_resched()) {
 		rmb();
@@ -284,8 +279,7 @@ static void do_idle(void)
 	 * an IPI to fold the state for us.
 	 */
 	preempt_set_need_resched();
-	if (!pending)
-		tick_nohz_idle_exit();
+	tick_nohz_idle_exit();
 	__current_clr_polling();
 
 	/*

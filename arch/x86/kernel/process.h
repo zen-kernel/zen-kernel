@@ -38,6 +38,8 @@ static inline void switch_to_extra(struct task_struct *prev,
 		__switch_to_xtra(prev, next);
 }
 
+#ifdef CONFIG_X86_64
+
 enum which_selector {
 	FS,
 	GS
@@ -105,3 +107,5 @@ static __always_inline void save_fsgs(struct task_struct *task)
 		save_base_legacy(task, task->thread.gsindex, GS);
 	}
 }
+
+#endif

@@ -5,6 +5,7 @@
 #include <linux/sched/clock.h>
 #include <linux/sched/cpufreq.h>
 #include <linux/sched/cputime.h>
+#include <linux/sched/deadline.h>
 #include <linux/sched/debug.h>
 #include <linux/sched/hotplug.h>
 #include <linux/sched/init.h>
@@ -28,7 +29,6 @@
 #include <linux/ctype.h>
 #include <linux/energy_model.h>
 #include <linux/freezer.h>
-#include <linux/interrupt.h>
 #include <linux/kernel_stat.h>
 #include <linux/kthread.h>
 #include <linux/membarrier.h>
@@ -242,6 +242,7 @@ struct rq {
 	struct rq **rq_order; /* Shared RQs ordered by relative cache distance */
 	struct rq **cpu_order; /* RQs of discrete CPUs ordered by distance */
 
+	bool is_leader;
 	struct rq *smp_leader; /* First physical CPU per node */
 #ifdef CONFIG_SCHED_SMT
 	struct rq *smt_leader; /* First logical CPU in SMT siblings */
@@ -796,20 +797,6 @@ unsigned int uclamp_rq_util_with(struct rq __maybe_unused *rq, unsigned int util
 #else /* arch_scale_freq_capacity */
 #define arch_scale_freq_invariant()	(false)
 #endif
-
-/*
- * This should only be called when current == rq->idle. Dodgy workaround for
- * when softirqs are pending and we are in the idle loop. Setting current to
- * resched will kick us out of the idle loop and the softirqs will be serviced
- * on our next pass through schedule().
- */
-static inline bool softirq_pending(int cpu)
-{
-	if (likely(!local_softirq_pending()))
-		return false;
-	set_tsk_need_resched(current);
-	return true;
-}
 
 #ifdef CONFIG_64BIT
 static inline u64 read_sum_exec_runtime(struct task_struct *t)

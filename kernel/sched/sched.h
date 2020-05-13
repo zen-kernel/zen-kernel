@@ -2513,11 +2513,6 @@ static inline bool is_per_cpu_kthread(struct task_struct *p)
 #endif
 
 /* MuQSS compatibility functions */
-static inline bool softirq_pending(int cpu)
-{
-	return false;
-}
-
 #ifdef CONFIG_64BIT
 static inline u64 read_sum_exec_runtime(struct task_struct *t)
 {

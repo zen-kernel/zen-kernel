@@ -688,13 +688,6 @@ static inline bool task_queued(struct task_struct *p)
 static void enqueue_task(struct rq *rq, struct task_struct *p, int flags);
 static inline void resched_if_idle(struct rq *rq);
 
-/* Dodgy workaround till we figure out where the softirqs are going */
-static inline void do_pending_softirq(struct rq *rq, struct task_struct *next)
-{
-	if (unlikely(next == rq->idle && local_softirq_pending() && !in_interrupt()))
-		do_softirq_own_stack();
-}
-
 static inline bool deadline_before(u64 deadline, u64 time)
 {
 	return (deadline < time);
@@ -2621,9 +2614,6 @@ static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
 	}
 #endif
 	rq_unlock(rq);
-
-	do_pending_softirq(rq, current);
-
 	local_irq_enable();
 }
 
@@ -4139,7 +4129,6 @@ static void __sched notrace __schedule(bool preempt)
 	} else {
 		check_siblings(rq);
 		rq_unlock(rq);
-		do_pending_softirq(rq, next);
 		local_irq_enable();
 	}
 }
@@ -5952,6 +5941,7 @@ void init_idle(struct task_struct *idle, int cpu)
 	idle->state = TASK_RUNNING;
 	/* Setting prio to illegal value shouldn't matter when never queued */
 	idle->prio = PRIO_LIMIT;
+	idle->flags |= PF_IDLE;
 
 	kasan_unpoison_task_stack(idle);
 
@@ -6762,7 +6752,11 @@ static bool cache_cpu_idle(struct rq *rq)
 /* MC siblings CPU mask which share the same LLC */
 static const cpumask_t *llc_core_cpumask(int cpu)
 {
+#ifdef CONFIG_X86
 	return per_cpu(cpu_llc_shared_map, cpu);
+#else
+	return topology_core_cpumask(cpu);
+#endif
 }
 #endif
 
@@ -6777,45 +6771,24 @@ enum sched_domain_level {
 	SD_LV_MAX
 };
 
-void __init sched_init_smp(void)
+/*
+ * Set up the relative cache distance of each online cpu from each
+ * other in a simple array for quick lookup. Locality is determined
+ * by the closest sched_domain that CPUs are separated by. CPUs with
+ * shared cache in SMT and MC are treated as local. Separate CPUs
+ * (within the same package or physically) within the same node are
+ * treated as not local. CPUs not even in the same domain (different
+ * nodes) are treated as very distant.
+ */
+static void __init select_leaders(void)
 {
-	struct rq *rq, *other_rq, *leader = cpu_rq(0);
+	struct rq *rq, *other_rq, *leader;
 	struct sched_domain *sd;
-	int cpu, other_cpu, i;
+	int cpu, other_cpu;
 #ifdef CONFIG_SCHED_SMT
 	bool smt_threads = false;
 #endif
-	sched_init_numa();
 
-	/*
-	 * There's no userspace yet to cause hotplug operations; hence all the
-	 * cpu masks are stable and all blatant races in the below code cannot
-	 * happen.
-	 */
-	mutex_lock(&sched_domains_mutex);
-	sched_init_domains(cpu_active_mask);
-	mutex_unlock(&sched_domains_mutex);
-
-	/* Move init over to a non-isolated CPU */
-	if (set_cpus_allowed_ptr(current, housekeeping_cpumask(HK_FLAG_DOMAIN)) < 0)
-		BUG();
-
-	local_irq_disable();
-	mutex_lock(&sched_domains_mutex);
-	lock_all_rqs();
-
-	printk(KERN_INFO "MuQSS possible/present/online CPUs: %d/%d/%d\n",
-		num_possible_cpus(), num_present_cpus(), num_online_cpus());
-
-	/*
-	 * Set up the relative cache distance of each online cpu from each
-	 * other in a simple array for quick lookup. Locality is determined
-	 * by the closest sched_domain that CPUs are separated by. CPUs with
-	 * shared cache in SMT and MC are treated as local. Separate CPUs
-	 * (within the same package or physically) within the same node are
-	 * treated as not local. CPUs not even in the same domain (different
-	 * nodes) are treated as very distant.
-	 */
 	for (cpu = 0; cpu < num_online_cpus(); cpu++) {
 		rq = cpu_rq(cpu);
 		leader = NULL;
@@ -6833,7 +6806,8 @@ void __init sched_init_smp(void)
 					/* Set the smp_leader to the first CPU */
 					if (!leader)
 						leader = rq;
-					other_rq->smp_leader = leader;
+					if (!other_rq->smp_leader)
+						other_rq->smp_leader = leader;
 				}
 				if (rq->cpu_locality[other_cpu] > LOCALITY_SMP)
 					rq->cpu_locality[other_cpu] = LOCALITY_SMP;
@@ -6857,7 +6831,8 @@ void __init sched_init_smp(void)
 					/* Set the mc_leader to the first CPU */
 					if (!leader)
 						leader = rq;
-					other_rq->mc_leader = leader;
+					if (!other_rq->mc_leader)
+						other_rq->mc_leader = leader;
 				}
 				if (rq->cpu_locality[other_cpu] > LOCALITY_MC) {
 					/* this is to get LLC into play even in case LLC sharing is not used */
@@ -6882,7 +6857,8 @@ void __init sched_init_smp(void)
 					/* Set the smt_leader to the first CPU */
 					if (!leader)
 						leader = rq;
-					other_rq->smt_leader = leader;
+					if (!other_rq->smt_leader)
+						other_rq->smt_leader = leader;
 				}
 				if (rq->cpu_locality[other_cpu] > LOCALITY_SMT)
 					rq->cpu_locality[other_cpu] = LOCALITY_SMT;
@@ -6900,8 +6876,6 @@ void __init sched_init_smp(void)
 		smt_schedule = &smt_should_schedule;
 	}
 #endif
-	unlock_all_rqs();
-	mutex_unlock(&sched_domains_mutex);
 
 	for_each_online_cpu(cpu) {
 		rq = cpu_rq(cpu);
@@ -6909,6 +6883,29 @@ void __init sched_init_smp(void)
 			printk(KERN_DEBUG "MuQSS locality CPU %d to %d: %d\n", cpu, other_cpu, rq->cpu_locality[other_cpu]);
 		}
 	}
+}
+
+/* FIXME freeing locked spinlock */
+static void __init share_and_free_rq(struct rq *leader, struct rq *rq)
+{
+	WARN_ON(rq->nr_running > 0);
+
+	kfree(rq->node);
+	kfree(rq->sl);
+	kfree(rq->lock);
+	rq->node = leader->node;
+	rq->sl = leader->sl;
+	rq->lock = leader->lock;
+	rq->is_leader = false;
+	barrier();
+	/* To make up for not unlocking the freed runlock */
+	preempt_enable();
+}
+
+static void __init share_rqs(void)
+{
+	struct rq *rq, *leader;
+	int cpu;
 
 	for_each_online_cpu(cpu) {
 		rq = cpu_rq(cpu);
@@ -6918,15 +6915,7 @@ void __init sched_init_smp(void)
 		if (leader && rq != leader) {
 			printk(KERN_INFO "MuQSS sharing SMP runqueue from CPU %d to CPU %d\n",
 			       leader->cpu, rq->cpu);
-			kfree(rq->node);
-			kfree(rq->sl);
-			kfree(rq->lock);
-			rq->node = leader->node;
-			rq->sl = leader->sl;
-			rq->lock = leader->lock;
-			barrier();
-			/* To make up for not unlocking the freed runlock */
-			preempt_enable();
+			share_and_free_rq(leader, rq);
 		} else
 			rq_unlock(rq);
 	}
@@ -6940,15 +6929,7 @@ void __init sched_init_smp(void)
 		if (leader && rq != leader) {
 			printk(KERN_INFO "MuQSS sharing MC runqueue from CPU %d to CPU %d\n",
 			       leader->cpu, rq->cpu);
-			kfree(rq->node);
-			kfree(rq->sl);
-			kfree(rq->lock);
-			rq->node = leader->node;
-			rq->sl = leader->sl;
-			rq->lock = leader->lock;
-			barrier();
-			/* To make up for not unlocking the freed runlock */
-			preempt_enable();
+			share_and_free_rq(leader, rq);
 		} else
 			rq_unlock(rq);
 	}
@@ -6957,44 +6938,31 @@ void __init sched_init_smp(void)
 #ifdef CONFIG_SCHED_SMT
 	for_each_online_cpu(cpu) {
 		rq = cpu_rq(cpu);
-
 		leader = rq->smt_leader;
 
 		rq_lock(rq);
 		if (leader && rq != leader) {
 			printk(KERN_INFO "MuQSS sharing SMT runqueue from CPU %d to CPU %d\n",
 			       leader->cpu, rq->cpu);
-			kfree(rq->node);
-			kfree(rq->sl);
-			kfree(rq->lock);
-			rq->node = leader->node;
-			rq->sl = leader->sl;
-			rq->lock = leader->lock;
-			barrier();
-			/* To make up for not unlocking the freed runlock */
-			preempt_enable();
+			share_and_free_rq(leader, rq);
 		} else
 			rq_unlock(rq);
 	}
 #endif /* CONFIG_SCHED_SMT */
+}
 
-	local_irq_enable();
+static void __init setup_rq_orders(void)
+{
+	struct rq *rq, *other_rq;
+	int cpu, other_cpu, i;
 
 	total_runqueues = 0;
 	for_each_online_cpu(cpu) {
 		int locality, total_rqs = 0, total_cpus = 0;
 
 		rq = cpu_rq(cpu);
-		if (
-#ifdef CONFIG_SCHED_MC
-		    (rq->mc_leader == rq) &&
-#endif
-#ifdef CONFIG_SCHED_SMT
-		    (rq->smt_leader == rq) &&
-#endif
-		    (rq->smp_leader == rq)) {
+		if (rq->is_leader)
 			total_runqueues++;
-		}
 
 		for (locality = LOCALITY_SAME; locality <= LOCALITY_DISTANT; locality++) {
 			int selected_cpus[NR_CPUS], selected_cpu_cnt, selected_cpu_idx, test_cpu_idx, cpu_idx, best_locality, test_cpu;
@@ -7057,14 +7025,7 @@ void __init sched_init_smp(void)
 				other_rq = cpu_rq(ordered_cpus[test_cpu]);
 				/* set up cpu orders */
 				rq->cpu_order[total_cpus++] = other_rq;
-				if (
-#ifdef CONFIG_SCHED_MC
-				    (other_rq->mc_leader == other_rq) &&
-#endif
-#ifdef CONFIG_SCHED_SMT
-				    (other_rq->smt_leader == other_rq) &&
-#endif
-				    (other_rq->smp_leader == other_rq)) {
+				if (other_rq->is_leader) {
 					/* set up RQ orders */
 					rq->rq_order[total_rqs++] = other_rq;
 				}
@@ -7072,6 +7033,7 @@ void __init sched_init_smp(void)
 		}
 	}
 
+#ifdef CONFIG_X86
 	for_each_online_cpu(cpu) {
 		rq = cpu_rq(cpu);
 		for (i = 0; i < total_runqueues; i++) {
@@ -7087,6 +7049,43 @@ void __init sched_init_smp(void)
 			       rq->cpu_order[i]->cpu, per_cpu(cpu_llc_id, rq->cpu_order[i]->cpu));
 		}
 	}
+#endif
+}
+
+void __init sched_init_smp(void)
+{
+	sched_init_numa();
+
+	/*
+	 * There's no userspace yet to cause hotplug operations; hence all the
+	 * cpu masks are stable and all blatant races in the below code cannot
+	 * happen.
+	 */
+	mutex_lock(&sched_domains_mutex);
+	sched_init_domains(cpu_active_mask);
+	mutex_unlock(&sched_domains_mutex);
+
+	/* Move init over to a non-isolated CPU */
+	if (set_cpus_allowed_ptr(current, housekeeping_cpumask(HK_FLAG_DOMAIN)) < 0)
+		BUG();
+
+	local_irq_disable();
+	mutex_lock(&sched_domains_mutex);
+	lock_all_rqs();
+
+	printk(KERN_INFO "MuQSS possible/present/online CPUs: %d/%d/%d\n",
+		num_possible_cpus(), num_present_cpus(), num_online_cpus());
+
+	select_leaders();
+
+	unlock_all_rqs();
+	mutex_unlock(&sched_domains_mutex);
+
+	share_rqs();
+
+	local_irq_enable();
+
+	setup_rq_orders();
 
 	switch (rqshare) {
 		case RQSHARE_ALL:
@@ -7205,12 +7204,13 @@ void __init sched_init(void)
 		rq->iso_ticks = 0;
 		rq->iso_refractory = false;
 #ifdef CONFIG_SMP
-		rq->smp_leader = rq;
+		rq->is_leader = true;
+		rq->smp_leader = NULL;
 #ifdef CONFIG_SCHED_MC
-		rq->mc_leader = rq;
+		rq->mc_leader = NULL;
 #endif
 #ifdef CONFIG_SCHED_SMT
-		rq->smt_leader = rq;
+		rq->smt_leader = NULL;
 #endif
 		rq->sd = NULL;
 		rq->rd = NULL;
