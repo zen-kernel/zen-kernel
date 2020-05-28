@@ -108,12 +108,3 @@ We try to only use IST entries and the paranoid entry code for vectors
 that absolutely need the more expensive check for the GS base - and we
 generate all 'normal' entry points with the regular (faster) paranoid=0
 variant.
-
-On FSGSBASE systems, however, user space can set GS without kernel
-interaction. It means the value of GS base itself does not imply anything,
-whether a kernel value or a user space value. So, there is no longer a safe
-way to check whether the exception is entering from user mode or kernel
-mode in the paranoid entry code path. So the GS base value needs to be read
-out, saved and the kernel GS base value written. On exit, the saved GS base
-value needs to be restored unconditionally. The non-paranoid entry/exit
-code still uses SWAPGS unconditionally as the state is known.
