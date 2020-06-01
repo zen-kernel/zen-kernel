@@ -24,7 +24,19 @@ cflags-$(CONFIG_MK6)		+= -march=k6
 # Please note, that patches that add -march=athlon-xp and friends are pointless.
 # They make zero difference whatsosever to performance at this time.
 cflags-$(CONFIG_MK7)		+= -march=athlon
+cflags-$(CONFIG_MNATIVE) += $(call cc-option,-march=native)
 cflags-$(CONFIG_MK8)		+= $(call cc-option,-march=k8,-march=athlon)
+cflags-$(CONFIG_MK8SSE3)		+= $(call cc-option,-march=k8-sse3,-march=athlon)
+cflags-$(CONFIG_MK10)	+= $(call cc-option,-march=amdfam10,-march=athlon)
+cflags-$(CONFIG_MBARCELONA)	+= $(call cc-option,-march=barcelona,-march=athlon)
+cflags-$(CONFIG_MBOBCAT)	+= $(call cc-option,-march=btver1,-march=athlon)
+cflags-$(CONFIG_MJAGUAR)	+= $(call cc-option,-march=btver2,-march=athlon)
+cflags-$(CONFIG_MBULLDOZER)	+= $(call cc-option,-march=bdver1,-march=athlon)
+cflags-$(CONFIG_MPILEDRIVER)	+= $(call cc-option,-march=bdver2,-march=athlon)
+cflags-$(CONFIG_MSTEAMROLLER)	+= $(call cc-option,-march=bdver3,-march=athlon)
+cflags-$(CONFIG_MEXCAVATOR)	+= $(call cc-option,-march=bdver4,-march=athlon)
+cflags-$(CONFIG_MZEN)	+= $(call cc-option,-march=znver1,-march=athlon)
+cflags-$(CONFIG_MZEN2)	+= $(call cc-option,-march=znver2,-march=athlon)
 cflags-$(CONFIG_MCRUSOE)	+= -march=i686 -falign-functions=0 -falign-jumps=0 -falign-loops=0
 cflags-$(CONFIG_MEFFICEON)	+= -march=i686 $(call tune,pentium3) -falign-functions=0 -falign-jumps=0 -falign-loops=0
 cflags-$(CONFIG_MWINCHIPC6)	+= $(call cc-option,-march=winchip-c6,-march=i586)
@@ -33,8 +45,24 @@ cflags-$(CONFIG_MCYRIXIII)	+= $(call cc-option,-march=c3,-march=i486) -falign-fu
 cflags-$(CONFIG_MVIAC3_2)	+= $(call cc-option,-march=c3-2,-march=i686)
 cflags-$(CONFIG_MVIAC7)		+= -march=i686
 cflags-$(CONFIG_MCORE2)		+= -march=i686 $(call tune,core2)
-cflags-$(CONFIG_MATOM)		+= $(call cc-option,-march=atom,$(call cc-option,-march=core2,-march=i686)) \
-	$(call cc-option,-mtune=atom,$(call cc-option,-mtune=generic))
+cflags-$(CONFIG_MNEHALEM)	+= -march=i686 $(call tune,nehalem)
+cflags-$(CONFIG_MWESTMERE)	+= -march=i686 $(call tune,westmere)
+cflags-$(CONFIG_MSILVERMONT)	+= -march=i686 $(call tune,silvermont)
+cflags-$(CONFIG_MGOLDMONT)	+= -march=i686 $(call tune,goldmont)
+cflags-$(CONFIG_MGOLDMONTPLUS)	+= -march=i686 $(call tune,goldmont-plus)
+cflags-$(CONFIG_MSANDYBRIDGE)	+= -march=i686 $(call tune,sandybridge)
+cflags-$(CONFIG_MIVYBRIDGE)	+= -march=i686 $(call tune,ivybridge)
+cflags-$(CONFIG_MHASWELL)	+= -march=i686 $(call tune,haswell)
+cflags-$(CONFIG_MBROADWELL)	+= -march=i686 $(call tune,broadwell)
+cflags-$(CONFIG_MSKYLAKE)	+= -march=i686 $(call tune,skylake)
+cflags-$(CONFIG_MSKYLAKEX)	+= -march=i686 $(call tune,skylake-avx512)
+cflags-$(CONFIG_MCANNONLAKE)	+= -march=i686 $(call tune,cannonlake)
+cflags-$(CONFIG_MICELAKE)	+= -march=i686 $(call tune,icelake-client)
+cflags-$(CONFIG_MCASCADELAKE)	+= -march=i686 $(call tune,cascadelake)
+cflags-$(CONFIG_MCOOPERLAKE)	+= -march=i686 $(call tune,cooperlake)
+cflags-$(CONFIG_MTIGERLAKE)	+= -march=i686 $(call tune,tigerlake)
+cflags-$(CONFIG_MATOM)		+= $(call cc-option,-march=bonnell,$(call cc-option,-march=core2,-march=i686)) \
+	$(call cc-option,-mtune=bonnell,$(call cc-option,-mtune=generic))
 
 # AMD Elan support
 cflags-$(CONFIG_MELAN)		+= -march=i486
