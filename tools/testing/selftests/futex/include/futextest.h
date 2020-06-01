@@ -38,6 +38,14 @@ typedef volatile u_int32_t futex_t;
 #ifndef FUTEX_CMP_REQUEUE_PI
 #define FUTEX_CMP_REQUEUE_PI		12
 #endif
+#ifndef FUTEX_WAIT_MULTIPLE
+#define FUTEX_WAIT_MULTIPLE		13
+struct futex_wait_block {
+	futex_t *uaddr;
+	futex_t val;
+	__u32 bitset;
+};
+#endif
 #ifndef FUTEX_WAIT_REQUEUE_PI_PRIVATE
 #define FUTEX_WAIT_REQUEUE_PI_PRIVATE	(FUTEX_WAIT_REQUEUE_PI | \
 					 FUTEX_PRIVATE_FLAG)
@@ -78,6 +86,20 @@ static inline int
 futex_wait(futex_t *uaddr, futex_t val, struct timespec *timeout, int opflags)
 {
 	return futex(uaddr, FUTEX_WAIT, val, timeout, NULL, 0, opflags);
+}
+
+/**
+ * futex_wait_multiple() - block on several futexes with optional timeout
+ * @fwb:	wait block user space address
+ * @count:	number of entities at fwb
+ * @timeout:	absolute timeout
+ */
+static inline int
+futex_wait_multiple(struct futex_wait_block *fwb, int count,
+		    struct timespec *timeout, int opflags)
+{
+	return futex(fwb, FUTEX_WAIT_MULTIPLE, count, timeout, NULL, 0,
+		     opflags);
 }
 
 /**
