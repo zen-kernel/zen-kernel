@@ -13,7 +13,7 @@ extern int get_nohz_timer_target(void);
 static inline void nohz_balance_enter_idle(int cpu) { }
 #endif
 
-#ifdef CONFIG_NO_HZ_COMMON
+#if defined(CONFIG_NO_HZ_COMMON) && !defined(CONFIG_SCHED_MUQSS)
 void calc_load_nohz_start(void);
 void calc_load_nohz_remote(struct rq *rq);
 void calc_load_nohz_stop(void);
