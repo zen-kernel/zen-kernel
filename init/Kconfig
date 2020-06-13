@@ -118,6 +118,7 @@ config ZEN_INTERACTIVE
 	    Wakeup granularity.............:   1    ->   0.5  ms
 	    CPU migration cost.............:   0.5  ->   0.25 ms
 	    Bandwidth slice size...........:   5    ->   3    ms
+	    Task rebalancing threshold.....:   32   ->   128
 	    Ondemand sampling down factor..:   1    ->   5
 
 	  --- MuQSS CPU Scheduler --------------------------------
