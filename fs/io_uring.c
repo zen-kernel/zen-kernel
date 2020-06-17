@@ -6254,8 +6254,8 @@ static int io_sqe_buffer_register(struct io_ring_ctx *ctx, void __user *arg,
 
 		ret = 0;
 		if (!pages || nr_pages > got_pages) {
-			kfree(vmas);
-			kfree(pages);
+			kvfree(vmas);
+			kvfree(pages);
 			pages = kvmalloc_array(nr_pages, sizeof(struct page *),
 						GFP_KERNEL);
 			vmas = kvmalloc_array(nr_pages,
@@ -6488,11 +6488,9 @@ static int io_uring_release(struct inode *inode, struct file *file)
 static void io_uring_cancel_files(struct io_ring_ctx *ctx,
 				  struct files_struct *files)
 {
-	struct io_kiocb *req;
-	DEFINE_WAIT(wait);
-
 	while (!list_empty_careful(&ctx->inflight_list)) {
-		struct io_kiocb *cancel_req = NULL;
+		struct io_kiocb *cancel_req = NULL, *req;
+		DEFINE_WAIT(wait);
 
 		spin_lock_irq(&ctx->inflight_lock);
 		list_for_each_entry(req, &ctx->inflight_list, inflight_entry) {
@@ -6531,7 +6529,8 @@ static void io_uring_cancel_files(struct io_ring_ctx *ctx,
 			 * all we had, then we're done with this request.
 			 */
 			if (refcount_sub_and_test(2, &cancel_req->refs)) {
-				io_put_req(cancel_req);
+				io_free_req(cancel_req);
+				finish_wait(&ctx->inflight_wait, &wait);
 				continue;
 			}
 		}
@@ -6539,8 +6538,8 @@ static void io_uring_cancel_files(struct io_ring_ctx *ctx,
 		io_wq_cancel_work(ctx->io_wq, &cancel_req->work);
 		io_put_req(cancel_req);
 		schedule();
+		finish_wait(&ctx->inflight_wait, &wait);
 	}
-	finish_wait(&ctx->inflight_wait, &wait);
 }
 
 static int io_uring_flush(struct file *file, void *data)
