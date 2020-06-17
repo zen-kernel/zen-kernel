@@ -467,11 +467,11 @@ static int piix4_transaction(struct i2c_adapter *piix4_adapter)
 	if (srvrworks_csb5_delay) /* Extra delay for SERVERWORKS_CSB5 */
 		usleep_range(2000, 2100);
 	else
-		usleep_range(250, 500);
+		usleep_range(25, 50);
 
 	while ((++timeout < MAX_TIMEOUT) &&
 	       ((temp = inb_p(SMBHSTSTS)) & 0x01))
-		usleep_range(250, 500);
+		usleep_range(25, 50);
 
 	/* If the SMBus is still busy, we give up */
 	if (timeout == MAX_TIMEOUT) {
@@ -978,6 +978,11 @@ static int piix4_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	if (dev->vendor == PCI_VENDOR_ID_AMD &&
 	    dev->device == PCI_DEVICE_ID_AMD_HUDSON2_SMBUS) {
+		retval = piix4_setup_sb800(dev, id, 1);
+	}
+
+	if (dev->vendor == PCI_VENDOR_ID_AMD &&
+	    dev->device == PCI_DEVICE_ID_AMD_KERNCZ_SMBUS) {
 		retval = piix4_setup_sb800(dev, id, 1);
 	}
 
