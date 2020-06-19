@@ -1146,6 +1146,9 @@ struct btrfs_root {
 	/* Record pairs of swapped blocks for qgroup */
 	struct btrfs_qgroup_swapped_blocks swapped_blocks;
 
+	/* Used only by log trees, when logging csum items */
+	struct extent_io_tree log_csum_range;
+
 #ifdef CONFIG_BTRFS_FS_RUN_SANITY_TESTS
 	u64 alloc_bytenr;
 #endif
@@ -2512,6 +2515,7 @@ enum btrfs_reserve_flush_enum {
 	BTRFS_RESERVE_FLUSH_LIMIT,
 	BTRFS_RESERVE_FLUSH_EVICT,
 	BTRFS_RESERVE_FLUSH_ALL,
+	BTRFS_RESERVE_FLUSH_ALL_STEAL,
 };
 
 enum btrfs_flush_state {
