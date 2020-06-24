@@ -226,6 +226,7 @@ static void ast_set_vbios_color_reg(struct ast_private *ast,
 	case 3:
 	case 4:
 		color_index = TrueCModeIndex;
+		break;
 	default:
 		return;
 	}
@@ -800,6 +801,9 @@ static int ast_crtc_helper_atomic_check(struct drm_crtc *crtc,
 		DRM_ERROR("AST 1180 modesetting not supported\n");
 		return -EINVAL;
 	}
+
+	if (!state->enable)
+		return 0; /* no mode checks if CRTC is being disabled */
 
 	ast_state = to_ast_crtc_state(state);
 

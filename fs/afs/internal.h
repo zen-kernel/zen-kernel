@@ -161,6 +161,7 @@ struct afs_call {
 	bool			upgrade;	/* T to request service upgrade */
 	bool			have_reply_time; /* T if have got reply_time */
 	bool			intr;		/* T if interruptible */
+	bool			unmarshalling_error; /* T if an unmarshalling error occurred */
 	u16			service_id;	/* Actual service ID (after upgrade) */
 	unsigned int		debug_id;	/* Trace ID */
 	u32			operation_ID;	/* operation ID for an incoming call */
@@ -1128,7 +1129,7 @@ extern void afs_flat_call_destructor(struct afs_call *);
 extern void afs_send_empty_reply(struct afs_call *);
 extern void afs_send_simple_reply(struct afs_call *, const void *, size_t);
 extern int afs_extract_data(struct afs_call *, bool);
-extern int afs_protocol_error(struct afs_call *, int, enum afs_eproto_cause);
+extern int afs_protocol_error(struct afs_call *, enum afs_eproto_cause);
 
 static inline void afs_set_fc_call(struct afs_call *call, struct afs_fs_cursor *fc)
 {
