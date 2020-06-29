@@ -395,7 +395,7 @@ i2c_dw_read(struct dw_i2c_dev *dev)
 			*buf = dw_readl(dev, DW_IC_DATA_CMD);
 			if (flags & I2C_M_RECV_LEN) {
 				/* Ensure length byte is a valid value */
-				if (*buf <= I2C_SMBUS_BLOCK_MAX && *buf > 0)
+				if (*buf <= 255 && *buf > 0)
 					len = i2c_dw_recv_len(dev, *buf);
 				msgs[dev->msg_read_idx].flags &= ~I2C_M_RECV_LEN;
 			}
