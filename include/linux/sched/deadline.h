@@ -4,6 +4,11 @@
 
 #ifdef CONFIG_SCHED_BMQ
 #define __tsk_deadline(p)	(0UL)
+
+static inline int dl_task(struct task_struct *p)
+{
+	return 0;
+}
 #endif
 
 #else
