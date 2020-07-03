@@ -362,7 +362,6 @@ i2c_dw_recv_len(struct dw_i2c_dev *dev, u8 len)
 	len += (flags & I2C_CLIENT_PEC) ? 2 : 1;
 	dev->tx_buf_len = len - min_t(u8, len, dev->rx_outstanding);
 	msgs[dev->msg_read_idx].len = len;
-	msgs[dev->msg_read_idx].flags &= ~I2C_M_RECV_LEN;
 
 	return len;
 }
@@ -394,10 +393,11 @@ i2c_dw_read(struct dw_i2c_dev *dev)
 			u32 flags = msgs[dev->msg_read_idx].flags;
 
 			*buf = dw_readl(dev, DW_IC_DATA_CMD);
-			/* Ensure length byte is a valid value */
-			if (flags & I2C_M_RECV_LEN &&
-				*buf <= I2C_SMBUS_BLOCK_MAX && *buf > 0) {
-				len = i2c_dw_recv_len(dev, *buf);
+			if (flags & I2C_M_RECV_LEN) {
+				/* Ensure length byte is a valid value */
+				if (*buf <= 255 && *buf > 0)
+					len = i2c_dw_recv_len(dev, *buf);
+				msgs[dev->msg_read_idx].flags &= ~I2C_M_RECV_LEN;
 			}
 			buf++;
 			dev->rx_outstanding--;
