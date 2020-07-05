@@ -394,10 +394,12 @@ i2c_dw_read(struct dw_i2c_dev *dev)
 			u32 flags = msgs[dev->msg_read_idx].flags;
 
 			*buf = dw_readl(dev, DW_IC_DATA_CMD);
-			/* Ensure length byte is a valid value */
-			if (flags & I2C_M_RECV_LEN &&
-				*buf <= I2C_SMBUS_BLOCK_MAX && *buf > 0) {
-				len = i2c_dw_recv_len(dev, *buf);
+			if (flags & I2C_M_RECV_LEN) {
+				/* Ensure length byte is a valid value */
+				if (*buf <= I2C_SMBUS_BLOCK_MAX && *buf > 0)
+					len = i2c_dw_recv_len(dev, *buf);
+				else
+					len = i2c_dw_recv_len(dev, len);
 			}
 			buf++;
 			dev->rx_outstanding--;
