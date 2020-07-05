@@ -982,11 +982,6 @@ static int piix4_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		retval = piix4_setup_sb800(dev, id, 1);
 	}
 
-	if (dev->vendor == PCI_VENDOR_ID_AMD &&
-	    dev->device == PCI_DEVICE_ID_AMD_KERNCZ_SMBUS) {
-		retval = piix4_setup_sb800(dev, id, 1);
-	}
-
 	if (retval > 0) {
 		/* Try to add the aux adapter if it exists,
 		 * piix4_add_adapter will clean up if this fails */
