@@ -20,7 +20,7 @@
 
 #ifdef CONFIG_SCHED_ALT
 /* +/- priority levels from the base priority */
-#define MAX_PRIORITY_ADJ	4
+#define MAX_PRIORITY_ADJ	7
 #endif
 
 /*
