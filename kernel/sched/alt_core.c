@@ -78,7 +78,7 @@ int sched_yield_type __read_mostly = 1;
 
 #define rq_switch_time(rq)	((rq)->clock - (rq)->last_ts_switch)
 #define boost_threshold(p)	(sched_timeslice_ns >>\
-				 (10 - MAX_PRIORITY_ADJ -  (p)->boost_prio))
+				 (15 - MAX_PRIORITY_ADJ -  (p)->boost_prio))
 
 static inline void boost_task(struct task_struct *p)
 {
@@ -185,7 +185,7 @@ static inline void update_sched_rq_watermark(struct rq *rq)
 
 static inline int task_sched_prio(struct task_struct *p)
 {
-	return (p->prio < MAX_RT_PRIO)? p->prio : p->prio + p->boost_prio;
+	return (p->prio < MAX_RT_PRIO)? p->prio : MAX_RT_PRIO / 2 + (p->prio + p->boost_prio) / 2;
 }
 
 #include "bmq_imp.h"
