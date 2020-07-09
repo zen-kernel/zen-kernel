@@ -1120,10 +1120,16 @@ static int nvme_identify_ns_descs(struct nvme_ctrl *ctrl, unsigned nsid,
 		dev_warn(ctrl->device,
 			"Identify Descriptors failed (%d)\n", status);
 		 /*
-		  * Don't treat an error as fatal, as we potentially already
-		  * have a NGUID or EUI-64.
+		  * Don't treat non-retryable errors as fatal, as we potentially
+		  * already have a NGUID or EUI-64.  If we failed with DNR set,
+		  * we want to silently ignore the error as we can still
+		  * identify the device, but if the status has DNR set, we want
+		  * to propagate the error back specifically for the disk
+		  * revalidation flow to make sure we don't abandon the
+		  * device just because of a temporal retry-able error (such
+		  * as path of transport errors).
 		  */
-		if (status > 0 && !(status & NVME_SC_DNR))
+		if (status > 0 && (status & NVME_SC_DNR))
 			status = 0;
 		goto free_data;
 	}
@@ -1910,14 +1916,6 @@ static void __nvme_revalidate_disk(struct gendisk *disk, struct nvme_id_ns *id)
 	if (ns->head->disk) {
 		nvme_update_disk_info(ns->head->disk, ns, id);
 		blk_queue_stack_limits(ns->head->disk->queue, ns->queue);
-		if (bdi_cap_stable_pages_required(ns->queue->backing_dev_info)) {
-			struct backing_dev_info *info =
-				ns->head->disk->queue->backing_dev_info;
-
-                        info->capabilities |= BDI_CAP_STABLE_WRITES;
-		}
-
-		revalidate_disk(ns->head->disk);
 	}
 #endif
 }

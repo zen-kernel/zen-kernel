@@ -667,15 +667,6 @@ static int enetc_pf_set_features(struct net_device *ndev,
 				 netdev_features_t features)
 {
 	netdev_features_t changed = ndev->features ^ features;
-	struct enetc_ndev_priv *priv = netdev_priv(ndev);
-
-	if (changed & NETIF_F_HW_VLAN_CTAG_RX)
-		enetc_enable_rxvlan(&priv->si->hw, 0,
-				    !!(features & NETIF_F_HW_VLAN_CTAG_RX));
-
-	if (changed & NETIF_F_HW_VLAN_CTAG_TX)
-		enetc_enable_txvlan(&priv->si->hw, 0,
-				    !!(features & NETIF_F_HW_VLAN_CTAG_TX));
 
 	if (changed & NETIF_F_LOOPBACK)
 		enetc_set_loopback(ndev, !!(features & NETIF_F_LOOPBACK));
@@ -738,6 +729,14 @@ static void enetc_pf_netdev_setup(struct enetc_si *si, struct net_device *ndev,
 
 	if (si->hw_features & ENETC_SI_F_QBV)
 		priv->active_offloads |= ENETC_F_QBV;
+
+	if (si->hw_features & ENETC_SI_F_PSFP) {
+		priv->active_offloads |= ENETC_F_QCI;
+		ndev->features |= NETIF_F_HW_TC;
+		ndev->hw_features |= NETIF_F_HW_TC;
+		enetc_get_max_cap(priv);
+		enetc_psfp_enable(&si->hw);
+	}
 
 	/* pick up primary MAC address from SI */
 	enetc_get_primary_mac_addr(&si->hw, ndev->dev_addr);
