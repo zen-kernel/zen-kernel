@@ -472,14 +472,11 @@ static void i2c_hid_get_input(struct i2c_hid *ihid)
 	int ret;
 	u32 ret_size;
 	int size = le16_to_cpu(ihid->hdesc.wMaxInputLength);
-	u16 flags;
 
 	if (size > ihid->bufsize)
 		size = ihid->bufsize;
 
-	/* Try to do a block read if the size fits in one byte */
-	flags = size > 255 ? I2C_M_RD : I2C_M_RD | I2C_M_RECV_LEN;
-	ret = i2c_transfer_buffer_flags(ihid->client, ihid->inbuf, size, flags);
+	ret = i2c_master_recv(ihid->client, ihid->inbuf, size);
 	if (ret != size) {
 		if (ret < 0)
 			return;
