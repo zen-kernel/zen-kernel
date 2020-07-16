@@ -31,6 +31,7 @@
 #include <linux/wait_bit.h>
 
 #include <linux/kcov.h>
+#include <linux/scs.h>
 
 #include <asm/switch_to.h>
 
@@ -5281,6 +5282,7 @@ void init_idle(struct task_struct *idle, int cpu)
 	idle->flags |= PF_IDLE;
 	sched_queue_init_idle(rq, idle);
 
+	scs_task_reset(idle);
 	kasan_unpoison_task_stack(idle);
 
 #ifdef CONFIG_SMP
