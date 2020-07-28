@@ -157,6 +157,11 @@ struct rq {
 	unsigned int ttwu_count;
 	unsigned int ttwu_local;
 #endif /* CONFIG_SCHEDSTATS */
+
+#ifdef CONFIG_SMP
+	struct llist_head	wake_list;
+#endif
+
 #ifdef CONFIG_CPU_IDLE
 	/* Must be inspected within a rcu lock section */
 	struct cpuidle_state *idle_state;
@@ -218,6 +223,9 @@ static inline int best_mask_cpu(int cpu, const cpumask_t *cpumask)
 		__best_mask_cpu(cpu, cpumask, &(per_cpu(sched_cpu_affinity_masks, cpu)[0]));
 }
 
+extern void sched_ttwu_pending(void);
+#else  /* !CONFIG_SMP */
+static inline void sched_ttwu_pending(void) { }
 #endif /* CONFIG_SMP */
 
 #ifndef arch_scale_freq_tick
@@ -336,8 +344,6 @@ static inline bool task_running(struct task_struct *p)
 }
 
 extern struct static_key_false sched_schedstats;
-
-static inline void sched_ttwu_pending(void) { }
 
 #ifdef CONFIG_CPU_IDLE
 static inline void idle_set_state(struct rq *rq,
