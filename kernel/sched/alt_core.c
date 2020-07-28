@@ -336,6 +336,20 @@ struct rq *task_rq_lock(struct task_struct *p, struct rq_flags *rf)
 	}
 }
 
+static inline void
+rq_lock_irqsave(struct rq *rq, struct rq_flags *rf)
+	__acquires(rq->lock)
+{
+	raw_spin_lock_irqsave(&rq->lock, rf->flags);
+}
+
+static inline void
+rq_unlock_irqrestore(struct rq *rq, struct rq_flags *rf)
+	__releases(rq->lock)
+{
+	raw_spin_unlock_irqrestore(&rq->lock, rf->flags);
+}
+
 /*
  * RQ-clock updating methods:
  */
@@ -770,6 +784,34 @@ void wake_up_nohz_cpu(int cpu)
 		wake_up_idle_cpu(cpu);
 }
 
+static inline bool got_nohz_idle_kick(void)
+{
+	int cpu = smp_processor_id();
+
+	/* TODO: need to support nohz_flag
+	if (!(atomic_read(nohz_flags(cpu)) & NOHZ_KICK_MASK))
+		return false;
+	*/
+
+	if (idle_cpu(cpu) && !need_resched())
+		return true;
+
+	/*
+	 * We can't run Idle Load Balance on this CPU for this time so we
+	 * cancel it and clear NOHZ_BALANCE_KICK
+	 */
+	/* TODO: need to support nohz_flag
+	atomic_andnot(NOHZ_KICK_MASK, nohz_flags(cpu));
+	*/
+	return false;
+}
+
+#else /* CONFIG_NO_HZ_COMMON */
+
+static inline bool got_nohz_idle_kick(void)
+{
+	return false;
+}
 #endif /* CONFIG_NO_HZ_COMMON */
 #endif /* CONFIG_SMP */
 
@@ -1127,6 +1169,12 @@ static int migration_cpu_stop(void *data)
 	 * be on another CPU but it doesn't matter.
 	 */
 	local_irq_disable();
+	/*
+	 * We need to explicitly wake pending tasks before running
+	 * __migrate_task() such that we will not miss enforcing cpus_ptr
+	 * during wakeups, see set_cpus_allowed_ptr()'s TASK_WAKING test.
+	 */
+	sched_ttwu_pending();
 
 	raw_spin_lock(&p->pi_lock);
 	raw_spin_lock(&rq->lock);
@@ -1608,6 +1656,26 @@ static int ttwu_remote(struct task_struct *p, int wake_flags)
 }
 
 #ifdef CONFIG_SMP
+void sched_ttwu_pending(void)
+{
+	struct rq *rq = this_rq();
+	struct llist_node *llist = llist_del_all(&rq->wake_list);
+	struct task_struct *p, *t;
+	struct rq_flags rf;
+
+	if (!llist)
+		return;
+
+	rq_lock_irqsave(rq, &rf);
+	update_rq_clock(rq);
+
+	llist_for_each_entry_safe(p, t, llist, wake_entry)
+		ttwu_do_activate(rq, p, p->sched_remote_wakeup ? WF_MIGRATED : 0);
+	check_preempt_curr(rq);
+
+	rq_unlock_irqrestore(rq, &rf);
+}
+
 void scheduler_ipi(void)
 {
 	/*
@@ -1617,11 +1685,36 @@ void scheduler_ipi(void)
 	 */
 	preempt_fold_need_resched();
 
-	if (!idle_cpu(smp_processor_id()) || need_resched())
+	if (llist_empty(&this_rq()->wake_list) && !got_nohz_idle_kick())
 		return;
 
 	irq_enter();
+	sched_ttwu_pending();
+
+	/*
+	 * Check if someone kicked us for doing the nohz idle load balance.
+	 */
+	if (unlikely(got_nohz_idle_kick())) {
+		/* TODO need to kick off balance
+		this_rq()->idle_balance = 1;
+		raise_softirq_irqoff(SCHED_SOFTIRQ);
+		*/
+	}
 	irq_exit();
+}
+
+static void ttwu_queue_remote(struct task_struct *p, int cpu, int wake_flags)
+{
+	struct rq *rq = cpu_rq(cpu);
+
+	p->sched_remote_wakeup = !!(wake_flags & WF_MIGRATED);
+
+	if (llist_add(&p->wake_entry, &cpu_rq(cpu)->wake_list)) {
+		if (!set_nr_if_polling(rq->idle))
+			smp_send_reschedule(cpu);
+		else
+			trace_sched_wake_idle_without_ipi(cpu);
+	}
 }
 
 void wake_up_if_idle(int cpu)
@@ -1657,6 +1750,14 @@ bool cpus_share_cache(int this_cpu, int that_cpu)
 static inline void ttwu_queue(struct task_struct *p, int cpu, int wake_flags)
 {
 	struct rq *rq = cpu_rq(cpu);
+
+#if defined(CONFIG_SMP)
+	if (!cpus_share_cache(smp_processor_id(), cpu)) {
+		sched_clock_cpu(cpu); /* Sync clocks across CPUs */
+		ttwu_queue_remote(p, cpu, wake_flags);
+		return;
+	}
+#endif
 
 	raw_spin_lock(&rq->lock);
 	update_rq_clock(rq);
@@ -3890,7 +3991,20 @@ int task_prio(const struct task_struct *p)
  */
 int idle_cpu(int cpu)
 {
-	return cpu_curr(cpu) == cpu_rq(cpu)->idle;
+	struct rq *rq = cpu_rq(cpu);
+
+	if (rq->curr != rq->idle)
+		return 0;
+
+	if (rq->nr_running)
+		return 0;
+
+#ifdef CONFIG_SMP
+	if (!llist_empty(&rq->wake_list))
+		return 0;
+#endif
+
+	return 1;
 }
 
 /**
@@ -5426,6 +5540,9 @@ int sched_cpu_dying(unsigned int cpu)
 	struct rq *rq = cpu_rq(cpu);
 	unsigned long flags;
 
+	/* Handle pending wakeups and then migrate everything off */
+	sched_ttwu_pending();
+
 	sched_tick_stop(cpu);
 	raw_spin_lock_irqsave(&rq->lock, flags);
 	set_rq_offline(rq);
@@ -5453,7 +5570,7 @@ static void sched_init_topology_cpumask_early(void)
 			&(per_cpu(sched_cpu_affinity_masks, cpu)[0]);
 		per_cpu(sched_cpu_affinity_end_mask, cpu) =
 			&(per_cpu(sched_cpu_affinity_masks, cpu)[1]);
-		per_cpu(sd_llc_id, cpu) = cpu;
+		/*per_cpu(sd_llc_id, cpu) = cpu;*/
 	}
 }
 
