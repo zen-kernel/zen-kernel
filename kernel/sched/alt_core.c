@@ -807,6 +807,34 @@ static inline bool got_nohz_idle_kick(void)
 	return false;
 }
 
+static void nohz_csd_func(void *info)
+{
+	struct rq *rq = info;
+
+	if (got_nohz_idle_kick()) {
+		/* TODO need to kick off balance
+		rq->idle_balance = 1;
+		raise_softirq_irqoff(SCHED_SOFTIRQ);
+		*/
+	}
+	/*
+	int cpu = cpu_of(rq);
+	unsigned int flags;
+	*/
+
+	/*
+	 * Release the rq::nohz_csd.
+	flags = atomic_fetch_andnot(NOHZ_KICK_MASK, nohz_flags(cpu));
+	WARN_ON(!(flags & NOHZ_KICK_MASK));
+
+	rq->idle_balance = idle_cpu(cpu);
+	if (rq->idle_balance && !need_resched()) {
+		rq->nohz_idle_balance = flags;
+		raise_softirq_irqoff(SCHED_SOFTIRQ);
+	}
+	 */
+}
+
 #else /* CONFIG_NO_HZ_COMMON */
 
 static inline bool got_nohz_idle_kick(void)
@@ -820,6 +848,14 @@ static inline void check_preempt_curr(struct rq *rq)
 {
 	if (sched_rq_first_task(rq) != rq->curr)
 		resched_curr(rq);
+}
+
+static inline void
+rq_csd_init(struct rq *rq, call_single_data_t *csd, smp_call_func_t func)
+{
+	csd->flags = 0;
+	csd->func = func;
+	csd->info = rq;
 }
 
 #ifdef CONFIG_SCHED_HRTICK
@@ -938,9 +974,7 @@ void hrtick_start(struct rq *rq, u64 delay)
 static void hrtick_rq_init(struct rq *rq)
 {
 #ifdef CONFIG_SMP
-	rq->hrtick_csd.flags = 0;
-	rq->hrtick_csd.func = __hrtick_start;
-	rq->hrtick_csd.info = rq;
+	rq_csd_init(rq, &rq->hrtick_csd, __hrtick_start);
 #endif
 
 	hrtimer_init(&rq->hrtick_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_HARD);
@@ -1677,6 +1711,11 @@ void sched_ttwu_pending(void)
 	rq_unlock_irqrestore(rq, &rf);
 }
 
+static void wake_csd_func(void *info)
+{
+	sched_ttwu_pending();
+}
+
 void scheduler_ipi(void)
 {
 	/*
@@ -1685,23 +1724,6 @@ void scheduler_ipi(void)
 	 * this IPI.
 	 */
 	preempt_fold_need_resched();
-
-	if (llist_empty(&this_rq()->wake_list) && !got_nohz_idle_kick())
-		return;
-
-	irq_enter();
-	sched_ttwu_pending();
-
-	/*
-	 * Check if someone kicked us for doing the nohz idle load balance.
-	 */
-	if (unlikely(got_nohz_idle_kick())) {
-		/* TODO need to kick off balance
-		this_rq()->idle_balance = 1;
-		raise_softirq_irqoff(SCHED_SOFTIRQ);
-		*/
-	}
-	irq_exit();
 }
 
 static void ttwu_queue_remote(struct task_struct *p, int cpu, int wake_flags)
@@ -1710,9 +1732,9 @@ static void ttwu_queue_remote(struct task_struct *p, int cpu, int wake_flags)
 
 	p->sched_remote_wakeup = !!(wake_flags & WF_MIGRATED);
 
-	if (llist_add(&p->wake_entry, &cpu_rq(cpu)->wake_list)) {
+	if (llist_add(&p->wake_entry, &rq->wake_list)) {
 		if (!set_nr_if_polling(rq->idle))
-			smp_send_reschedule(cpu);
+			smp_call_function_single_async(cpu, &rq->wake_csd);
 		else
 			trace_sched_wake_idle_without_ipi(cpu);
 	}
@@ -5755,8 +5777,15 @@ void __init sched_init(void)
 #endif
 #endif
 		rq->nr_switches = 0;
-		atomic_set(&rq->nr_iowait, 0);
+
+#ifdef CONFIG_NO_HZ_COMMON
+		rq_csd_init(rq, &rq->nohz_csd, nohz_csd_func);
+#endif
+
 		hrtick_rq_init(rq);
+		atomic_set(&rq->nr_iowait, 0);
+
+		rq_csd_init(rq, &rq->nohz_csd, nohz_csd_func);
 	}
 #ifdef CONFIG_SMP
 	/* Set rq->online for cpu 0 */
