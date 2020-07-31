@@ -166,6 +166,13 @@ struct rq {
 	/* Must be inspected within a rcu lock section */
 	struct cpuidle_state *idle_state;
 #endif
+
+#ifdef CONFIG_NO_HZ_COMMON
+#ifdef CONFIG_SMP
+	call_single_data_t	nohz_csd;
+#endif
+	atomic_t		nohz_flags;
+#endif /* CONFIG_NO_HZ_COMMON */
 };
 
 extern unsigned long calc_load_update;
