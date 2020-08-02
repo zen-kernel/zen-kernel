@@ -103,7 +103,6 @@ struct rq {
 	bool online;
 
 	unsigned int		ttwu_pending;
-	struct llist_head	wake_list;
 	unsigned char		nohz_idle_balance;
 
 #ifdef CONFIG_HAVE_SCHED_AVG_IRQ
@@ -231,12 +230,10 @@ static inline int best_mask_cpu(int cpu, const cpumask_t *cpumask)
 		__best_mask_cpu(cpu, cpumask, &(per_cpu(sched_cpu_affinity_masks, cpu)[0]));
 }
 
-extern void sched_ttwu_pending(void);
 extern void flush_smp_call_function_from_idle(void);
 
 #else  /* !CONFIG_SMP */
 static inline void flush_smp_call_function_from_idle(void) { }
-static inline void sched_ttwu_pending(void) { }
 #endif
 
 #ifndef arch_scale_freq_tick
