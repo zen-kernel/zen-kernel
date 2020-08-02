@@ -763,8 +763,9 @@ struct task_struct {
 	unsigned int			flags;
 	unsigned int			ptrace;
 
-#if defined(CONFIG_SMP)
+#ifdef CONFIG_SMP
 	struct llist_node		wake_entry;
+	unsigned int			wake_entry_type;
 #endif
 #if defined(CONFIG_SMP) || defined(CONFIG_SCHED_ALT)
 	int				on_cpu;
