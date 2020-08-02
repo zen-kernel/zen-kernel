@@ -793,7 +793,6 @@ static void nohz_csd_func(void *info)
 
 	/*
 	 * Release the rq::nohz_csd.
-	 */
 	flags = atomic_fetch_andnot(NOHZ_KICK_MASK, nohz_flags(cpu));
 	WARN_ON(!(flags & NOHZ_KICK_MASK));
 
@@ -1678,6 +1677,16 @@ void sched_ttwu_pending(void)
 static void wake_csd_func(void *info)
 {
 	sched_ttwu_pending();
+}
+
+void send_call_function_single_ipi(int cpu)
+{
+	struct rq *rq = cpu_rq(cpu);
+
+	if (!set_nr_if_polling(rq->idle))
+		arch_send_call_function_single_ipi(cpu);
+	else
+		trace_sched_wake_idle_without_ipi(cpu);
 }
 
 /*
