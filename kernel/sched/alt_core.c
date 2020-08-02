@@ -1172,7 +1172,7 @@ static int migration_cpu_stop(void *data)
 	 * __migrate_task() such that we will not miss enforcing cpus_ptr
 	 * during wakeups, see set_cpus_allowed_ptr()'s TASK_WAKING test.
 	 */
-	sched_ttwu_pending();
+	flush_smp_call_function_from_idle();
 
 	raw_spin_lock(&p->pi_lock);
 	raw_spin_lock(&rq->lock);
@@ -1654,14 +1654,13 @@ static int ttwu_remote(struct task_struct *p, int wake_flags)
 }
 
 #ifdef CONFIG_SMP
-void sched_ttwu_pending(void)
+void sched_ttwu_pending(void *arg)
 {
+	struct llist_node *llist = arg;
 	struct rq *rq = this_rq();
-	struct llist_node *llist;
 	struct task_struct *p, *t;
 	struct rq_flags rf;
 
-	llist = llist_del_all(&rq->wake_list);
 	if (!llist)
 		return;
 
@@ -1680,11 +1679,6 @@ void sched_ttwu_pending(void)
 	check_preempt_curr(rq);
 
 	rq_unlock_irqrestore(rq, &rf);
-}
-
-static void wake_csd_func(void *info)
-{
-	sched_ttwu_pending();
 }
 
 void send_call_function_single_ipi(int cpu)
@@ -1710,12 +1704,7 @@ static void __ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags
 	p->sched_remote_wakeup = !!(wake_flags & WF_MIGRATED);
 
 	WRITE_ONCE(rq->ttwu_pending, 1);
-	if (llist_add(&p->wake_entry, &rq->wake_list)) {
-		if (!set_nr_if_polling(rq->idle))
-			smp_call_function_single_async(cpu, &rq->wake_csd);
-		else
-			trace_sched_wake_idle_without_ipi(cpu);
-	}
+	__smp_call_single_queue(cpu, &p->wake_entry);
 }
 
 static inline bool ttwu_queue_cond(int cpu, int wake_flags)
@@ -2137,6 +2126,9 @@ static inline void __sched_fork(unsigned long clone_flags, struct task_struct *p
 
 #ifdef CONFIG_COMPACTION
 	p->capture_control = NULL;
+#endif
+#ifdef CONFIG_SMP
+	p->wake_entry_type = CSD_TYPE_TTWU;
 #endif
 }
 
@@ -5628,9 +5620,8 @@ int sched_cpu_dying(unsigned int cpu)
 	unsigned long flags;
 
 	/* Handle pending wakeups and then migrate everything off */
-	sched_ttwu_pending();
-
 	sched_tick_stop(cpu);
+
 	raw_spin_lock_irqsave(&rq->lock, flags);
 	set_rq_offline(rq);
 	migrate_tasks(rq);
