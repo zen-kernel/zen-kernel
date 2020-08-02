@@ -785,45 +785,15 @@ void wake_up_nohz_cpu(int cpu)
 		wake_up_idle_cpu(cpu);
 }
 
-static inline bool got_nohz_idle_kick(void)
-{
-	int cpu = smp_processor_id();
-
-	/* TODO: need to support nohz_flag
-	if (!(atomic_read(nohz_flags(cpu)) & NOHZ_KICK_MASK))
-		return false;
-	*/
-
-	if (idle_cpu(cpu) && !need_resched())
-		return true;
-
-	/*
-	 * We can't run Idle Load Balance on this CPU for this time so we
-	 * cancel it and clear NOHZ_BALANCE_KICK
-	 */
-	/* TODO: need to support nohz_flag
-	atomic_andnot(NOHZ_KICK_MASK, nohz_flags(cpu));
-	*/
-	return false;
-}
-
 static void nohz_csd_func(void *info)
 {
 	struct rq *rq = info;
-
-	if (got_nohz_idle_kick()) {
-		/* TODO need to kick off balance
-		rq->idle_balance = 1;
-		raise_softirq_irqoff(SCHED_SOFTIRQ);
-		*/
-	}
-	/*
 	int cpu = cpu_of(rq);
 	unsigned int flags;
-	*/
 
 	/*
 	 * Release the rq::nohz_csd.
+	 */
 	flags = atomic_fetch_andnot(NOHZ_KICK_MASK, nohz_flags(cpu));
 	WARN_ON(!(flags & NOHZ_KICK_MASK));
 
@@ -835,12 +805,6 @@ static void nohz_csd_func(void *info)
 	 */
 }
 
-#else /* CONFIG_NO_HZ_COMMON */
-
-static inline bool got_nohz_idle_kick(void)
-{
-	return false;
-}
 #endif /* CONFIG_NO_HZ_COMMON */
 #endif /* CONFIG_SMP */
 
