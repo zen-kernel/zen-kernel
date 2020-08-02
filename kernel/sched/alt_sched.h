@@ -231,9 +231,12 @@ static inline int best_mask_cpu(int cpu, const cpumask_t *cpumask)
 }
 
 extern void sched_ttwu_pending(void);
+extern void flush_smp_call_function_from_idle(void);
+
 #else  /* !CONFIG_SMP */
+static inline void flush_smp_call_function_from_idle(void) { }
 static inline void sched_ttwu_pending(void) { }
-#endif /* CONFIG_SMP */
+#endif
 
 #ifndef arch_scale_freq_tick
 static __always_inline
