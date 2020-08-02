@@ -102,6 +102,7 @@ struct rq {
 	int cpu;		/* cpu of this runqueue */
 	bool online;
 
+	unsigned int		ttwu_pending;
 	struct llist_head	wake_list;
 	unsigned char		nohz_idle_balance;
 
