@@ -102,6 +102,9 @@ struct rq {
 	int cpu;		/* cpu of this runqueue */
 	bool online;
 
+	struct llist_head	wake_list;
+	unsigned char		nohz_idle_balance;
+
 #ifdef CONFIG_HAVE_SCHED_AVG_IRQ
 	struct sched_avg	avg_irq;
 #endif
@@ -158,10 +161,6 @@ struct rq {
 	unsigned int ttwu_count;
 	unsigned int ttwu_local;
 #endif /* CONFIG_SCHEDSTATS */
-
-#ifdef CONFIG_SMP
-	struct llist_head	wake_list;
-#endif
 
 #ifdef CONFIG_CPU_IDLE
 	/* Must be inspected within a rcu lock section */
