@@ -2230,6 +2230,7 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 	}
 	raw_spin_unlock(&rq->lock);
 
+	rseq_migrate(p);
 	/*
 	 * We're setting the CPU for the first time, we don't migrate,
 	 * so use __set_task_cpu().
@@ -2341,6 +2342,7 @@ void wake_up_new_task(struct task_struct *p)
 
 	rq = cpu_rq(select_task_rq(p));
 #ifdef CONFIG_SMP
+	rseq_migrate(p);
 	/*
 	 * Fork balancing, do it here and not earlier because:
 	 * - cpus_ptr can change in the fork path
