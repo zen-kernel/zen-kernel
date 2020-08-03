@@ -478,9 +478,11 @@ static void *grab_mapping_entry(struct xa_state *xas,
 {
 	unsigned long index = xas->xa_index;
 	bool pmd_downgrade = false; /* splitting PMD entry into PTE entries? */
+	int populated;
 	void *entry;
 
 retry:
+	populated = 0;
 	xas_lock_irq(xas);
 	entry = get_unlocked_entry(xas, order);
 
@@ -526,6 +528,8 @@ retry:
 		xas_store(xas, NULL);	/* undo the PMD join */
 		dax_wake_entry(xas, entry, true);
 		mapping->nrexceptional--;
+		if (mapping_empty(mapping))
+			populated = -1;
 		entry = NULL;
 		xas_set(xas, index);
 	}
@@ -541,11 +545,17 @@ retry:
 		dax_lock_entry(xas, entry);
 		if (xas_error(xas))
 			goto out_unlock;
+		if (mapping_empty(mapping))
+			populated++;
 		mapping->nrexceptional++;
 	}
 
 out_unlock:
 	xas_unlock_irq(xas);
+	if (populated == -1)
+		inode_pages_clear(mapping->host);
+	else if (populated == 1)
+		inode_pages_set(mapping->host);
 	if (xas_nomem(xas, mapping_gfp_mask(mapping) & ~__GFP_HIGHMEM))
 		goto retry;
 	if (xas->xa_node == XA_ERROR(-ENOMEM))
@@ -631,6 +641,7 @@ static int __dax_invalidate_entry(struct address_space *mapping,
 					  pgoff_t index, bool trunc)
 {
 	XA_STATE(xas, &mapping->i_pages, index);
+	bool empty = false;
 	int ret = 0;
 	void *entry;
 
@@ -645,10 +656,13 @@ static int __dax_invalidate_entry(struct address_space *mapping,
 	dax_disassociate_entry(entry, mapping, trunc);
 	xas_store(&xas, NULL);
 	mapping->nrexceptional--;
+	empty = mapping_empty(mapping);
 	ret = 1;
 out:
 	put_unlocked_entry(&xas, entry);
 	xas_unlock_irq(&xas);
+	if (empty)
+		inode_pages_clear(mapping->host);
 	return ret;
 }
 

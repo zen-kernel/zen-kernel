@@ -41,8 +41,8 @@ else
 fi
 
 UTS_VERSION="#$VERSION"
-CONFIG_FLAGS=""
-if [ -n "$SMP" ] ; then CONFIG_FLAGS="SMP"; fi
+CONFIG_FLAGS="ZEN"
+if [ -n "$SMP" ] ; then CONFIG_FLAGS="$CONFIG_FLAGS SMP"; fi
 if [ -n "$PREEMPT" ] ; then CONFIG_FLAGS="$CONFIG_FLAGS PREEMPT"; fi
 if [ -n "$PREEMPT_RT" ] ; then CONFIG_FLAGS="$CONFIG_FLAGS PREEMPT_RT"; fi
 
