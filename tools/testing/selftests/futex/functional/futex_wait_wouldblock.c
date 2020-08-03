@@ -12,6 +12,7 @@
  *
  * HISTORY
  *      2009-Nov-14: Initial version by Gowrishankar <gowrishankar.m@in.ibm.com>
+ *      2019-Dec-13: Add WAIT_MULTIPLE test by Krisman <krisman@collabora.com>
  *
  *****************************************************************************/
 
@@ -40,6 +41,7 @@ int main(int argc, char *argv[])
 {
 	struct timespec to = {.tv_sec = 0, .tv_nsec = timeout_ns};
 	futex_t f1 = FUTEX_INITIALIZER;
+	struct futex_wait_block fwb = {&f1, f1+1, 0};
 	int res, ret = RET_PASS;
 	int c;
 
@@ -61,7 +63,7 @@ int main(int argc, char *argv[])
 	}
 
 	ksft_print_header();
-	ksft_set_plan(1);
+	ksft_set_plan(2);
 	ksft_print_msg("%s: Test the unexpected futex value in FUTEX_WAIT\n",
 	       basename(argv[0]));
 
@@ -71,8 +73,30 @@ int main(int argc, char *argv[])
 		fail("futex_wait returned: %d %s\n",
 		     res ? errno : res, res ? strerror(errno) : "");
 		ret = RET_FAIL;
-	}
+	} else
+		ksft_test_result_pass("futex_wait wouldblock succeeds\n");
 
-	print_result(TEST_NAME, ret);
+	info("Calling futex_wait_multiple on f1: %u @ %p with val=%u\n",
+	     f1, &f1, f1+1);
+	res = futex_wait_multiple(&fwb, 1, NULL, FUTEX_PRIVATE_FLAG);
+
+#ifdef __ILP32__
+	if (res != -1 || errno != ENOSYS) {
+		ksft_test_result_fail("futex_wait_multiple returned %d\n",
+				      res < 0 ? errno : res);
+		ret = RET_FAIL;
+	} else {
+		ksft_test_result_skip("futex_wait_multiple not supported at x32\n");
+	}
+#else
+	if (!res || errno != EWOULDBLOCK) {
+		ksft_test_result_fail("futex_wait_multiple returned %d\n",
+				      res < 0 ? errno : res);
+		ret = RET_FAIL;
+	}
+	ksft_test_result_pass("futex_wait_multiple wouldblock succeeds\n");
+#endif /* __ILP32__ */
+
+	ksft_print_cnts();
 	return ret;
 }
