@@ -41,8 +41,31 @@ static void espintcp_rcv(struct strparser *strp, struct sk_buff *skb)
 	struct espintcp_ctx *ctx = container_of(strp, struct espintcp_ctx,
 						strp);
 	struct strp_msg *rxm = strp_msg(skb);
+	int len = rxm->full_len - 2;
 	u32 nonesp_marker;
 	int err;
+
+	/* keepalive packet? */
+	if (unlikely(len == 1)) {
+		u8 data;
+
+		err = skb_copy_bits(skb, rxm->offset + 2, &data, 1);
+		if (err < 0) {
+			kfree_skb(skb);
+			return;
+		}
+
+		if (data == 0xff) {
+			kfree_skb(skb);
+			return;
+		}
+	}
+
+	/* drop other short messages */
+	if (unlikely(len <= sizeof(nonesp_marker))) {
+		kfree_skb(skb);
+		return;
+	}
 
 	err = skb_copy_bits(skb, rxm->offset + 2, &nonesp_marker,
 			    sizeof(nonesp_marker));
@@ -83,7 +106,7 @@ static int espintcp_parse(struct strparser *strp, struct sk_buff *skb)
 		return err;
 
 	len = be16_to_cpu(blen);
-	if (len < 6)
+	if (len < 2)
 		return -EINVAL;
 
 	return len;
@@ -101,8 +124,11 @@ static int espintcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len,
 	flags |= nonblock ? MSG_DONTWAIT : 0;
 
 	skb = __skb_recv_datagram(sk, &ctx->ike_queue, flags, &off, &err);
-	if (!skb)
+	if (!skb) {
+		if (err == -EAGAIN && sk->sk_shutdown & RCV_SHUTDOWN)
+			return 0;
 		return err;
+	}
 
 	copied = len;
 	if (copied > skb->len)
