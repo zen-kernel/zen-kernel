@@ -701,13 +701,9 @@ void resched_cpu(int cpu)
 
 #ifdef CONFIG_SMP
 #ifdef CONFIG_NO_HZ_COMMON
-void nohz_balance_enter_idle(int cpu)
-{
-}
+void nohz_balance_enter_idle(int cpu) {}
 
-void select_nohz_load_balancer(int stop_tick)
-{
-}
+void select_nohz_load_balancer(int stop_tick) {}
 
 void set_cpu_sd_state_idle(void) {}
 
@@ -794,6 +790,7 @@ static void nohz_csd_func(void *info)
 
 	/*
 	 * Release the rq::nohz_csd.
+	 */
 	flags = atomic_fetch_andnot(NOHZ_KICK_MASK, nohz_flags(cpu));
 	WARN_ON(!(flags & NOHZ_KICK_MASK));
 
@@ -802,7 +799,6 @@ static void nohz_csd_func(void *info)
 		rq->nohz_idle_balance = flags;
 		raise_softirq_irqoff(SCHED_SOFTIRQ);
 	}
-	 */
 }
 
 #endif /* CONFIG_NO_HZ_COMMON */
@@ -5852,8 +5848,6 @@ void __init sched_init(void)
 
 		hrtick_rq_init(rq);
 		atomic_set(&rq->nr_iowait, 0);
-
-		rq_csd_init(rq, &rq->nohz_csd, nohz_csd_func);
 	}
 #ifdef CONFIG_SMP
 	/* Set rq->online for cpu 0 */
