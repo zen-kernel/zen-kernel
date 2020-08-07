@@ -104,6 +104,7 @@ struct rq {
 
 	unsigned int		ttwu_pending;
 	unsigned char		nohz_idle_balance;
+	unsigned char		idle_balance;
 
 #ifdef CONFIG_HAVE_SCHED_AVG_IRQ
 	struct sched_avg	avg_irq;
@@ -387,6 +388,24 @@ static inline int cpu_of(const struct rq *rq)
 }
 
 #include "stats.h"
+
+#ifdef CONFIG_NO_HZ_COMMON
+#define NOHZ_BALANCE_KICK_BIT	0
+#define NOHZ_STATS_KICK_BIT	1
+
+#define NOHZ_BALANCE_KICK	BIT(NOHZ_BALANCE_KICK_BIT)
+#define NOHZ_STATS_KICK		BIT(NOHZ_STATS_KICK_BIT)
+
+#define NOHZ_KICK_MASK	(NOHZ_BALANCE_KICK | NOHZ_STATS_KICK)
+
+#define nohz_flags(cpu)	(&cpu_rq(cpu)->nohz_flags)
+
+/* TODO: needed?
+extern void nohz_balance_exit_idle(struct rq *rq);
+#else
+static inline void nohz_balance_exit_idle(struct rq *rq) { }
+*/
+#endif
 
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
 struct irqtime {
