@@ -391,6 +391,9 @@ waiter_clone_prio(struct rt_mutex_waiter *waiter, struct task_struct *task)
 static __always_inline int rt_waiter_node_less(struct rt_waiter_node *left,
 					       struct rt_waiter_node *right)
 {
+#ifdef CONFIG_SCHED_PDS
+	return (left->deadline < right->deadline);
+#else
 	if (left->prio < right->prio)
 		return 1;
 
@@ -406,11 +409,15 @@ static __always_inline int rt_waiter_node_less(struct rt_waiter_node *left,
 #endif
 
 	return 0;
+#endif
 }
 
 static __always_inline int rt_waiter_node_equal(struct rt_waiter_node *left,
 						 struct rt_waiter_node *right)
 {
+#ifdef CONFIG_SCHED_PDS
+	return (left->deadline == right->deadline);
+#else
 	if (left->prio != right->prio)
 		return 0;
 
@@ -426,6 +433,7 @@ static __always_inline int rt_waiter_node_equal(struct rt_waiter_node *left,
 #endif
 
 	return 1;
+#endif
 }
 
 static inline bool rt_mutex_steal(struct rt_mutex_waiter *waiter,
