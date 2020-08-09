@@ -1,5 +1,64 @@
 #define ALT_SCHED_VERSION_MSG "sched/bmq: BMQ CPU Scheduler 5.8-r1 by Alfred Chen.\n"
 
+/*
+ * BMQ only routines
+ */
+#define rq_switch_time(rq)	((rq)->clock - (rq)->last_ts_switch)
+#define boost_threshold(p)	(sched_timeslice_ns >>\
+				 (15 - MAX_PRIORITY_ADJ -  (p)->boost_prio))
+
+static inline void boost_task(struct task_struct *p)
+{
+	int limit;
+
+	switch (p->policy) {
+	case SCHED_NORMAL:
+		limit = -MAX_PRIORITY_ADJ;
+		break;
+	case SCHED_BATCH:
+	case SCHED_IDLE:
+		limit = 0;
+		break;
+	default:
+		return;
+	}
+
+	if (p->boost_prio > limit)
+		p->boost_prio--;
+}
+
+static inline void deboost_task(struct task_struct *p)
+{
+	if (p->boost_prio < MAX_PRIORITY_ADJ)
+		p->boost_prio++;
+}
+
+/*
+ * Common interfaces
+ */
+static inline int task_sched_prio(struct task_struct *p, struct rq *rq)
+{
+	return (p->prio < MAX_RT_PRIO)? p->prio : MAX_RT_PRIO / 2 + (p->prio + p->boost_prio) / 2;
+}
+
+static inline void requeue_task(struct task_struct *p, struct rq *rq);
+
+static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
+{
+	if (SCHED_FIFO != p->policy && task_on_rq_queued(p)) {
+		if (SCHED_RR != p->policy)
+			deboost_task(p);
+		requeue_task(p, rq);
+	}
+}
+
+static inline void update_task_priodl(struct task_struct *p) {}
+
+static inline unsigned long sched_queue_watermark(struct rq *rq)
+{
+	return find_first_bit(rq->queue.bitmap, SCHED_BITS);
+}
+
 static inline void sched_queue_init(struct rq *rq)
 {
 	struct bmq *q = &rq->queue;
@@ -61,26 +120,64 @@ sched_rq_next_task(struct task_struct *p, struct rq *rq)
 	sched_info_queued(rq, p);					\
 	psi_enqueue(p, flags);						\
 									\
-	p->bmq_idx = task_sched_prio(p);				\
+	p->bmq_idx = task_sched_prio(p, rq);				\
 	list_add_tail(&p->bmq_node, &rq->queue.heads[p->bmq_idx]);	\
 	set_bit(p->bmq_idx, rq->queue.bitmap)
 
-static inline void __requeue_task(struct task_struct *p, struct rq *rq)
-{
-	int idx = task_sched_prio(p);
-
-	list_del(&p->bmq_node);
-	list_add_tail(&p->bmq_node, &rq->queue.heads[idx]);
-	if (idx != p->bmq_idx) {
-		if (list_empty(&rq->queue.heads[p->bmq_idx]))
-			clear_bit(p->bmq_idx, rq->queue.bitmap);
-		p->bmq_idx = idx;
-		set_bit(p->bmq_idx, rq->queue.bitmap);
-		update_sched_rq_watermark(rq);
-	}
+#define __SCHED_REQUEUE_TASK(p, rq, func)				\
+{									\
+	int idx = task_sched_prio(p, rq);				\
+\
+	list_del(&p->bmq_node);						\
+	list_add_tail(&p->bmq_node, &rq->queue.heads[idx]);		\
+	if (idx != p->bmq_idx) {					\
+		if (list_empty(&rq->queue.heads[p->bmq_idx]))		\
+			clear_bit(p->bmq_idx, rq->queue.bitmap);	\
+		p->bmq_idx = idx;					\
+		set_bit(p->bmq_idx, rq->queue.bitmap);			\
+		func;							\
+	}								\
 }
 
-static inline bool sched_task_need_requeue(struct task_struct *p)
+static inline bool sched_task_need_requeue(struct task_struct *p, struct rq *rq)
 {
-	return (task_sched_prio(p) != p->bmq_idx);
+	return (task_sched_prio(p, rq) != p->bmq_idx);
+}
+
+static void sched_task_fork(struct task_struct *p)
+{
+	p->boost_prio = (p->boost_prio < 0) ?
+		p->boost_prio + MAX_PRIORITY_ADJ : MAX_PRIORITY_ADJ;
+}
+
+/**
+ * task_prio - return the priority value of a given task.
+ * @p: the task in question.
+ *
+ * Return: The priority value as seen by users in /proc.
+ * RT tasks are offset by -100. Normal tasks are centered around 1, value goes
+ * from 0(SCHED_ISO) up to 82 (nice +19 SCHED_IDLE).
+ */
+int task_prio(const struct task_struct *p)
+{
+	if (p->prio < MAX_RT_PRIO)
+		return (p->prio - MAX_RT_PRIO);
+	return (p->prio - MAX_RT_PRIO + p->boost_prio);
+}
+
+static void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
+{
+	p->boost_prio = MAX_PRIORITY_ADJ;
+}
+
+static void sched_task_ttwu(struct task_struct *p)
+{
+	if(this_rq()->clock_task - p->last_ran > sched_timeslice_ns)
+		boost_task(p);
+}
+
+static void sched_task_deactivate(struct task_struct *p, struct rq *rq)
+{
+	if (rq_switch_time(rq) < boost_threshold(p))
+		boost_task(p);
 }
