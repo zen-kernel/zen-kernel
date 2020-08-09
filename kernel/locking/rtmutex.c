@@ -232,6 +232,9 @@ static __always_inline bool unlock_rt_mutex_safe(struct rt_mutex *lock,
 static __always_inline int rt_mutex_waiter_less(struct rt_mutex_waiter *left,
 						struct rt_mutex_waiter *right)
 {
+#ifdef CONFIG_SCHED_PDS
+	return (left->deadline < right->deadline);
+#else
 	if (left->prio < right->prio)
 		return 1;
 
@@ -247,11 +250,15 @@ static __always_inline int rt_mutex_waiter_less(struct rt_mutex_waiter *left,
 #endif
 
 	return 0;
+#endif
 }
 
 static __always_inline int rt_mutex_waiter_equal(struct rt_mutex_waiter *left,
 						 struct rt_mutex_waiter *right)
 {
+#ifdef CONFIG_SCHED_PDS
+	return (left->deadline == right->deadline);
+#else
 	if (left->prio != right->prio)
 		return 0;
 
@@ -267,6 +274,7 @@ static __always_inline int rt_mutex_waiter_equal(struct rt_mutex_waiter *left,
 #endif
 
 	return 1;
+#endif
 }
 
 #define __node_2_waiter(node) \
