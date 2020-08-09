@@ -809,6 +809,12 @@ config SCHED_BMQ
 	  responsiveness on the desktop and solid scalability on normal
 	  hardware and commodity servers.
 
+config SCHED_PDS
+	bool "PDS CPU scheduler"
+	help
+	  The Priority and Deadline based Skip list multiple queue CPU
+	  Scheduler.
+
 endchoice
 
 endif
