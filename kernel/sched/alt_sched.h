@@ -49,6 +49,9 @@
 #ifdef CONFIG_SCHED_BMQ
 #include "bmq.h"
 #endif
+#ifdef CONFIG_SCHED_PDS
+#include "pds.h"
+#endif
 
 /* task_struct::on_rq states: */
 #define TASK_ON_RQ_QUEUED	1
@@ -86,6 +89,9 @@ struct rq {
 
 #ifdef CONFIG_SCHED_BMQ
 	struct bmq queue;
+#endif
+#ifdef CONFIG_SCHED_PDS
+	struct skiplist_node sl_header;
 #endif
 	unsigned long watermark;
 
@@ -533,11 +539,6 @@ static inline void membarrier_switch_mm(struct rq *rq,
 {
 }
 #endif
-
-static inline int task_running_nice(struct task_struct *p)
-{
-	return (p->prio + p->boost_prio > DEFAULT_PRIO + MAX_PRIORITY_ADJ);
-}
 
 #ifdef CONFIG_NUMA
 extern int sched_numa_find_closest(const struct cpumask *cpus, int cpu);
