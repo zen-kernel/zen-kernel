@@ -95,10 +95,15 @@ struct task_struct init_task
 		.fn = do_no_restart_syscall,
 	},
 #ifdef CONFIG_SCHED_ALT
-	.boost_prio	= 0,
 #ifdef CONFIG_SCHED_BMQ
+	.boost_prio	= 0,
 	.bmq_idx	= 15,
 	.bmq_node	= LIST_HEAD_INIT(init_task.bmq_node),
+#endif
+#ifdef CONFIG_SCHED_PDS
+	.deadline	= 0,
+	.sl_level	= 0,
+	.sl_node	= SKIPLIST_NODE_INIT(init_task.sl_node),
 #endif
 	.time_slice	= HZ,
 #else
