@@ -64,6 +64,7 @@
 #define WF_SYNC		0x01		/* waker goes to sleep after wakeup */
 #define WF_FORK		0x02		/* child wakeup after fork */
 #define WF_MIGRATED	0x04		/* internal use, task got migrated */
+#define WF_ON_CPU	0x08		/* Wakee is on_cpu */
 
 /* task_struct::on_rq states: */
 #define TASK_ON_RQ_QUEUED	1
@@ -244,6 +245,8 @@ struct rq {
 
 	bool is_leader;
 	struct rq *smp_leader; /* First physical CPU per node */
+
+	unsigned int		ttwu_pending;
 #ifdef CONFIG_SCHED_THERMAL_PRESSURE
 	struct sched_avg	avg_thermal;
 #endif /* CONFIG_SCHED_THERMAL_PRESSURE */
@@ -303,10 +306,6 @@ struct rq {
 	unsigned int ttwu_count;
 	unsigned int ttwu_local;
 #endif /* CONFIG_SCHEDSTATS */
-
-#ifdef CONFIG_SMP
-	struct llist_head wake_list;
-#endif
 
 #ifdef CONFIG_CPU_IDLE
 	/* Must be inspected within a rcu lock section */
@@ -625,7 +624,7 @@ struct sched_group_capacity {
 	int id;
 #endif
 
-	unsigned long cpumask[0]; /* balance mask */
+	unsigned long cpumask[]; /* balance mask */
 };
 
 struct sched_group {
@@ -685,7 +684,6 @@ static inline void unregister_sched_domain_sysctl(void)
 }
 #endif
 
-extern void sched_ttwu_pending(void);
 extern void set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_mask);
 extern void set_rq_online (struct rq *rq);
 extern void set_rq_offline(struct rq *rq);
@@ -701,11 +699,11 @@ static inline void trigger_load_balance(struct rq *rq)
 
 #define sched_feat(x) 0
 
-#else /* CONFIG_SMP */
+extern void flush_smp_call_function_from_idle(void);
 
-static inline void sched_ttwu_pending(void) { }
-
-#endif /* CONFIG_SMP */
+#else /* !CONFIG_SMP: */
+static inline void flush_smp_call_function_from_idle(void) { }
+#endif
 
 #ifdef CONFIG_CPU_IDLE
 static inline void idle_set_state(struct rq *rq,
@@ -1047,5 +1045,9 @@ static inline u64 thermal_load_avg(struct rq *rq)
 {
 	return 0;
 }
+
+#define task_contributes_to_load(task)	((task->state & TASK_UNINTERRUPTIBLE) != 0 && \
+					 (task->flags & PF_FROZEN) == 0 && \
+					 (task->state & TASK_NOLOAD) == 0)
 
 #endif /* MUQSS_SCHED_H */
