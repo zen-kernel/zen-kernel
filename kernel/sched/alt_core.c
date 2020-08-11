@@ -141,7 +141,9 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 
 #define IDLE_WM	(IDLE_TASK_SCHED_PRIO)
 
+#ifdef CONFIG_SCHED_SMT
 static cpumask_t sched_sg_idle_mask ____cacheline_aligned_in_smp;
+#endif
 static cpumask_t sched_rq_watermark[SCHED_BITS] ____cacheline_aligned_in_smp;
 
 static inline void update_sched_rq_watermark(struct rq *rq)
@@ -5839,12 +5841,12 @@ void __init sched_init(void)
 #ifdef CONFIG_SCHED_SMT
 		rq->active_balance = 0;
 #endif
-#endif
-		rq->nr_switches = 0;
 
 #ifdef CONFIG_NO_HZ_COMMON
 		rq_csd_init(rq, &rq->nohz_csd, nohz_csd_func);
 #endif
+#endif /* CONFIG_SMP */
+		rq->nr_switches = 0;
 
 		hrtick_rq_init(rq);
 		atomic_set(&rq->nr_iowait, 0);
