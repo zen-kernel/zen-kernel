@@ -117,22 +117,9 @@ static void __init kasan_unmap_early_shadow_vmalloc(void)
 	kasan_update_early_region(k_start, k_end, __pte(0));
 }
 
-static void __init kasan_mmu_init(void)
+void __init kasan_mmu_init(void)
 {
 	int ret;
-	struct memblock_region *reg;
-
-	for_each_memblock(memory, reg) {
-		phys_addr_t base = reg->base;
-		phys_addr_t top = min(base + reg->size, total_lowmem);
-
-		if (base >= top)
-			continue;
-
-		ret = kasan_init_region(__va(base), top - base);
-		if (ret)
-			panic("kasan: kasan_init_region() failed");
-	}
 
 	if (early_mmu_has_feature(MMU_FTR_HPTE_TABLE) ||
 	    IS_ENABLED(CONFIG_KASAN_VMALLOC)) {
@@ -141,12 +128,24 @@ static void __init kasan_mmu_init(void)
 		if (ret)
 			panic("kasan: kasan_init_shadow_page_tables() failed");
 	}
-
 }
 
 void __init kasan_init(void)
 {
-	kasan_mmu_init();
+	struct memblock_region *reg;
+
+	for_each_memblock(memory, reg) {
+		phys_addr_t base = reg->base;
+		phys_addr_t top = min(base + reg->size, total_lowmem);
+		int ret;
+
+		if (base >= top)
+			continue;
+
+		ret = kasan_init_region(__va(base), top - base);
+		if (ret)
+			panic("kasan: kasan_init_region() failed");
+	}
 
 	kasan_remap_early_shadow_ro();
 
