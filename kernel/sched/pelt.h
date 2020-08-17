@@ -9,7 +9,7 @@ int update_rt_rq_load_avg(u64 now, struct rq *rq, int running);
 int update_dl_rq_load_avg(u64 now, struct rq *rq, int running);
 #endif
 
-#ifdef CONFIG_SCHED_THERMAL_PRESSURE
+#if defined(CONFIG_SCHED_THERMAL_PRESSURE) && !defined(CONFIG_SCHED_ALT)
 int update_thermal_load_avg(u64 now, struct rq *rq, u64 capacity);
 
 static inline u64 thermal_load_avg(struct rq *rq)
