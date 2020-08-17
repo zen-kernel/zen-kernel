@@ -1,4 +1,4 @@
-#define ALT_SCHED_VERSION_MSG "sched/bmq: BMQ CPU Scheduler 5.8-r0 by Alfred Chen.\n"
+#define ALT_SCHED_VERSION_MSG "sched/bmq: BMQ CPU Scheduler 5.8-r1 by Alfred Chen.\n"
 
 static inline void sched_queue_init(struct rq *rq)
 {
