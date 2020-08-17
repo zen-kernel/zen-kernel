@@ -14,7 +14,7 @@ int update_dl_rq_load_avg(u64 now, struct rq *rq, int running);
 bool update_other_load_avgs(struct rq *rq);
 #endif
 
-#ifdef CONFIG_SCHED_HW_PRESSURE
+#if defined(CONFIG_SCHED_HW_PRESSURE) && !defined(CONFIG_SCHED_ALT)
 int update_hw_load_avg(u64 now, struct rq *rq, u64 capacity);
 
 static inline u64 hw_load_avg(struct rq *rq)
