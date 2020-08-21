@@ -12,6 +12,9 @@
 #include <string.h>
 #include <execinfo.h> /* backtrace */
 
+#define EXIT_NO_TEST		2
+#define EXIT_ERR_SETUP_INFRA	3
+
 /* defined in test_progs.h */
 struct test_env env = {};
 
@@ -111,13 +114,31 @@ static void reset_affinity() {
 	if (err < 0) {
 		stdio_restore();
 		fprintf(stderr, "Failed to reset process affinity: %d!\n", err);
-		exit(-1);
+		exit(EXIT_ERR_SETUP_INFRA);
 	}
 	err = pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset);
 	if (err < 0) {
 		stdio_restore();
 		fprintf(stderr, "Failed to reset thread affinity: %d!\n", err);
-		exit(-1);
+		exit(EXIT_ERR_SETUP_INFRA);
+	}
+}
+
+static void save_netns(void)
+{
+	env.saved_netns_fd = open("/proc/self/ns/net", O_RDONLY);
+	if (env.saved_netns_fd == -1) {
+		perror("open(/proc/self/ns/net)");
+		exit(EXIT_ERR_SETUP_INFRA);
+	}
+}
+
+static void restore_netns(void)
+{
+	if (setns(env.saved_netns_fd, CLONE_NEWNET) == -1) {
+		stdio_restore();
+		perror("setns(CLONE_NEWNS)");
+		exit(EXIT_ERR_SETUP_INFRA);
 	}
 }
 
@@ -137,8 +158,6 @@ void test__end_subtest()
 	fprintf(env.stdout, "#%d/%d %s:%s\n",
 	       test->test_num, test->subtest_num,
 	       test->subtest_name, sub_error_cnt ? "FAIL" : "OK");
-
-	reset_affinity();
 
 	free(test->subtest_name);
 	test->subtest_name = NULL;
@@ -643,6 +662,7 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
+	save_netns();
 	stdio_hijack();
 	for (i = 0; i < prog_test_cnt; i++) {
 		struct prog_test_def *test = &prog_test_defs[i];
@@ -673,6 +693,7 @@ int main(int argc, char **argv)
 			test->error_cnt ? "FAIL" : "OK");
 
 		reset_affinity();
+		restore_netns();
 		if (test->need_cgroup_cleanup)
 			cleanup_cgroup_environment();
 	}
@@ -686,6 +707,10 @@ int main(int argc, char **argv)
 	free_str_set(&env.subtest_selector.blacklist);
 	free_str_set(&env.subtest_selector.whitelist);
 	free(env.subtest_selector.num_set);
+	close(env.saved_netns_fd);
+
+	if (env.succ_cnt + env.fail_cnt + env.skip_cnt == 0)
+		return EXIT_NO_TEST;
 
 	return env.fail_cnt ? EXIT_FAILURE : EXIT_SUCCESS;
 }
