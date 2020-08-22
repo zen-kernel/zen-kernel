@@ -810,6 +810,11 @@ unsigned int uclamp_rq_util_with(struct rq __maybe_unused *rq, unsigned int util
 	return util;
 }
 
+static inline bool uclamp_is_used(void)
+{
+	return false;
+}
+
 #ifndef arch_scale_freq_tick
 static __always_inline
 void arch_scale_freq_tick(void)
