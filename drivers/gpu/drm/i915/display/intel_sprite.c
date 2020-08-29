@@ -92,6 +92,9 @@ void intel_pipe_update_start(const struct intel_crtc_state *new_crtc_state)
 	DEFINE_WAIT(wait);
 	u32 psr_status;
 
+	if (new_crtc_state->uapi.async_flip)
+		goto irq_disable;
+
 	vblank_start = adjusted_mode->crtc_vblank_start;
 	if (adjusted_mode->flags & DRM_MODE_FLAG_INTERLACE)
 		vblank_start = DIV_ROUND_UP(vblank_start, 2);
@@ -205,7 +208,7 @@ void intel_pipe_update_end(struct intel_crtc_state *new_crtc_state)
 	 * Would be slightly nice to just grab the vblank count and arm the
 	 * event outside of the critical section - the spinlock might spin for a
 	 * while ... */
-	if (new_crtc_state->uapi.event) {
+	if (new_crtc_state->uapi.event && !new_crtc_state->uapi.async_flip) {
 		drm_WARN_ON(&dev_priv->drm,
 			    drm_crtc_vblank_get(&crtc->base) != 0);
 
@@ -218,6 +221,9 @@ void intel_pipe_update_end(struct intel_crtc_state *new_crtc_state)
 	}
 
 	local_irq_enable();
+
+	if (new_crtc_state->uapi.async_flip)
+		return;
 
 	if (intel_vgpu_active(dev_priv))
 		return;
@@ -588,6 +594,24 @@ icl_program_input_csc(struct intel_plane *plane,
 }
 
 static void
+skl_program_async_surface_address(struct drm_i915_private *dev_priv,
+				  const struct intel_plane_state *plane_state,
+				  enum pipe pipe, enum plane_id plane_id,
+				  u32 surf_addr)
+{
+	unsigned long irqflags;
+	u32 plane_ctl = plane_state->ctl;
+
+	spin_lock_irqsave(&dev_priv->uncore.lock, irqflags);
+
+	intel_de_write_fw(dev_priv, PLANE_CTL(pipe, plane_id), plane_ctl);
+	intel_de_write_fw(dev_priv, PLANE_SURF(pipe, plane_id),
+			  intel_plane_ggtt_offset(plane_state) + surf_addr);
+
+	spin_unlock_irqrestore(&dev_priv->uncore.lock, irqflags);
+}
+
+static void
 skl_program_plane(struct intel_plane *plane,
 		  const struct intel_crtc_state *crtc_state,
 		  const struct intel_plane_state *plane_state,
@@ -614,6 +638,13 @@ skl_program_plane(struct intel_plane *plane,
 	unsigned long irqflags;
 	u32 keymsk, keymax;
 	u32 plane_ctl = plane_state->ctl;
+
+	/* During Async flip, no other updates are allowed */
+	if (crtc_state->uapi.async_flip) {
+		skl_program_async_surface_address(dev_priv, plane_state,
+						  pipe, plane_id, surf_addr);
+		return;
+	}
 
 	plane_ctl |= skl_plane_ctl_crtc(crtc_state);
 
