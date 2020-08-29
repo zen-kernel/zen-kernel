@@ -6874,6 +6874,7 @@ enum {
 #define   PLANE_CTL_TILED_X			(1 << 10)
 #define   PLANE_CTL_TILED_Y			(4 << 10)
 #define   PLANE_CTL_TILED_YF			(5 << 10)
+#define   PLANE_CTL_ASYNC_FLIP			(1 << 9)
 #define   PLANE_CTL_FLIP_HORIZONTAL		(1 << 8)
 #define   PLANE_CTL_MEDIA_DECOMPRESSION_ENABLE	(1 << 4) /* TGL+ */
 #define   PLANE_CTL_ALPHA_MASK			(0x3 << 4) /* Pre-GLK */
@@ -11005,9 +11006,11 @@ enum skl_power_gate {
 #define  GEN9_TIMESTAMP_OVERRIDE_US_COUNTER_DENOMINATOR_MASK	(0xf << 12)
 
 #define _PIPE_FRMTMSTMP_A		0x70048
+#define _PIPE_FLIPTMSTMP_A		0x7004C
 #define PIPE_FRMTMSTMP(pipe)		\
 			_MMIO_PIPE2(pipe, _PIPE_FRMTMSTMP_A)
-
+#define PIPE_FLIPTMSTMP(pipe)		\
+			_MMIO_PIPE2(pipe, _PIPE_FLIPTMSTMP_A)
 /* BXT MIPI clock controls */
 #define BXT_MAX_VAR_OUTPUT_KHZ			39500
 

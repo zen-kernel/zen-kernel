@@ -697,14 +697,24 @@ u32 i915_get_vblank_counter(struct drm_crtc *crtc)
 	return (((high1 << 8) | low) + (pixel >= vbl_start)) & 0xffffff;
 }
 
+u32 g4x_get_flip_counter(struct drm_crtc *crtc)
+{
+	struct drm_i915_private *dev_priv = to_i915(crtc->dev);
+	enum pipe pipe = to_intel_crtc(crtc)->pipe;
+
+	return I915_READ(PIPE_FLIPCOUNT_G4X(pipe));
+}
+
 u32 g4x_get_vblank_counter(struct drm_crtc *crtc)
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc->dev);
 	enum pipe pipe = to_intel_crtc(crtc)->pipe;
 
+	if (crtc->state->async_flip)
+		return g4x_get_flip_counter(crtc);
+
 	return I915_READ(PIPE_FRMCOUNT_G4X(pipe));
 }
-
 /*
  * On certain encoders on certain platforms, pipe
  * scanline register will not work to get the scanline,
@@ -737,17 +747,24 @@ static u32 __intel_get_crtc_scanline_from_timestamp(struct intel_crtc *crtc)
 		 * pipe frame time stamp. The time stamp value
 		 * is sampled at every start of vertical blank.
 		 */
-		scan_prev_time = intel_de_read_fw(dev_priv,
-						  PIPE_FRMTMSTMP(crtc->pipe));
-
+		if (!crtc->config->uapi.async_flip)
+			scan_prev_time = intel_de_read_fw(dev_priv,
+							  PIPE_FRMTMSTMP(crtc->pipe));
+		else
+			scan_prev_time = intel_de_read_fw(dev_priv,
+							  PIPE_FLIPTMSTMP(crtc->pipe));
 		/*
 		 * The TIMESTAMP_CTR register has the current
 		 * time stamp value.
 		 */
 		scan_curr_time = intel_de_read_fw(dev_priv, IVB_TIMESTAMP_CTR);
 
-		scan_post_time = intel_de_read_fw(dev_priv,
-						  PIPE_FRMTMSTMP(crtc->pipe));
+		if (!crtc->config->uapi.async_flip)
+			scan_post_time = intel_de_read_fw(dev_priv,
+							  PIPE_FRMTMSTMP(crtc->pipe));
+		else
+			scan_post_time = intel_de_read_fw(dev_priv,
+							  PIPE_FLIPTMSTMP(crtc->pipe));
 	} while (scan_post_time != scan_prev_time);
 
 	scanline = div_u64(mul_u32_u32(scan_curr_time - scan_prev_time,
@@ -937,7 +954,6 @@ static bool i915_get_crtc_scanoutpos(struct drm_crtc *_crtc,
 		*vpos = position / htotal;
 		*hpos = position - (*vpos * htotal);
 	}
-
 	return true;
 }
 
@@ -1295,6 +1311,24 @@ display_pipe_crc_irq_handler(struct drm_i915_private *dev_priv,
 			     u32 crc4) {}
 #endif
 
+static void flip_done_handler(struct drm_i915_private *dev_priv,
+			      unsigned int pipe)
+{
+	struct intel_crtc *crtc = intel_get_crtc_for_pipe(dev_priv, pipe);
+	struct drm_crtc_state *crtc_state = crtc->base.state;
+	struct drm_pending_vblank_event *e = crtc_state->event;
+	struct drm_device *dev = &dev_priv->drm;
+	unsigned long irqflags;
+
+	crtc_state->event = NULL;
+
+	drm_crtc_accurate_vblank_count(&crtc->base);
+	spin_lock_irqsave(&dev->event_lock, irqflags);
+
+	drm_crtc_send_vblank_event(&crtc->base, e);
+
+	spin_unlock_irqrestore(&dev->event_lock, irqflags);
+}
 
 static void hsw_pipe_crc_irq_handler(struct drm_i915_private *dev_priv,
 				     enum pipe pipe)
@@ -2386,6 +2420,9 @@ gen8_de_irq_handler(struct drm_i915_private *dev_priv, u32 master_ctl)
 		if (iir & GEN8_PIPE_VBLANK)
 			intel_handle_vblank(dev_priv, pipe);
 
+		if (iir & GEN9_PIPE_PLANE1_FLIP_DONE)
+			flip_done_handler(dev_priv, pipe);
+
 		if (iir & GEN8_PIPE_CDCLK_CRC_DONE)
 			hsw_pipe_crc_irq_handler(dev_priv, pipe);
 
@@ -2667,6 +2704,19 @@ int bdw_enable_vblank(struct drm_crtc *crtc)
 	return 0;
 }
 
+void skl_enable_flip_done(struct drm_crtc *crtc)
+{
+	struct drm_i915_private *dev_priv = to_i915(crtc->dev);
+	enum pipe pipe = to_intel_crtc(crtc)->pipe;
+	unsigned long irqflags;
+
+	spin_lock_irqsave(&dev_priv->irq_lock, irqflags);
+
+	bdw_enable_pipe_irq(dev_priv, pipe, GEN9_PIPE_PLANE1_FLIP_DONE);
+
+	spin_unlock_irqrestore(&dev_priv->irq_lock, irqflags);
+}
+
 /* Called from drm generic code, passed 'crtc' which
  * we use as a pipe index
  */
@@ -2724,6 +2774,19 @@ void bdw_disable_vblank(struct drm_crtc *crtc)
 
 	spin_lock_irqsave(&dev_priv->irq_lock, irqflags);
 	bdw_disable_pipe_irq(dev_priv, pipe, GEN8_PIPE_VBLANK);
+	spin_unlock_irqrestore(&dev_priv->irq_lock, irqflags);
+}
+
+void skl_disable_flip_done(struct drm_crtc *crtc)
+{
+	struct drm_i915_private *dev_priv = to_i915(crtc->dev);
+	enum pipe pipe = to_intel_crtc(crtc)->pipe;
+	unsigned long irqflags;
+
+	spin_lock_irqsave(&dev_priv->irq_lock, irqflags);
+
+	bdw_disable_pipe_irq(dev_priv, pipe, GEN9_PIPE_PLANE1_FLIP_DONE);
+
 	spin_unlock_irqrestore(&dev_priv->irq_lock, irqflags);
 }
 
@@ -2931,6 +2994,9 @@ void gen8_irq_power_well_post_enable(struct drm_i915_private *dev_priv,
 
 	u32 extra_ier = GEN8_PIPE_VBLANK | GEN8_PIPE_FIFO_UNDERRUN;
 	enum pipe pipe;
+
+	if (INTEL_GEN(dev_priv) >= 9)
+		extra_ier |= GEN9_PIPE_PLANE1_FLIP_DONE;
 
 	spin_lock_irq(&dev_priv->irq_lock);
 
@@ -3406,6 +3472,9 @@ static void gen8_de_irq_postinstall(struct drm_i915_private *dev_priv)
 
 	de_pipe_enables = de_pipe_masked | GEN8_PIPE_VBLANK |
 					   GEN8_PIPE_FIFO_UNDERRUN;
+
+	if (INTEL_GEN(dev_priv) >= 9)
+		de_pipe_enables |= GEN9_PIPE_PLANE1_FLIP_DONE;
 
 	de_port_enables = de_port_masked;
 	if (IS_GEN9_LP(dev_priv))

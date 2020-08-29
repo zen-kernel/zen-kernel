@@ -4764,6 +4764,12 @@ u32 skl_plane_ctl(const struct intel_crtc_state *crtc_state,
 	const struct drm_intel_sprite_colorkey *key = &plane_state->ckey;
 	u32 plane_ctl;
 
+	/* During Async flip, no other updates are allowed */
+	if (crtc_state->uapi.async_flip) {
+		plane_ctl |= PLANE_CTL_ASYNC_FLIP;
+		return plane_ctl;
+	}
+
 	plane_ctl = PLANE_CTL_ENABLE;
 
 	if (INTEL_GEN(dev_priv) < 10 && !IS_GEMINILAKE(dev_priv)) {
@@ -14758,6 +14764,101 @@ static bool intel_cpu_transcoders_need_modeset(struct intel_atomic_state *state,
 	return false;
 }
 
+static int intel_atomic_check_async(struct intel_atomic_state *state)
+{
+	struct intel_crtc_state *old_crtc_state, *new_crtc_state;
+	struct intel_plane_state *new_plane_state, *old_plane_state;
+	struct intel_crtc *crtc;
+	struct intel_plane *intel_plane;
+	int i, n_planes = 0;
+
+	for_each_oldnew_intel_crtc_in_state(state, crtc, old_crtc_state,
+					    new_crtc_state, i) {
+		if (needs_modeset(new_crtc_state)) {
+			DRM_DEBUG_KMS("Modeset Requried. Async flip not supported\n");
+			return -EINVAL;
+		}
+
+		if (!new_crtc_state->uapi.active) {
+			DRM_DEBUG_KMS("CRTC inactive\n");
+			return -EINVAL;
+		}
+		if (old_crtc_state->active_planes != new_crtc_state->active_planes) {
+			DRM_DEBUG_KMS("Active planes cannot be changed during async flip\n");
+			return -EINVAL;
+		}
+	}
+
+	for_each_oldnew_intel_plane_in_state(state, intel_plane, old_plane_state,
+					     new_plane_state, i) {
+		/*TODO: Async flip is only supported through the page flip IOCTL
+		 * as of now. So support currently added for primary plane only.
+		 * Support for other planes should be added when async flip is
+		 * enabled in the atomic IOCTL path.
+		 */
+		if (intel_plane->id != PLANE_PRIMARY)
+			return -EINVAL;
+
+		if ((old_plane_state->color_plane[0].x !=
+		     new_plane_state->color_plane[0].x) ||
+		    (old_plane_state->color_plane[0].y !=
+		     new_plane_state->color_plane[0].y)) {
+			DRM_DEBUG_KMS("Offsets cannot be changed in async flip\n");
+			return -EINVAL;
+		}
+
+		if (old_plane_state->uapi.fb->modifier !=
+		    new_plane_state->uapi.fb->modifier) {
+			DRM_DEBUG_KMS("Framebuffer modifiers cannot be changed in async flip\n");
+			return -EINVAL;
+		}
+
+		if (old_plane_state->uapi.fb->format !=
+		    new_plane_state->uapi.fb->format) {
+			DRM_DEBUG_KMS("Framebuffer format cannot be changed in async flip\n");
+			return -EINVAL;
+		}
+
+		if (intel_wm_need_update(old_plane_state, new_plane_state)) {
+			DRM_DEBUG_KMS("WM update not allowed in async flip\n");
+			return -EINVAL;
+		}
+
+		if (old_plane_state->uapi.alpha != new_plane_state->uapi.alpha) {
+			DRM_DEBUG_KMS("Alpha value cannot be changed in async flip\n");
+			return -EINVAL;
+		}
+
+		if (old_plane_state->uapi.pixel_blend_mode != new_plane_state->uapi.pixel_blend_mode) {
+			DRM_DEBUG_KMS("Pixel blend mode cannot be changed in async flip\n");
+			return -EINVAL;
+		}
+
+		if (old_plane_state->uapi.color_encoding != new_plane_state->uapi.color_encoding) {
+			DRM_DEBUG_KMS("Color encoding cannot be changed in async flip\n");
+			return -EINVAL;
+		}
+
+		if (old_plane_state->uapi.color_range != new_plane_state->uapi.color_range) {
+			DRM_DEBUG_KMS("Color range cannot be changed in async flip\n");
+			return -EINVAL;
+		}
+
+		n_planes++;
+	}
+
+	if (n_planes != 1)
+		return -EINVAL;
+
+	/*Scan line registers cannot be trusted for async flip */
+	for_each_new_intel_crtc_in_state(state, crtc, new_crtc_state, i) {
+		if (new_crtc_state->uapi.async_flip)
+			crtc->mode_flags |= I915_MODE_FLAG_GET_SCANLINE_FROM_TIMESTAMP;
+	}
+
+	return 0;
+}
+
 /**
  * intel_atomic_check - validate state object
  * @dev: drm device
@@ -14932,6 +15033,14 @@ static int intel_atomic_check(struct drm_device *dev,
 				       "[modeset]" : "[fastset]");
 	}
 
+	for_each_new_intel_crtc_in_state(state, crtc, new_crtc_state, i) {
+		if (new_crtc_state->uapi.async_flip) {
+			ret = intel_atomic_check_async(state);
+
+			if (ret)
+				goto fail;
+		}
+	}
 	return 0;
 
  fail:
@@ -15483,6 +15592,13 @@ static void intel_atomic_commit_tail(struct intel_atomic_state *state)
 	if (state->modeset)
 		icl_dbuf_slice_pre_update(state);
 
+	for_each_new_intel_crtc_in_state(state, crtc, new_crtc_state, i) {
+		if (new_crtc_state->uapi.async_flip) {
+			skl_enable_flip_done(&crtc->base);
+			break;
+		}
+	}
+
 	/* Now enable the clocks, plane, pipe, and connectors that we set up. */
 	dev_priv->display.commit_modeset_enables(state);
 
@@ -15504,6 +15620,9 @@ static void intel_atomic_commit_tail(struct intel_atomic_state *state)
 	drm_atomic_helper_wait_for_flip_done(dev, &state->base);
 
 	for_each_new_intel_crtc_in_state(state, crtc, new_crtc_state, i) {
+		if (new_crtc_state->uapi.async_flip)
+			skl_disable_flip_done(&crtc->base);
+
 		if (new_crtc_state->hw.active &&
 		    !needs_modeset(new_crtc_state) &&
 		    !new_crtc_state->preload_luts &&
@@ -17655,6 +17774,9 @@ static void intel_mode_config_init(struct drm_i915_private *i915)
 	mode_config->allow_fb_modifiers = true;
 
 	mode_config->funcs = &intel_mode_funcs;
+
+	if (INTEL_GEN(i915) >= 9)
+		mode_config->async_page_flip = true;
 
 	/*
 	 * Maximum framebuffer dimensions, chosen to match
