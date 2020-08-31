@@ -1565,7 +1565,11 @@ static struct cpuhp_step cpuhp_hp_states[] = {
 	[CPUHP_BRINGUP_CPU] = {
 		.name			= "cpu:bringup",
 		.startup.single		= bringup_cpu,
+#ifdef CONFIG_SCHED_MUQSS
+		.teardown.single	= NULL,
+#else
 		.teardown.single	= finish_cpu,
+#endif
 		.cant_stop		= true,
 	},
 	/* Final state before CPU kills itself */

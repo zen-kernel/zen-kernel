@@ -1894,7 +1894,7 @@ static void pktgen_mark_device(const struct pktgen_net *pn, const char *ifname)
 		mutex_unlock(&pktgen_thread_lock);
 		pr_debug("%s: waiting for %s to disappear....\n",
 			 __func__, ifname);
-		schedule_timeout_interruptible(msecs_to_jiffies(msec_per_try));
+		schedule_msec_hrtimeout_interruptible((msec_per_try));
 		mutex_lock(&pktgen_thread_lock);
 
 		if (++i >= max_tries) {

@@ -202,7 +202,7 @@ int parport_wait_peripheral(struct parport *port,
 			/* parport_wait_event didn't time out, but the
 			 * peripheral wasn't actually ready either.
 			 * Wait for another 10ms. */
-			schedule_timeout_interruptible(msecs_to_jiffies(10));
+			schedule_msec_hrtimeout_interruptible((10));
 		}
 	}
 

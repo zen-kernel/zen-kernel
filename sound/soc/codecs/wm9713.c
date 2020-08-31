@@ -199,7 +199,7 @@ static int wm9713_voice_shutdown(struct snd_soc_dapm_widget *w,
 
 	/* Gracefully shut down the voice interface. */
 	snd_soc_component_update_bits(component, AC97_HANDSET_RATE, 0x0f00, 0x0200);
-	schedule_timeout_interruptible(msecs_to_jiffies(1));
+	schedule_msec_hrtimeout_interruptible(1);
 	snd_soc_component_update_bits(component, AC97_HANDSET_RATE, 0x0f00, 0x0f00);
 	snd_soc_component_update_bits(component, AC97_EXTENDED_MID, 0x1000, 0x1000);
 
@@ -868,7 +868,7 @@ static int wm9713_set_pll(struct snd_soc_component *component,
 	wm9713->pll_in = freq_in;
 
 	/* wait 10ms AC97 link frames for the link to stabilise */
-	schedule_timeout_interruptible(msecs_to_jiffies(10));
+	schedule_msec_hrtimeout_interruptible((10));
 	return 0;
 }
 
