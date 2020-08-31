@@ -1,4 +1,4 @@
-#define ALT_SCHED_VERSION_MSG "sched/bmq: BMQ CPU Scheduler 5.8-r1 by Alfred Chen.\n"
+#define ALT_SCHED_VERSION_MSG "sched/bmq: BMQ CPU Scheduler "ALT_SCHED_VERSION" by Alfred Chen.\n"
 
 /*
  * BMQ only routines
