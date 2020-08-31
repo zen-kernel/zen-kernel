@@ -1,4 +1,4 @@
-#define ALT_SCHED_VERSION_MSG "sched/bmq: PDS CPU Scheduler 5.8-r0 by Alfred Chen.\n"
+#define ALT_SCHED_VERSION_MSG "sched/bmq: PDS CPU Scheduler "ALT_SCHED_VERSION" by Alfred Chen.\n"
 
 static const u64 user_prio2deadline[NICE_WIDTH] = {
 /* -20 */	  4194304,   4613734,   5075107,   5582617,   6140878,
