@@ -194,7 +194,7 @@ static enum sysctl_writes_mode sysctl_writes_strict = SYSCTL_WRITES_STRICT;
 int sysctl_legacy_va_layout;
 #endif
 
-#ifdef CONFIG_SCHED_DEBUG  && !defined(CONFIG_SCHED_MUQSS)
+#if defined(CONFIG_SCHED_DEBUG) && !defined(CONFIG_SCHED_MUQSS)
 static int min_sched_granularity_ns = 100000;		/* 100 usecs */
 static int max_sched_granularity_ns = NSEC_PER_SEC;	/* 1 second */
 static int min_wakeup_granularity_ns;			/* 0 usecs */
