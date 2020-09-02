@@ -45,6 +45,8 @@ static inline void requeue_task(struct task_struct *p, struct rq *rq);
 
 static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 {
+	p->time_slice = sched_timeslice_ns;
+
 	if (SCHED_FIFO != p->policy && task_on_rq_queued(p)) {
 		if (SCHED_RR != p->policy)
 			deboost_task(p);
