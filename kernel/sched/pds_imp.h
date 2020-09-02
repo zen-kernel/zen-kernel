@@ -38,6 +38,7 @@ static inline void requeue_task(struct task_struct *p, struct rq *rq);
 static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 {
 	/*printk(KERN_INFO "sched: time_slice_expired(%d) - %px\n", cpu_of(rq), p);*/
+	p->time_slice = sched_timeslice_ns;
 
 	if (p->prio >= MAX_RT_PRIO)
 		p->deadline = rq->clock + user_prio2deadline[TASK_USER_PRIO(p)];

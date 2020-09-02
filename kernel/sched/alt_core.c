@@ -2197,7 +2197,6 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 #endif
 
 	if (p->time_slice < RESCHED_NS) {
-		p->time_slice = sched_timeslice_ns;
 		time_slice_expired(p, rq);
 		resched_curr(rq);
 	}
@@ -3409,10 +3408,8 @@ static inline void check_curr(struct task_struct *p, struct rq *rq)
 
 	update_curr(rq, p);
 
-	if (p->time_slice < RESCHED_NS) {
-		p->time_slice = sched_timeslice_ns;
+	if (p->time_slice < RESCHED_NS)
 		time_slice_expired(p, rq);
-	}
 }
 
 static inline struct task_struct *
