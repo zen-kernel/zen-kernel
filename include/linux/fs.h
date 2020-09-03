@@ -2176,9 +2176,9 @@ static inline void kiocb_clone(struct kiocb *kiocb, struct kiocb *kiocb_src,
  * I_SYNC_QUEUED	Inode is queued in b_io or b_more_io writeback lists.
  *			Used to detect that mark_inode_dirty() should not move
  * 			inode between dirty lists.
+ *
  * I_PAGES		Inode is holding page cache that needs to get reclaimed
  *			first before the inode can go onto the shrinker LRU.
- *
  *
  * Q: What is the difference between I_WILL_FREE and I_FREEING?
  */
