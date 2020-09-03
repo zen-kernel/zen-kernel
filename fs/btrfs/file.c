@@ -1568,7 +1568,7 @@ int btrfs_check_can_nocow(struct btrfs_inode *inode, loff_t pos,
 	}
 
 	ret = can_nocow_extent(&inode->vfs_inode, lockstart, &num_bytes,
-			NULL, NULL, NULL);
+			NULL, NULL, NULL, false);
 	if (ret <= 0) {
 		ret = 0;
 		if (!nowait)
@@ -3176,12 +3176,12 @@ reserve_space:
 		if (ret < 0)
 			goto out;
 		space_reserved = true;
-		ret = btrfs_qgroup_reserve_data(inode, &data_reserved,
-						alloc_start, bytes_to_reserve);
-		if (ret)
-			goto out;
 		ret = btrfs_punch_hole_lock_range(inode, lockstart, lockend,
 						  &cached_state);
+		if (ret)
+			goto out;
+		ret = btrfs_qgroup_reserve_data(inode, &data_reserved,
+						alloc_start, bytes_to_reserve);
 		if (ret)
 			goto out;
 		ret = btrfs_prealloc_file_range(inode, mode, alloc_start,
