@@ -146,7 +146,7 @@ static inline bool sched_task_need_requeue(struct task_struct *p, struct rq *rq)
 	return (task_sched_prio(p, rq) != p->bmq_idx);
 }
 
-static void sched_task_fork(struct task_struct *p)
+static void sched_task_fork(struct task_struct *p, struct rq *rq)
 {
 	p->boost_prio = (p->boost_prio < 0) ?
 		p->boost_prio + MAX_PRIORITY_ADJ : MAX_PRIORITY_ADJ;
