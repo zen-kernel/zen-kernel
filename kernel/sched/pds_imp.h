@@ -1,31 +1,46 @@
 #define ALT_SCHED_VERSION_MSG "sched/bmq: PDS CPU Scheduler 5.8-r0 by Alfred Chen.\n"
 
 static const u64 user_prio2deadline[NICE_WIDTH] = {
-/* -20 */	  6291456,   6920601,   7612661,   8373927,   9211319,
-/* -15 */	 10132450,  11145695,  12260264,  13486290,  14834919,
-/* -10 */	 16318410,  17950251,  19745276,  21719803,  23891783,
-/*  -5 */	 26280961,  28909057,  31799962,  34979958,  38477953,
-/*   0 */	 42325748,  46558322,  51214154,  56335569,  61969125,
-/*   5 */	 68166037,  74982640,  82480904,  90728994,  99801893,
-/*  10 */	109782082, 120760290, 132836319, 146119950, 160731945,
-/*  15 */	176805139, 194485652, 213934217, 235327638, 258860401
+/* -20 */	  4194304,   4613734,   5075107,   5582617,   6140878,
+/* -15 */	  6754965,   7430461,   8173507,   8990857,   9889942,
+/* -10 */	 10878936,  11966829,  13163511,  14479862,  15927848,
+/*  -5 */	 17520632,  19272695,  21199964,  23319960,  25651956,
+/*   0 */	 28217151,  31038866,  34142752,  37557027,  41312729,
+/*   5 */	 45444001,  49988401,  54987241,  60485965,  66534561,
+/*  10 */	 73188017,  80506818,  88557499,  97413248, 107154572,
+/*  15 */	117870029, 129657031, 142622734, 156885007, 172573507
 };
 
-static const int dl_level_map[] = {
-/*      0           4           8           12           */
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1,
-/*      16          20          24          28           */
-	1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 4, 4, 5, 6, 7
+static const unsigned char dl_level_map[] = {
+/*       0               4               8              12           */
+	19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 18,
+/*      16              20              24              28           */
+	18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 17, 17, 17, 17, 17,
+/*      32              36              40              44           */
+	17, 17, 17, 17, 16, 16, 16, 16, 16, 16, 16, 16, 15, 15, 15, 15,
+/*      48              52              56              60           */
+	15, 15, 15, 14, 14, 14, 14, 14, 14, 13, 13, 13, 13, 12, 12, 12,
+/*      64              68              72              76           */
+	12, 11, 11, 11, 10, 10, 10,  9,  9,  8,  7,  6,  5,  4,  3,  2,
+/*      80              84              88              92           */
+	 1,  0
 };
 
 static inline int
 task_sched_prio(const struct task_struct *p, const struct rq *rq)
 {
-	u64 delta = (rq->clock + user_prio2deadline[39] - p->deadline) >> 23;
+	size_t delta;
 
+	if (p == rq->idle)
+		return IDLE_TASK_SCHED_PRIO;
+
+	if (p->prio < MAX_RT_PRIO)
+		return p->prio;
+
+	delta = (rq->clock + user_prio2deadline[39] - p->deadline) >> 21;
 	delta = min((size_t)delta, ARRAY_SIZE(dl_level_map) - 1);
 
-	return (p->prio < MAX_RT_PRIO)? p->prio : MAX_RT_PRIO + dl_level_map[delta];
+	return MAX_RT_PRIO + dl_level_map[delta];
 }
 
 static inline void update_task_priodl(struct task_struct *p)
@@ -173,7 +188,12 @@ static inline bool sched_task_need_requeue(struct task_struct *p, struct rq *rq)
 	return false;
 }
 
-static void sched_task_fork(struct task_struct *p) {}
+static void sched_task_fork(struct task_struct *p, struct rq *rq)
+{
+	if (p->prio >= MAX_RT_PRIO)
+		p->deadline = rq->clock + user_prio2deadline[TASK_USER_PRIO(p)];
+	update_task_priodl(p);
+}
 
 /**
  * task_prio - return the priority value of a given task.
