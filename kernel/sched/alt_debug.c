@@ -1,7 +1,7 @@
 /*
  * kernel/sched/alt_debug.c
  *
- * Print the BMQ debugging details
+ * Print the alt scheduler debugging details
  *
  * Author: Alfred Chen
  * Date  : 2020
