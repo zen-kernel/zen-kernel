@@ -2172,9 +2172,7 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 		 */
 		p->sched_reset_on_fork = 0;
 	}
-	update_task_priodl(p);
 
-	sched_task_fork(p);
 	/*
 	 * The child is not yet in the pid-hash so no cgroup attach races,
 	 * and the cgroup is pinned to this child due to cgroup_fork()
@@ -2190,6 +2188,7 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 	 */
 	rq = this_rq();
 	raw_spin_lock(&rq->lock);
+
 	rq->curr->time_slice /= 2;
 	p->time_slice = rq->curr->time_slice;
 #ifdef CONFIG_SCHED_HRTICK
@@ -2197,9 +2196,10 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 #endif
 
 	if (p->time_slice < RESCHED_NS) {
-		time_slice_expired(p, rq);
+		p->time_slice = sched_timeslice_ns;
 		resched_curr(rq);
 	}
+	sched_task_fork(p, rq);
 	raw_spin_unlock(&rq->lock);
 
 	rseq_migrate(p);
@@ -2795,25 +2795,29 @@ unsigned long nr_iowait(void)
 void sched_exec(void)
 {
 	struct task_struct *p = current;
+	unsigned long flags;
 	int dest_cpu;
+	struct rq *rq;
 
-	if (task_rq(p)->nr_running < 2)
+	raw_spin_lock_irqsave(&p->pi_lock, flags);
+	rq = this_rq();
+
+	if (rq != task_rq(p) || rq->nr_running < 2)
+		goto unlock;
+
+	dest_cpu = select_task_rq(p, task_rq(p));
+	if (dest_cpu == smp_processor_id())
+		goto unlock;
+
+	if (likely(cpu_active(dest_cpu))) {
+		struct migration_arg arg = { p, dest_cpu };
+
+		raw_spin_unlock_irqrestore(&p->pi_lock, flags);
+		stop_one_cpu(task_cpu(p), migration_cpu_stop, &arg);
 		return;
-
-	dest_cpu = cpumask_any_and(p->cpus_ptr, &sched_rq_watermark[IDLE_WM]);
-	if ( dest_cpu < nr_cpu_ids) {
-#ifdef CONFIG_SCHED_SMT
-		int smt = cpumask_any_and(p->cpus_ptr, &sched_sg_idle_mask);
-		if (smt < nr_cpu_ids)
-			dest_cpu = smt;
-#endif
-		if (likely(cpu_active(dest_cpu))) {
-			struct migration_arg arg = { p, dest_cpu };
-
-			stop_one_cpu(task_cpu(p), migration_cpu_stop, &arg);
-			return;
-		}
 	}
+unlock:
+	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 }
 
 #endif
@@ -3313,6 +3317,23 @@ static inline void schedule_debug(struct task_struct *prev, bool preempt)
 
 	schedstat_inc(this_rq()->sched_count);
 }
+
+/*
+ * Compile time debug macro
+ * #define ALT_SCHED_DEBUG
+ */
+
+#ifdef ALT_SCHED_DEBUG
+void alt_sched_debug(void)
+{
+	printk(KERN_INFO "sched: pending: 0x%04lx, idle: 0x%04lx, sg_idle: 0x%04lx\n",
+	       sched_rq_pending_mask.bits[0],
+	       sched_rq_watermark[IDLE_WM].bits[0],
+	       sched_sg_idle_mask.bits[0]);
+}
+#else
+inline void alt_sched_debug(void) {}
+#endif
 
 #ifdef	CONFIG_SMP
 
@@ -5152,6 +5173,8 @@ static int sched_rr_get_interval(pid_t pid, struct timespec64 *t)
 {
 	struct task_struct *p;
 	int retval;
+
+	alt_sched_debug();
 
 	if (pid < 0)
 		return -EINVAL;
