@@ -2,13 +2,13 @@
 
 #ifdef CONFIG_SCHED_ALT
 
-#ifdef CONFIG_SCHED_BMQ
-#define __tsk_deadline(p)	(0UL)
-
 static inline int dl_task(struct task_struct *p)
 {
 	return 0;
 }
+
+#ifdef CONFIG_SCHED_BMQ
+#define __tsk_deadline(p)	(0UL)
 #endif
 
 #ifdef CONFIG_SCHED_PDS
