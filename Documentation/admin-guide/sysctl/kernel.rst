@@ -1620,8 +1620,8 @@ tunable to zero will disable lockup detection altogether.
 yield_type:
 ===========
 
-BMQ CPU scheduler only. This determines what type of yield calls to
-sched_yield will perform.
+BMQ/PDS CPU scheduler only. This determines what type of yield calls
+to sched_yield will perform.
 
   0 - No yield.
   1 - Deboost and requeue task. (default)
