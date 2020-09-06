@@ -5497,7 +5497,7 @@
 			See drivers/net/irda/sa1100_ir.c.
 
 	sched_timeslice=
-			[KNL] Time slice in us for BMQ scheduler.
+			[KNL] Time slice in us for BMQ/PDS scheduler.
 			Format: <int> (must be >= 1000)
 			Default: 4000
 			See Documentation/scheduler/sched-BMQ.txt
