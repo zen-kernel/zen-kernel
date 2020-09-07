@@ -52,6 +52,7 @@ task_work_add(struct task_struct *task, struct callback_head *work, int notify)
 
 	return 0;
 }
+EXPORT_SYMBOL(task_work_add);
 
 /**
  * task_work_cancel - cancel a pending work added by task_work_add()
