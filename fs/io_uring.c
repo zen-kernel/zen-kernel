@@ -2697,8 +2697,15 @@ static int io_read(struct io_kiocb *req, bool force_nonblock)
 		else
 			ret2 = -EINVAL;
 
+		/* no retry on NONBLOCK marked file */
+		if (ret2 == -EAGAIN && (req->file->f_flags & O_NONBLOCK)) {
+			ret = 0;
+			goto done;
+		}
+
 		/* Catch -EAGAIN return for forced non-blocking submission */
 		if (!force_nonblock || ret2 != -EAGAIN) {
+	done:
 			kiocb_done(kiocb, ret2);
 		} else {
 copy_iov:
@@ -2823,7 +2830,13 @@ static int io_write(struct io_kiocb *req, bool force_nonblock)
 		 */
 		if (ret2 == -EOPNOTSUPP && (kiocb->ki_flags & IOCB_NOWAIT))
 			ret2 = -EAGAIN;
+		/* no retry on NONBLOCK marked file */
+		if (ret2 == -EAGAIN && (req->file->f_flags & O_NONBLOCK)) {
+			ret = 0;
+			goto done;
+		}
 		if (!force_nonblock || ret2 != -EAGAIN) {
+done:
 			kiocb_done(kiocb, ret2);
 		} else {
 copy_iov:
@@ -6928,7 +6941,7 @@ static int __io_sqe_files_update(struct io_ring_ctx *ctx,
 		table = &ctx->file_data->table[i >> IORING_FILE_TABLE_SHIFT];
 		index = i & IORING_FILE_TABLE_MASK;
 		if (table->files[index]) {
-			file = io_file_from_index(ctx, index);
+			file = table->files[index];
 			err = io_queue_file_removal(data, file);
 			if (err)
 				break;
@@ -6957,6 +6970,7 @@ static int __io_sqe_files_update(struct io_ring_ctx *ctx,
 			table->files[index] = file;
 			err = io_sqe_file_register(ctx, file, i);
 			if (err) {
+				table->files[index] = NULL;
 				fput(file);
 				break;
 			}
