@@ -1593,6 +1593,7 @@ ttwu_stat(struct task_struct *p, int cpu, int wake_flags)
 static inline void
 ttwu_do_wakeup(struct rq *rq, struct task_struct *p, int wake_flags)
 {
+	check_preempt_curr(rq);
 	p->state = TASK_RUNNING;
 	trace_sched_wakeup(p);
 }
@@ -1615,6 +1616,8 @@ static int ttwu_remote(struct task_struct *p, int wake_flags)
 
 	rq = __task_access_lock(p, &lock);
 	if (task_on_rq_queued(p)) {
+		/* check_preempt_curr() may use rq clock */
+		update_rq_clock(rq);
 		ttwu_do_wakeup(rq, p, wake_flags);
 		ret = 1;
 	}
@@ -1653,8 +1656,6 @@ void sched_ttwu_pending(void *arg)
 
 		ttwu_do_activate(rq, p, p->sched_remote_wakeup ? WF_MIGRATED : 0);
 	}
-
-	check_preempt_curr(rq);
 
 	rq_unlock_irqrestore(rq, &rf);
 }
@@ -1762,7 +1763,6 @@ static inline void ttwu_queue(struct task_struct *p, int cpu, int wake_flags)
 	raw_spin_lock(&rq->lock);
 	update_rq_clock(rq);
 	ttwu_do_activate(rq, p, wake_flags);
-	check_preempt_curr(rq);
 	raw_spin_unlock(&rq->lock);
 }
 
