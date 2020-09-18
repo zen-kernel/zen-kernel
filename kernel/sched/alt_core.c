@@ -2361,6 +2361,8 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 	return 0;
 }
 
+void sched_post_fork(struct task_struct *p) {}
+
 #ifdef CONFIG_SCHEDSTATS
 
 DEFINE_STATIC_KEY_FALSE(sched_schedstats);
