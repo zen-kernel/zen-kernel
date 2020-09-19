@@ -818,11 +818,15 @@ int get_nohz_timer_target(void)
  */
 static inline void wake_up_idle_cpu(int cpu)
 {
+	struct rq *rq = cpu_rq(cpu);
+
 	if (cpu == smp_processor_id())
 		return;
 
-	set_tsk_need_resched(cpu_rq(cpu)->idle);
-	smp_send_reschedule(cpu);
+	if (set_nr_and_not_polling(rq->idle))
+		smp_send_reschedule(cpu);
+	else
+		trace_sched_wake_idle_without_ipi(cpu);
 }
 
 static inline bool wake_up_full_nohz_cpu(int cpu)
@@ -833,6 +837,8 @@ static inline bool wake_up_full_nohz_cpu(int cpu)
 	 * If needed we can still optimize that later with an
 	 * empty IRQ.
 	 */
+	if (cpu_is_offline(cpu))
+		return true;  /* Don't try to wake offline CPUs. */
 	if (tick_nohz_full_cpu(cpu)) {
 		if (cpu != smp_processor_id() ||
 		    tick_nohz_tick_stopped())
@@ -845,7 +851,7 @@ static inline bool wake_up_full_nohz_cpu(int cpu)
 
 void wake_up_nohz_cpu(int cpu)
 {
-	if (cpu_online(cpu) && !wake_up_full_nohz_cpu(cpu))
+	if (!wake_up_full_nohz_cpu(cpu))
 		wake_up_idle_cpu(cpu);
 }
 
@@ -3738,12 +3744,12 @@ static void __sched notrace __schedule(bool preempt)
 		switch_count = &prev->nvcsw;
 	}
 
-	clear_tsk_need_resched(prev);
-	clear_preempt_need_resched();
-
 	check_curr(prev, rq);
 
 	next = choose_next_task(rq, cpu, prev);
+	clear_tsk_need_resched(prev);
+	clear_preempt_need_resched();
+
 
 	if (likely(prev != next)) {
 		next->last_ran = rq->clock_task;
