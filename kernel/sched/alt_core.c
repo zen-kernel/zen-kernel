@@ -45,7 +45,7 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/sched.h>
 
-#define ALT_SCHED_VERSION "v5.8-r3"
+#define ALT_SCHED_VERSION "v5.9-r0"
 
 /* rt_prio(prio) defined in include/linux/sched/rt.h */
 #define rt_task(p)		rt_prio((p)->prio)
