@@ -65,17 +65,11 @@ struct skiplist_node {
 				    &name, &name, &name, &name},\
 				 }
 
-static inline void INIT_SKIPLIST_NODE(struct skiplist_node *node)
-{
-	/* only level 0 ->next matters in skiplist_empty() */
-	WRITE_ONCE(node->next[0], node);
-}
-
 /**
- * FULL_INIT_SKIPLIST_NODE -- fully init a skiplist_node, expecially for header
+ * INIT_SKIPLIST_NODE -- init a skiplist_node, expecially for header
  * @node: the skip list node to be inited.
  */
-static inline void FULL_INIT_SKIPLIST_NODE(struct skiplist_node *node)
+static inline void INIT_SKIPLIST_NODE(struct skiplist_node *node)
 {
 	int i;
 
@@ -84,15 +78,6 @@ static inline void FULL_INIT_SKIPLIST_NODE(struct skiplist_node *node)
 		WRITE_ONCE(node->next[i], node);
 		node->prev[i] = node;
 	}
-}
-
-/**
- * skiplist_empty - test whether a skip list is empty
- * @head: the skip list to test.
- */
-static inline int skiplist_empty(const struct skiplist_node *head)
-{
-	return READ_ONCE(head->next[0]) == head;
 }
 
 /**
@@ -119,31 +104,47 @@ static inline int skiplist_empty(const struct skiplist_node *head)
 #define DEFINE_SKIPLIST_INSERT_FUNC(func_name, search_func)\
 static inline int func_name(struct skiplist_node *head, struct skiplist_node *node)\
 {\
-	struct skiplist_node *update[NUM_SKIPLIST_LEVEL];\
 	struct skiplist_node *p, *q;\
-	int k = head->level;\
+	unsigned int k = head->level;\
+	unsigned int l = node->level;\
 \
 	p = head;\
-	do {\
+	if (l > k) {\
+		l = node->level = ++head->level;\
+\
+		node->next[l] = head;\
+		node->prev[l] = head;\
+		head->next[l] = node;\
+		head->prev[l] = node;\
+\
+		do {\
+			while (q = p->next[k], q != head && search_func(q, node))\
+				p = q;\
+\
+			node->prev[k] = p;\
+			node->next[k] = q;\
+			q->prev[k] = node;\
+			p->next[k] = node;\
+		} while (k--);\
+\
+		return (p == head);\
+	}\
+\
+	while (k > l) {\
 		while (q = p->next[k], q != head && search_func(q, node))\
 			p = q;\
-		update[k] = p;\
-	} while (--k >= 0);\
-\
-	k = node->level;\
-	if (unlikely(k > head->level)) {\
-		node->level = k = ++head->level;\
-		update[k] = head;\
+		k--;\
 	}\
 \
 	do {\
-		p = update[k];\
-		q = p->next[k];\
-		node->next[k] = q;\
-		p->next[k] = node;\
+		while (q = p->next[k], q != head && search_func(q, node))\
+			p = q;\
+\
 		node->prev[k] = p;\
+		node->next[k] = q;\
 		q->prev[k] = node;\
-	} while (--k >= 0);\
+		p->next[k] = node;\
+	} while (k--);\
 \
 	return (p == head);\
 }
@@ -159,18 +160,17 @@ static inline int func_name(struct skiplist_node *head, struct skiplist_node *no
 static inline int
 skiplist_del_init(struct skiplist_node *head, struct skiplist_node *node)
 {
-	int l, m = node->level;
+	unsigned int i, level = node->level;
 
-	for (l = 0; l <= m; l++) {
-		node->prev[l]->next[l] = node->next[l];
-		node->next[l]->prev[l] = node->prev[l];
+	for (i = 0; i <= level; i++) {
+		node->prev[i]->next[i] = node->next[i];
+		node->next[i]->prev[i] = node->prev[i];
 	}
-	if (m == head->level && m > 0) {
-		while (head->next[m] == head && m > 0)
-			m--;
-		head->level = m;
+	if (level == head->level && level) {
+		while (head->next[level] == head && level)
+			level--;
+		head->level = level;
 	}
-	INIT_SKIPLIST_NODE(node);
 
 	return (node->prev[0] == head);
 }
