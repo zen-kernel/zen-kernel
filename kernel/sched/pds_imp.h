@@ -89,7 +89,7 @@ DEFINE_SKIPLIST_INSERT_FUNC(pds_skiplist_insert, pds_skiplist_task_search);
  */
 static inline void sched_queue_init(struct rq *rq)
 {
-	FULL_INIT_SKIPLIST_NODE(&rq->sl_header);
+	INIT_SKIPLIST_NODE(&rq->sl_header);
 }
 
 /*
@@ -105,7 +105,7 @@ static inline void sched_queue_init_idle(struct rq *rq, struct task_struct *idle
 	idle->deadline = 0ULL;
 	update_task_priodl(idle);
 
-	FULL_INIT_SKIPLIST_NODE(&rq->sl_header);
+	INIT_SKIPLIST_NODE(&rq->sl_header);
 
 	idle->sl_node.level = idle->sl_level;
 	pds_skiplist_insert(&rq->sl_header, &idle->sl_node);
