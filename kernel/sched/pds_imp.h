@@ -192,11 +192,9 @@ static inline bool sched_task_need_requeue(struct task_struct *p, struct rq *rq)
  * pds_skiplist_random_level -- Returns a pseudo-random level number for skip
  * list node which is used in PDS run queue.
  *
- * In current implementation, based on testing, the first 8 bits in microseconds
- * of niffies are suitable for random level population.
- * find_first_bit() is used to satisfy p = 0.5 between each levels, and there
- * should be platform hardware supported instruction(known as ctz/clz) to speed
- * up this function.
+ * __ffs() is used to satisfy p = 0.5 between each levels, and there should be
+ * platform instruction(known as ctz/clz) for acceleration.
+ *
  * The skiplist level for a task is populated when task is created and doesn't
  * change in task's life time. When task is being inserted into run queue, this
  * skiplist level is set to task's sl_node->level, the skiplist insert function
@@ -204,8 +202,6 @@ static inline bool sched_task_need_requeue(struct task_struct *p, struct rq *rq)
  */
 static inline int pds_skiplist_random_level(const struct task_struct *p)
 {
-	long unsigned int randseed;
-
 	/*
 	 * 1. Some architectures don't have better than microsecond resolution
 	 * so mask out ~microseconds as a factor of the random seed for skiplist
@@ -213,9 +209,13 @@ static inline int pds_skiplist_random_level(const struct task_struct *p)
 	 * 2. Use address of task structure pointer as another factor of the
 	 * random seed for task burst forking scenario.
 	 */
-	randseed = (task_rq(p)->clock ^ (long unsigned int)p) >> 10;
+	unsigned long randseed = (task_rq(p)->clock ^ (unsigned long)p) >> 10;
 
-	return find_first_bit(&randseed, NUM_SKIPLIST_LEVEL - 1);
+	randseed &= __GENMASK(NUM_SKIPLIST_LEVEL - 1, 0);
+	if (randseed)
+		return __ffs(randseed);
+
+	return (NUM_SKIPLIST_LEVEL - 1);
 }
 
 static void sched_task_fork(struct task_struct *p, struct rq *rq)
