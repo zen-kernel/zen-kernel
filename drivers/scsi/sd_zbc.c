@@ -633,6 +633,45 @@ static int sd_zbc_check_capacity(struct scsi_disk *sdkp, unsigned char *buf,
 	return 0;
 }
 
+void sd_zbc_print_zones(struct scsi_disk *sdkp)
+{
+	if (!sd_is_zoned(sdkp) || !sdkp->capacity)
+		return;
+
+	if (sdkp->capacity & (sdkp->zone_blocks - 1))
+		sd_printk(KERN_NOTICE, sdkp,
+			  "%u zones of %u logical blocks + 1 runt zone\n",
+			  sdkp->nr_zones - 1,
+			  sdkp->zone_blocks);
+	else
+		sd_printk(KERN_NOTICE, sdkp,
+			  "%u zones of %u logical blocks\n",
+			  sdkp->nr_zones,
+			  sdkp->zone_blocks);
+}
+
+static int sd_zbc_init_disk(struct scsi_disk *sdkp)
+{
+	sdkp->zones_wp_offset = NULL;
+	spin_lock_init(&sdkp->zones_wp_offset_lock);
+	sdkp->rev_wp_offset = NULL;
+	mutex_init(&sdkp->rev_mutex);
+	INIT_WORK(&sdkp->zone_wp_offset_work, sd_zbc_update_wp_offset_workfn);
+	sdkp->zone_wp_update_buf = kzalloc(SD_BUF_SIZE, GFP_KERNEL);
+	if (!sdkp->zone_wp_update_buf)
+		return -ENOMEM;
+
+	return 0;
+}
+
+void sd_zbc_release_disk(struct scsi_disk *sdkp)
+{
+	kvfree(sdkp->zones_wp_offset);
+	sdkp->zones_wp_offset = NULL;
+	kfree(sdkp->zone_wp_update_buf);
+	sdkp->zone_wp_update_buf = NULL;
+}
+
 static void sd_zbc_revalidate_zones_cb(struct gendisk *disk)
 {
 	struct scsi_disk *sdkp = scsi_disk(disk);
@@ -645,7 +684,29 @@ static int sd_zbc_revalidate_zones(struct scsi_disk *sdkp,
 				   unsigned int nr_zones)
 {
 	struct gendisk *disk = sdkp->disk;
+	struct request_queue *q = disk->queue;
+	u32 max_append;
 	int ret = 0;
+
+	/*
+	 * For all zoned disks, initialize zone append emulation data if not
+	 * already done. This is necessary also for host-aware disks used as
+	 * regular disks due to the presence of partitions as these partitions
+	 * may be deleted and the disk zoned model changed back from
+	 * BLK_ZONED_NONE to BLK_ZONED_HA.
+	 */
+	if (sd_is_zoned(sdkp) && !sdkp->zone_wp_update_buf) {
+		ret = sd_zbc_init_disk(sdkp);
+		if (ret)
+			return ret;
+	}
+
+	/*
+	 * There is nothing to do for regular disks, including host-aware disks
+	 * that have partitions.
+	 */
+	if (!blk_queue_is_zoned(q))
+		return 0;
 
 	/*
 	 * Make sure revalidate zones are serialized to ensure exclusive
@@ -681,6 +742,19 @@ static int sd_zbc_revalidate_zones(struct scsi_disk *sdkp,
 	kvfree(sdkp->rev_wp_offset);
 	sdkp->rev_wp_offset = NULL;
 
+	if (ret) {
+		sdkp->zone_blocks = 0;
+		sdkp->nr_zones = 0;
+		sdkp->capacity = 0;
+		goto unlock;
+	}
+
+	max_append = min_t(u32, logical_to_sectors(sdkp->device, zone_blocks),
+			   q->limits.max_segments << (PAGE_SHIFT - 9));
+	max_append = min_t(u32, max_append, queue_max_hw_sectors(q));
+
+	blk_queue_max_zone_append_sectors(q, max_append);
+
 unlock:
 	mutex_unlock(&sdkp->rev_mutex);
 
@@ -693,7 +767,6 @@ int sd_zbc_read_zones(struct scsi_disk *sdkp, unsigned char *buf)
 	struct request_queue *q = disk->queue;
 	unsigned int nr_zones;
 	u32 zone_blocks = 0;
-	u32 max_append;
 	int ret;
 
 	if (!sd_is_zoned(sdkp))
@@ -726,66 +799,10 @@ int sd_zbc_read_zones(struct scsi_disk *sdkp, unsigned char *buf)
 	if (ret)
 		goto err;
 
-	/*
-	 * On the first scan 'chunk_sectors' isn't setup yet, so calling
-	 * blk_queue_max_zone_append_sectors() will result in a WARN(). Defer
-	 * this setting to the second scan.
-	 */
-	if (sdkp->first_scan)
-		return 0;
-
-	max_append = min_t(u32, logical_to_sectors(sdkp->device, zone_blocks),
-			   q->limits.max_segments << (PAGE_SHIFT - 9));
-	max_append = min_t(u32, max_append, queue_max_hw_sectors(q));
-
-	blk_queue_max_zone_append_sectors(q, max_append);
-
 	return 0;
 
 err:
 	sdkp->capacity = 0;
 
 	return ret;
-}
-
-void sd_zbc_print_zones(struct scsi_disk *sdkp)
-{
-	if (!sd_is_zoned(sdkp) || !sdkp->capacity)
-		return;
-
-	if (sdkp->capacity & (sdkp->zone_blocks - 1))
-		sd_printk(KERN_NOTICE, sdkp,
-			  "%u zones of %u logical blocks + 1 runt zone\n",
-			  sdkp->nr_zones - 1,
-			  sdkp->zone_blocks);
-	else
-		sd_printk(KERN_NOTICE, sdkp,
-			  "%u zones of %u logical blocks\n",
-			  sdkp->nr_zones,
-			  sdkp->zone_blocks);
-}
-
-int sd_zbc_init_disk(struct scsi_disk *sdkp)
-{
-	if (!sd_is_zoned(sdkp))
-		return 0;
-
-	sdkp->zones_wp_offset = NULL;
-	spin_lock_init(&sdkp->zones_wp_offset_lock);
-	sdkp->rev_wp_offset = NULL;
-	mutex_init(&sdkp->rev_mutex);
-	INIT_WORK(&sdkp->zone_wp_offset_work, sd_zbc_update_wp_offset_workfn);
-	sdkp->zone_wp_update_buf = kzalloc(SD_BUF_SIZE, GFP_KERNEL);
-	if (!sdkp->zone_wp_update_buf)
-		return -ENOMEM;
-
-	return 0;
-}
-
-void sd_zbc_release_disk(struct scsi_disk *sdkp)
-{
-	kvfree(sdkp->zones_wp_offset);
-	sdkp->zones_wp_offset = NULL;
-	kfree(sdkp->zone_wp_update_buf);
-	sdkp->zone_wp_update_buf = NULL;
 }
