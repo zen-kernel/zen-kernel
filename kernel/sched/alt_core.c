@@ -105,6 +105,29 @@ EXPORT_SYMBOL_GPL(sched_smt_present);
  * domain, see cpus_share_cache().
  */
 DEFINE_PER_CPU(int, sd_llc_id);
+
+#if NR_CPUS <= 64
+#define SCHED_CPUMASK_FIRST_BIT(mask)	(__ffs((mask).bits[0]))
+
+static inline unsigned int sched_cpumask_first_and(const struct cpumask *srcp,
+						   const struct cpumask *andp)
+{
+	unsigned long t = srcp->bits[0] & andp->bits[0];
+
+	if (t)
+		return __ffs(t);
+
+	return nr_cpu_ids;
+}
+#else
+#define SCHED_CPUMASK_FIRST_BIT(mask)	(cpumask_fist_bit(&(mask)))
+static inline unsigned int sched_cpumask_first_and(const struct cpumask *srcp,
+						   const struct cpumask *andp)
+{
+	return cpumask_first_and(srcp, andp);
+}
+#endif
+
 #endif /* CONFIG_SMP */
 
 static DEFINE_MUTEX(sched_hotcpu_mutex);
@@ -1520,9 +1543,9 @@ static inline int select_task_rq(struct task_struct *p, struct rq *rq)
 	    cpumask_and(&tmp, &chk_mask, &sched_rq_watermark[IDLE_WM]) ||
 	    cpumask_and(&tmp, &chk_mask,
 			&sched_rq_watermark[task_sched_prio(p, rq) + 1]))
-		return best_mask_cpu(task_cpu(p), &tmp);
+		return SCHED_CPUMASK_FIRST_BIT(tmp);
 
-	return best_mask_cpu(task_cpu(p), &chk_mask);
+	return SCHED_CPUMASK_FIRST_BIT(chk_mask);
 }
 
 void sched_set_stop_task(int cpu, struct task_struct *stop)
@@ -3094,8 +3117,8 @@ static inline int active_load_balance_cpu_stop(void *data)
 {
 	struct rq *rq = this_rq();
 	struct task_struct *p = data;
-	cpumask_t tmp;
 	unsigned long flags;
+	int dcpu;
 
 	local_irq_save(flags);
 
@@ -3105,12 +3128,9 @@ static inline int active_load_balance_cpu_stop(void *data)
 	rq->active_balance = 0;
 	/* _something_ may have changed the task, double check again */
 	if (task_on_rq_queued(p) && task_rq(p) == rq &&
-	    cpumask_and(&tmp, p->cpus_ptr, &sched_sg_idle_mask)) {
-		int cpu = cpu_of(rq);
-		int dcpu = __best_mask_cpu(cpu, &tmp,
-					   per_cpu(sched_cpu_llc_mask, cpu));
+	    (dcpu = sched_cpumask_first_and(p->cpus_ptr, &sched_sg_idle_mask)) <
+	    nr_cpu_ids)
 		rq = move_queued_task(rq, p, dcpu);
-	}
 
 	raw_spin_unlock(&rq->lock);
 	raw_spin_unlock(&p->pi_lock);
