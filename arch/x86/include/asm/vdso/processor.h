@@ -10,7 +10,7 @@
 /* REP NOP (PAUSE) is a good thing to insert into busy-wait loops. */
 static __always_inline void rep_nop(void)
 {
-	asm volatile("rep; nop" ::: "memory");
+	asm volatile("lfence" ::: "memory");
 }
 
 static __always_inline void cpu_relax(void)

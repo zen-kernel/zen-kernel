@@ -717,6 +717,7 @@ rwsem_spin_on_owner(struct rw_semaphore *sem, unsigned long nonspinnable)
 	struct task_struct *new, *owner;
 	unsigned long flags, new_flags;
 	enum owner_state state;
+	int i = 0;
 
 	owner = rwsem_owner_flags(sem, &flags);
 	state = rwsem_owner_state(owner, flags, nonspinnable);
@@ -750,7 +751,8 @@ rwsem_spin_on_owner(struct rw_semaphore *sem, unsigned long nonspinnable)
 			break;
 		}
 
-		cpu_relax();
+		if (i++ > 1000)
+			cpu_relax();
 	}
 	rcu_read_unlock();
 
