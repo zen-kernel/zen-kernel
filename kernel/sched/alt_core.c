@@ -11,6 +11,10 @@
  *		scheduler by Alfred Chen.
  *  2019-02-20	BMQ(BitMap Queue) kernel scheduler by Alfred Chen.
  */
+#define CREATE_TRACE_POINTS
+#include <trace/events/sched.h>
+#undef CREATE_TRACE_POINTS
+
 #include "sched.h"
 
 #include <linux/sched/rt.h>
@@ -42,8 +46,11 @@
 #include "pelt.h"
 #include "smp.h"
 
-#define CREATE_TRACE_POINTS
-#include <trace/events/sched.h>
+/*
+ * Export tracepoints that act as a bare tracehook (ie: have no trace event
+ * associated with them) to allow external modules to probe them.
+ */
+EXPORT_TRACEPOINT_SYMBOL_GPL(pelt_irq_tp);
 
 #define ALT_SCHED_VERSION "v5.9-r0"
 
