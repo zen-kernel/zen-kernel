@@ -46,6 +46,8 @@
 
 #include "cpupri.h"
 
+#include <trace/events/sched.h>
+
 #ifdef CONFIG_SCHED_BMQ
 #include "bmq.h"
 #endif
@@ -495,6 +497,8 @@ static inline int sched_tick_offload_init(void) { return 0; }
 #endif
 
 extern void schedule_idle(void);
+
+#define cap_scale(v, s) ((v)*(s) >> SCHED_CAPACITY_SHIFT)
 
 /*
  * !! For sched_setattr_nocheck() (kernel) only !!
