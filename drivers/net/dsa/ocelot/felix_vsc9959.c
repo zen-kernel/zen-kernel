@@ -1105,8 +1105,21 @@ static int vsc9959_prevalidate_phy_mode(struct ocelot *ocelot, int port,
 	}
 }
 
+/* Watermark encode
+ * Bit 8:   Unit; 0:1, 1:16
+ * Bit 7-0: Value to be multiplied with unit
+ */
+static u16 vsc9959_wm_enc(u16 value)
+{
+	if (value >= BIT(8))
+		return BIT(8) | (value / 16);
+
+	return value;
+}
+
 static const struct ocelot_ops vsc9959_ops = {
 	.reset			= vsc9959_reset,
+	.wm_enc			= vsc9959_wm_enc,
 };
 
 static int vsc9959_mdio_bus_alloc(struct ocelot *ocelot)
@@ -1215,8 +1228,28 @@ static void vsc9959_mdio_bus_free(struct ocelot *ocelot)
 static void vsc9959_sched_speed_set(struct ocelot *ocelot, int port,
 				    u32 speed)
 {
+	u8 tas_speed;
+
+	switch (speed) {
+	case SPEED_10:
+		tas_speed = OCELOT_SPEED_10;
+		break;
+	case SPEED_100:
+		tas_speed = OCELOT_SPEED_100;
+		break;
+	case SPEED_1000:
+		tas_speed = OCELOT_SPEED_1000;
+		break;
+	case SPEED_2500:
+		tas_speed = OCELOT_SPEED_2500;
+		break;
+	default:
+		tas_speed = OCELOT_SPEED_1000;
+		break;
+	}
+
 	ocelot_rmw_rix(ocelot,
-		       QSYS_TAG_CONFIG_LINK_SPEED(speed),
+		       QSYS_TAG_CONFIG_LINK_SPEED(tas_speed),
 		       QSYS_TAG_CONFIG_LINK_SPEED_M,
 		       QSYS_TAG_CONFIG, port);
 }
