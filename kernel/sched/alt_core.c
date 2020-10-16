@@ -105,9 +105,17 @@ EXPORT_SYMBOL_GPL(sched_smt_present);
  */
 DEFINE_PER_CPU(int, sd_llc_id);
 
-#if NR_CPUS <= 64
-#define SCHED_CPUMASK_FIRST_BIT(mask)	(__ffs((mask).bits[0]))
+enum {
+	LLC_LEVEL = 1,
+	NR_BEST_CPU_LEVEL
+};
 
+#define NR_BEST_CPU_MASK (1 << (NR_BEST_CPU_LEVEL - 1))
+
+static cpumask_t
+sched_best_cpu_masks[NR_CPUS][NR_BEST_CPU_MASK] ____cacheline_aligned_in_smp;
+
+#if NR_CPUS <= 64
 static inline unsigned int sched_cpumask_first_and(const struct cpumask *srcp,
 						   const struct cpumask *andp)
 {
@@ -118,12 +126,34 @@ static inline unsigned int sched_cpumask_first_and(const struct cpumask *srcp,
 
 	return nr_cpu_ids;
 }
+
+static inline unsigned int sched_best_cpu(const unsigned int cpu,
+					  const struct cpumask *m)
+{
+	cpumask_t *chk = sched_best_cpu_masks[cpu];
+	unsigned long t;
+
+	while ((t = chk->bits[0] & m->bits[0]) == 0UL)
+		chk++;
+
+	return __ffs(t);
+}
 #else
-#define SCHED_CPUMASK_FIRST_BIT(mask)	(cpumask_fist_bit(&(mask)))
 static inline unsigned int sched_cpumask_first_and(const struct cpumask *srcp,
 						   const struct cpumask *andp)
 {
 	return cpumask_first_and(srcp, andp);
+}
+
+static inline unsigned int sched_best_cpu(const unsigned int cpu,
+					  const struct cpumask *m)
+{
+	cpumask_t t, *chk = sched_best_cpu_masks[cpu];
+
+	while (!cpumask_and(&t, chk, m))
+		chk++;
+
+	return cpumask_any(t);
 }
 #endif
 
@@ -822,7 +852,7 @@ int get_nohz_timer_target(void)
 		default_cpu = cpu;
 	}
 
-	for (mask = &(per_cpu(sched_cpu_affinity_masks, cpu)[0]);
+	for (mask = per_cpu(sched_cpu_affinity_masks, cpu);
 	     mask < per_cpu(sched_cpu_affinity_end_mask, cpu); mask++)
 		for_each_cpu_and(i, mask, housekeeping_cpumask(HK_FLAG_TIMER))
 			if (!idle_cpu(i))
@@ -1542,9 +1572,9 @@ static inline int select_task_rq(struct task_struct *p, struct rq *rq)
 	    cpumask_and(&tmp, &chk_mask, &sched_rq_watermark[IDLE_WM]) ||
 	    cpumask_and(&tmp, &chk_mask,
 			&sched_rq_watermark[task_sched_prio(p, rq) + 1]))
-		return SCHED_CPUMASK_FIRST_BIT(tmp);
+		return sched_best_cpu(task_cpu(p), &tmp);
 
-	return SCHED_CPUMASK_FIRST_BIT(chk_mask);
+	return sched_best_cpu(task_cpu(p), &chk_mask);
 }
 
 void sched_set_stop_task(int cpu, struct task_struct *stop)
@@ -3543,7 +3573,7 @@ static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 	if (cpumask_empty(&sched_rq_pending_mask))
 		return 0;
 
-	affinity_mask = &(per_cpu(sched_cpu_affinity_masks, cpu)[0]);
+	affinity_mask = per_cpu(sched_cpu_affinity_masks, cpu);
 	end_mask = per_cpu(sched_cpu_affinity_end_mask, cpu);
 	do {
 		int i;
@@ -5894,6 +5924,10 @@ static void sched_init_topology_cpumask_early(void)
 		per_cpu(sched_cpu_affinity_end_mask, cpu) =
 			&(per_cpu(sched_cpu_affinity_masks, cpu)[1]);
 		/*per_cpu(sd_llc_id, cpu) = cpu;*/
+
+		for (level = 0; level < NR_BEST_CPU_MASK; level++)
+			cpumask_copy(&sched_best_cpu_masks[cpu][level],
+				     cpu_possible_mask);
 	}
 }
 
@@ -5929,6 +5963,9 @@ static void sched_init_topology_cpumask(void)
 		per_cpu(sched_cpu_affinity_end_mask, cpu) = chk;
 		printk(KERN_INFO "sched: cpu#%02d llc_id = %d\n",
 		       cpu, per_cpu(sd_llc_id, cpu));
+
+		cpumask_copy(sched_best_cpu_masks[cpu],
+			     cpu_coregroup_mask(cpu));
 	}
 }
 #endif
