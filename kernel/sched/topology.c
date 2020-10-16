@@ -2755,7 +2755,15 @@ int __read_mostly		node_reclaim_distance = RECLAIM_DISTANCE;
 
 int sched_numa_find_closest(const struct cpumask *cpus, int cpu)
 {
-	return best_mask_cpu(cpu, cpus);
+	const cpumask_t *mask;
+
+	if (cpumask_test_cpu(cpu, cpus))
+		return cpu;
+
+	mask = per_cpu(sched_cpu_affinity_masks, cpu);
+	while ((cpu = cpumask_any_and(cpus, mask)) >= nr_cpu_ids)
+		mask++;
+	return cpu;
 }
 #endif /* CONFIG_NUMA */
 #endif
