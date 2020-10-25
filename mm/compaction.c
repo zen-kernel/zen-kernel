@@ -1950,7 +1950,11 @@ static int sysctl_compact_unevictable_allowed __read_mostly = CONFIG_COMPACT_UNE
  * aggressively the kernel should compact memory in the
  * background. It takes values in the range [0, 100].
  */
+#ifdef CONFIG_ZEN_INTERACTIVE
+static unsigned int __read_mostly sysctl_compaction_proactiveness;
+#else
 static unsigned int __read_mostly sysctl_compaction_proactiveness = 20;
+#endif
 static int sysctl_extfrag_threshold = 500;
 static int __read_mostly sysctl_compact_memory;
 
