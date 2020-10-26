@@ -50,7 +50,7 @@
 
 #include <linux/kernel.h>
 
-#define NUM_SKIPLIST_LEVEL (8)
+#define NUM_SKIPLIST_LEVEL (4)
 
 struct skiplist_node {
 	int level;	/* Levels in this node */
@@ -59,10 +59,8 @@ struct skiplist_node {
 };
 
 #define SKIPLIST_NODE_INIT(name) { 0,\
-				   {&name, &name, &name, &name,\
-				    &name, &name, &name, &name},\
-				   {&name, &name, &name, &name,\
-				    &name, &name, &name, &name},\
+				   {&name, &name, &name, &name},\
+				   {&name, &name, &name, &name},\
 				 }
 
 /**
