@@ -168,22 +168,17 @@ static inline unsigned long sched_queue_watermark(struct rq *rq)
 
 static inline bool sched_task_need_requeue(struct task_struct *p, struct rq *rq)
 {
-	struct skiplist_node *node = p->sl_node.prev[0];
+	struct skiplist_node *node;
 
-	if (node != &rq->sl_header) {
-		struct task_struct *t = skiplist_entry(node, struct task_struct, sl_node);
-
-		if (t->priodl > p->priodl)
-			return true;
-	}
+	node = p->sl_node.prev[0];
+	if (node != &rq->sl_header &&
+	    skiplist_entry(node, struct task_struct, sl_node)->priodl > p->priodl)
+		return true;
 
 	node = p->sl_node.next[0];
-	if (node != &rq->sl_header) {
-		struct task_struct *t = skiplist_entry(node, struct task_struct, sl_node);
-
-		if (t->priodl < p->priodl)
-			return true;
-	}
+	if (node != &rq->sl_header &&
+	    skiplist_entry(node, struct task_struct, sl_node)->priodl < p->priodl)
+		return true;
 
 	return false;
 }
