@@ -296,6 +296,7 @@ void mptcp_get_options(const struct sk_buff *skb,
 	mp_opt->mp_capable = 0;
 	mp_opt->mp_join = 0;
 	mp_opt->add_addr = 0;
+	mp_opt->ahmac = 0;
 	mp_opt->rm_addr = 0;
 	mp_opt->dss = 0;
 
@@ -517,7 +518,7 @@ static bool mptcp_established_options_dss(struct sock *sk, struct sk_buff *skb,
 		return ret;
 	}
 
-	if (subflow->use_64bit_ack) {
+	if (READ_ONCE(msk->use_64bit_ack)) {
 		ack_size = TCPOLEN_MPTCP_DSS_ACK64;
 		opts->ext_copy.data_ack = msk->ack_seq;
 		opts->ext_copy.ack64 = 1;
