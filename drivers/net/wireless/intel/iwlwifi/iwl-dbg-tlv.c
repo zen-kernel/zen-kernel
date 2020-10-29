@@ -947,9 +947,8 @@ static bool iwl_dbg_tlv_check_fw_pkt(struct iwl_fw_runtime *fwrt,
 	struct iwl_rx_packet *pkt = tp_data->fw_pkt;
 	struct iwl_cmd_header *wanted_hdr = (void *)&trig_data;
 
-	if (pkt && ((wanted_hdr->cmd == 0 && wanted_hdr->group_id == 0) ||
-		    (pkt->hdr.cmd == wanted_hdr->cmd &&
-		     pkt->hdr.group_id == wanted_hdr->group_id))) {
+	if (pkt && (pkt->hdr.cmd == wanted_hdr->cmd &&
+		    pkt->hdr.group_id == wanted_hdr->group_id)) {
 		struct iwl_rx_packet *fw_pkt =
 			kmemdup(pkt,
 				sizeof(*pkt) + iwl_rx_packet_payload_len(pkt),
@@ -1011,6 +1010,9 @@ static void iwl_dbg_tlv_init_cfg(struct iwl_fw_runtime *fwrt)
 {
 	enum iwl_fw_ini_buffer_location *ini_dest = &fwrt->trans->dbg.ini_dest;
 	int ret, i;
+
+	if (*ini_dest != IWL_FW_INI_LOCATION_INVALID)
+		return;
 
 	IWL_DEBUG_FW(fwrt,
 		     "WRT: Generating active triggers list, domain 0x%x\n",

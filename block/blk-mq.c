@@ -1105,10 +1105,11 @@ static bool __blk_mq_get_driver_tag(struct request *rq)
 	if (blk_mq_tag_is_reserved(rq->mq_hctx->sched_tags, rq->internal_tag)) {
 		bt = &rq->mq_hctx->tags->breserved_tags;
 		tag_offset = 0;
+	} else {
+		if (!hctx_may_queue(rq->mq_hctx, bt))
+			return false;
 	}
 
-	if (!hctx_may_queue(rq->mq_hctx, bt))
-		return false;
 	tag = __sbitmap_queue_get(bt);
 	if (tag == BLK_MQ_NO_TAG)
 		return false;
@@ -2264,7 +2265,6 @@ queue_exit:
 	blk_queue_exit(q);
 	return BLK_QC_T_NONE;
 }
-EXPORT_SYMBOL_GPL(blk_mq_submit_bio); /* only for request based dm */
 
 void blk_mq_free_rqs(struct blk_mq_tag_set *set, struct blk_mq_tags *tags,
 		     unsigned int hctx_idx)

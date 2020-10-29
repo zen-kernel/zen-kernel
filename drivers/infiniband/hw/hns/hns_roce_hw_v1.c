@@ -271,7 +271,6 @@ static int hns_roce_v1_post_send(struct ib_qp *ibqp,
 				ps_opcode = HNS_ROCE_WQE_OPCODE_SEND;
 				break;
 			case IB_WR_LOCAL_INV:
-				break;
 			case IB_WR_ATOMIC_CMP_AND_SWP:
 			case IB_WR_ATOMIC_FETCH_AND_ADD:
 			case IB_WR_LSO:
@@ -3572,7 +3571,7 @@ int hns_roce_v1_destroy_qp(struct ib_qp *ibqp, struct ib_udata *udata)
 	return 0;
 }
 
-static void hns_roce_v1_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata)
+static int hns_roce_v1_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata)
 {
 	struct hns_roce_dev *hr_dev = to_hr_dev(ibcq->device);
 	struct hns_roce_cq *hr_cq = to_hr_cq(ibcq);
@@ -3603,6 +3602,7 @@ static void hns_roce_v1_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata)
 		}
 		wait_time++;
 	}
+	return 0;
 }
 
 static void set_eq_cons_index_v1(struct hns_roce_eq *eq, int req_not)

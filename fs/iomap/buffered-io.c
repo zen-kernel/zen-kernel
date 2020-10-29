@@ -49,16 +49,8 @@ iomap_page_create(struct inode *inode, struct page *page)
 	if (iop || i_blocksize(inode) == PAGE_SIZE)
 		return iop;
 
-	iop = kmalloc(sizeof(*iop), GFP_NOFS | __GFP_NOFAIL);
-	atomic_set(&iop->read_count, 0);
-	atomic_set(&iop->write_count, 0);
+	iop = kzalloc(sizeof(*iop), GFP_NOFS | __GFP_NOFAIL);
 	spin_lock_init(&iop->uptodate_lock);
-	bitmap_zero(iop->uptodate, PAGE_SIZE / SECTOR_SIZE);
-
-	/*
-	 * migrate_page_move_mapping() assumes that pages with private data have
-	 * their count elevated by 1.
-	 */
 	attach_page_private(page, iop);
 	return iop;
 }
@@ -574,10 +566,10 @@ __iomap_write_begin(struct inode *inode, loff_t pos, unsigned len, int flags,
 	loff_t block_start = pos & ~(block_size - 1);
 	loff_t block_end = (pos + len + block_size - 1) & ~(block_size - 1);
 	unsigned from = offset_in_page(pos), to = from + len, poff, plen;
-	int status;
 
 	if (PageUptodate(page))
 		return 0;
+	ClearPageError(page);
 
 	do {
 		iomap_adjust_read_range(inode, iop, &block_start,
@@ -594,14 +586,13 @@ __iomap_write_begin(struct inode *inode, loff_t pos, unsigned len, int flags,
 			if (WARN_ON_ONCE(flags & IOMAP_WRITE_F_UNSHARE))
 				return -EIO;
 			zero_user_segments(page, poff, from, to, poff + plen);
-			iomap_set_range_uptodate(page, poff, plen);
-			continue;
+		} else {
+			int status = iomap_read_page_sync(block_start, page,
+					poff, plen, srcmap);
+			if (status)
+				return status;
 		}
-
-		status = iomap_read_page_sync(block_start, page, poff, plen,
-				srcmap);
-		if (status)
-			return status;
+		iomap_set_range_uptodate(page, poff, plen);
 	} while ((block_start += plen) < block_end);
 
 	return 0;
