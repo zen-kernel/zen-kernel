@@ -92,6 +92,7 @@ static cpumask_t sched_rq_pending_mask ____cacheline_aligned_in_smp;
 
 DEFINE_PER_CPU(cpumask_t [NR_CPU_AFFINITY_CHK_LEVEL], sched_cpu_affinity_masks);
 DEFINE_PER_CPU(cpumask_t *, sched_cpu_affinity_end_mask);
+DEFINE_PER_CPU(cpumask_t *, sched_cpu_llc_mask);
 
 #ifdef CONFIG_SCHED_SMT
 DEFINE_STATIC_KEY_FALSE(sched_smt_present);
@@ -5891,6 +5892,8 @@ static void sched_init_topology_cpumask_early(void)
 			cpumask_copy(tmp, cpu_possible_mask);
 			cpumask_clear_cpu(cpu, tmp);
 		}
+		per_cpu(sched_cpu_llc_mask, cpu) =
+			&(per_cpu(sched_cpu_affinity_masks, cpu)[0]);
 		per_cpu(sched_cpu_affinity_end_mask, cpu) =
 			&(per_cpu(sched_cpu_affinity_masks, cpu)[1]);
 		/*per_cpu(sd_llc_id, cpu) = cpu;*/
@@ -5920,6 +5923,7 @@ static void sched_init_topology_cpumask(void)
 		TOPOLOGY_CPUMASK(smt, topology_sibling_cpumask(cpu), false);
 #endif
 		per_cpu(sd_llc_id, cpu) = cpumask_first(cpu_coregroup_mask(cpu));
+		per_cpu(sched_cpu_llc_mask, cpu) = chk;
 		TOPOLOGY_CPUMASK(coregroup, cpu_coregroup_mask(cpu), false);
 
 		TOPOLOGY_CPUMASK(core, topology_core_cpumask(cpu), false);
@@ -5927,8 +5931,10 @@ static void sched_init_topology_cpumask(void)
 		TOPOLOGY_CPUMASK(others, cpu_online_mask, true);
 
 		per_cpu(sched_cpu_affinity_end_mask, cpu) = chk;
-		printk(KERN_INFO "sched: cpu#%02d llc_id = %d\n",
-		       cpu, per_cpu(sd_llc_id, cpu));
+		printk(KERN_INFO "sched: cpu#%02d llc_id = %d, llc_mask idx = %d\n",
+		       cpu, per_cpu(sd_llc_id, cpu),
+		       (int) (per_cpu(sched_cpu_llc_mask, cpu) -
+			      &(per_cpu(sched_cpu_affinity_masks, cpu)[0])));
 	}
 }
 #endif
