@@ -153,7 +153,7 @@ static inline unsigned int sched_best_cpu(const unsigned int cpu,
 	while (!cpumask_and(&t, chk, m))
 		chk++;
 
-	return cpumask_any(&t);
+	return cpumask_any(t);
 }
 #endif
 
