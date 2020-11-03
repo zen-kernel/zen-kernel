@@ -225,6 +225,20 @@ enum {
 
 DECLARE_PER_CPU(cpumask_t [NR_CPU_AFFINITY_CHK_LEVEL], sched_cpu_affinity_masks);
 
+static inline int __best_mask_cpu(int cpu, const cpumask_t *cpumask,
+				  const cpumask_t *mask)
+{
+	while ((cpu = cpumask_any_and(cpumask, mask)) >= nr_cpu_ids)
+		mask++;
+	return cpu;
+}
+
+static inline int best_mask_cpu(int cpu, const cpumask_t *cpumask)
+{
+	return cpumask_test_cpu(cpu, cpumask)? cpu :
+		__best_mask_cpu(cpu, cpumask, &(per_cpu(sched_cpu_affinity_masks, cpu)[0]));
+}
+
 extern void flush_smp_call_function_from_idle(void);
 
 #else  /* !CONFIG_SMP */
