@@ -221,7 +221,7 @@ static ssize_t power1_average_show(struct device *dev,
 		prev_ptsc[cu] = data->cpu_sw_pwr_ptsc[cu];
 	}
 
-	leftover = schedule_timeout_interruptible(msecs_to_jiffies(data->power_period));
+	leftover = schedule_msec_hrtimeout_interruptible((data->power_period));
 	if (leftover)
 		return 0;
 

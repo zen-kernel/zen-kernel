@@ -477,7 +477,7 @@ static int rtsx_polling_thread(void *__dev)
 
 	for (;;) {
 		set_current_state(TASK_INTERRUPTIBLE);
-		schedule_timeout(msecs_to_jiffies(POLLING_INTERVAL));
+		schedule_msec_hrtimeout((POLLING_INTERVAL));
 
 		/* lock the device pointers */
 		mutex_lock(&dev->dev_mutex);

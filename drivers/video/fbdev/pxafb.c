@@ -1287,7 +1287,7 @@ static int pxafb_smart_thread(void *arg)
 		mutex_unlock(&fbi->ctrlr_lock);
 
 		set_current_state(TASK_INTERRUPTIBLE);
-		schedule_timeout(msecs_to_jiffies(30));
+		schedule_msec_hrtimeout((30));
 	}
 
 	pr_debug("%s(): task ending\n", __func__);
