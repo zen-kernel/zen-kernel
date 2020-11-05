@@ -821,6 +821,12 @@ static void trc_read_check_handler(void *t_in)
 		WRITE_ONCE(t->trc_reader_checked, true);
 		goto reset_ipi;
 	}
+	// If we are racing with an rcu_read_unlock_trace(), try again later.
+	if (unlikely(t->trc_reader_nesting < 0)) {
+		if (WARN_ON_ONCE(atomic_dec_and_test(&trc_n_readers_need_end)))
+			wake_up(&trc_wait);
+		goto reset_ipi;
+	}
 	WRITE_ONCE(t->trc_reader_checked, true);
 
 	// Get here if the task is in a read-side critical section.  Set
@@ -1072,15 +1078,17 @@ static void rcu_tasks_trace_postgp(struct rcu_tasks *rtp)
 		if (ret)
 			break;  // Count reached zero.
 		// Stall warning time, so make a list of the offenders.
+		rcu_read_lock();
 		for_each_process_thread(g, t)
 			if (READ_ONCE(t->trc_reader_special.b.need_qs))
 				trc_add_holdout(t, &holdouts);
+		rcu_read_unlock();
 		firstreport = true;
-		list_for_each_entry_safe(t, g, &holdouts, trc_holdout_list)
-			if (READ_ONCE(t->trc_reader_special.b.need_qs)) {
+		list_for_each_entry_safe(t, g, &holdouts, trc_holdout_list) {
+			if (READ_ONCE(t->trc_reader_special.b.need_qs))
 				show_stalled_task_trace(t, &firstreport);
-				trc_del_holdout(t);
-			}
+			trc_del_holdout(t); // Release task_struct reference.
+		}
 		if (firstreport)
 			pr_err("INFO: rcu_tasks_trace detected stalls? (Counter/taskslist mismatch?)\n");
 		show_stalled_ipi_trace();
