@@ -90,7 +90,7 @@ int sched_yield_type __read_mostly = 1;
 #ifdef CONFIG_SMP
 static cpumask_t sched_rq_pending_mask ____cacheline_aligned_in_smp;
 
-DEFINE_PER_CPU(cpumask_t [NR_CPU_AFFINITY_CHK_LEVEL], sched_cpu_affinity_masks);
+DEFINE_PER_CPU(cpumask_t [NR_CPU_AFFINITY_LEVELS], sched_cpu_affinity_masks);
 DEFINE_PER_CPU(cpumask_t *, sched_cpu_affinity_end_mask);
 DEFINE_PER_CPU(cpumask_t *, sched_cpu_llc_mask);
 
@@ -5867,7 +5867,7 @@ static void sched_init_topology_cpumask_early(void)
 	cpumask_t *tmp;
 
 	for_each_possible_cpu(cpu) {
-		for (level = 0; level < NR_CPU_AFFINITY_CHK_LEVEL; level++) {
+		for (level = 0; level < NR_CPU_AFFINITY_LEVELS; level++) {
 			tmp = &(per_cpu(sched_cpu_affinity_masks, cpu)[level]);
 			cpumask_copy(tmp, cpu_possible_mask);
 			cpumask_clear_cpu(cpu, tmp);
@@ -5897,6 +5897,8 @@ static void sched_init_topology_cpumask(void)
 		cpu_rq(cpu)->idle->time_slice = sched_timeslice_ns;
 
 		chk = &(per_cpu(sched_cpu_affinity_masks, cpu)[0]);
+
+		cpumask_copy(chk++, cpumask_of(cpu));
 
 		cpumask_complement(chk, cpumask_of(cpu));
 #ifdef CONFIG_SCHED_SMT
