@@ -213,30 +213,43 @@ static inline void unregister_sched_domain_sysctl(void)
 extern bool sched_smp_initialized;
 
 enum {
-	BASE_CPU_AFFINITY_CHK_LEVEL = 1,
+	ITSELF_LEVEL_SPACE_HOLDER,
 #ifdef CONFIG_SCHED_SMT
-	SMT_CPU_AFFINITY_CHK_LEVEL_SPACE_HOLDER,
+	SMT_LEVEL_SPACE_HOLDER,
 #endif
-#ifdef CONFIG_SCHED_MC
-	MC_CPU_AFFINITY_CHK_LEVEL_SPACE_HOLDER,
-#endif
-	NR_CPU_AFFINITY_CHK_LEVEL
+	COREGROUP_LEVEL_SPACE_HOLDER,
+	CORE_LEVEL_SPACE_HOLDER,
+	OTHER_LEVEL_SPACE_HOLDER,
+	NR_CPU_AFFINITY_LEVELS
 };
 
-DECLARE_PER_CPU(cpumask_t [NR_CPU_AFFINITY_CHK_LEVEL], sched_cpu_affinity_masks);
+DECLARE_PER_CPU(cpumask_t [NR_CPU_AFFINITY_LEVELS], sched_cpu_affinity_masks);
 
 static inline int __best_mask_cpu(int cpu, const cpumask_t *cpumask,
 				  const cpumask_t *mask)
 {
+#if NR_CPUS <= 64
+	unsigned long t;
+
+	while ((t = cpumask->bits[0] & mask->bits[0]) == 0UL)
+		mask++;
+
+	return __ffs(t);
+#else
 	while ((cpu = cpumask_any_and(cpumask, mask)) >= nr_cpu_ids)
 		mask++;
 	return cpu;
+#endif
 }
 
 static inline int best_mask_cpu(int cpu, const cpumask_t *cpumask)
 {
-	return cpumask_test_cpu(cpu, cpumask)? cpu :
-		__best_mask_cpu(cpu, cpumask, &(per_cpu(sched_cpu_affinity_masks, cpu)[0]));
+#if NR_CPUS <= 64
+	return __best_mask_cpu(cpu, cpumask, per_cpu(sched_cpu_affinity_masks, cpu));
+#else
+	return cpumask_test_cpu(cpu, cpumask) ? cpu:
+		__best_mask_cpu(cpu, cpumask, per_cpu(sched_cpu_affinity_masks, cpu) + 1);
+#endif
 }
 
 extern void flush_smp_call_function_from_idle(void);
