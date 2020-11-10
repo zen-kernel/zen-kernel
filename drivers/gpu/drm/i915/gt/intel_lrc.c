@@ -1139,9 +1139,8 @@ __unwind_incomplete_requests(struct intel_engine_cs *engine)
 
 			/* Check in case we rollback so far we wrap [size/2] */
 			if (intel_ring_direction(rq->ring,
-						 intel_ring_wrap(rq->ring,
-								 rq->tail),
-						 rq->ring->tail) > 0)
+						 rq->tail,
+						 rq->ring->tail + 8) > 0)
 				rq->context->lrc.desc |= CTX_DESC_FORCE_RESTORE;
 
 			active = rq;
@@ -2662,6 +2661,9 @@ static void process_csb(struct intel_engine_cs *engine)
 			smp_wmb(); /* complete the seqlock */
 			WRITE_ONCE(execlists->active, execlists->inflight);
 
+			/* XXX Magic delay for tgl */
+			ENGINE_POSTING_READ(engine, RING_CONTEXT_STATUS_PTR);
+
 			WRITE_ONCE(execlists->pending[0], NULL);
 		} else {
 			if (GEM_WARN_ON(!*execlists->active)) {
@@ -3537,6 +3539,19 @@ static const struct intel_context_ops execlists_context_ops = {
 	.destroy = execlists_context_destroy,
 };
 
+static u32 hwsp_offset(const struct i915_request *rq)
+{
+	const struct intel_timeline_cacheline *cl;
+
+	/* Before the request is executed, the timeline/cachline is fixed */
+
+	cl = rcu_dereference_protected(rq->hwsp_cacheline, 1);
+	if (cl)
+		return cl->ggtt_offset;
+
+	return rcu_dereference_protected(rq->timeline, 1)->hwsp_offset;
+}
+
 static int gen8_emit_init_breadcrumb(struct i915_request *rq)
 {
 	u32 *cs;
@@ -3559,7 +3574,7 @@ static int gen8_emit_init_breadcrumb(struct i915_request *rq)
 	*cs++ = MI_NOOP;
 
 	*cs++ = MI_STORE_DWORD_IMM_GEN4 | MI_USE_GGTT;
-	*cs++ = i915_request_timeline(rq)->hwsp_offset;
+	*cs++ = hwsp_offset(rq);
 	*cs++ = 0;
 	*cs++ = rq->fence.seqno - 1;
 
@@ -4863,11 +4878,9 @@ gen8_emit_fini_breadcrumb_tail(struct i915_request *request, u32 *cs)
 	return gen8_emit_wa_tail(request, cs);
 }
 
-static u32 *emit_xcs_breadcrumb(struct i915_request *request, u32 *cs)
+static u32 *emit_xcs_breadcrumb(struct i915_request *rq, u32 *cs)
 {
-	u32 addr = i915_request_active_timeline(request)->hwsp_offset;
-
-	return gen8_emit_ggtt_write(cs, request->fence.seqno, addr, 0);
+	return gen8_emit_ggtt_write(cs, rq->fence.seqno, hwsp_offset(rq), 0);
 }
 
 static u32 *gen8_emit_fini_breadcrumb(struct i915_request *rq, u32 *cs)
@@ -4886,7 +4899,7 @@ static u32 *gen8_emit_fini_breadcrumb_rcs(struct i915_request *request, u32 *cs)
 	/* XXX flush+write+CS_STALL all in one upsets gem_concurrent_blt:kbl */
 	cs = gen8_emit_ggtt_write_rcs(cs,
 				      request->fence.seqno,
-				      i915_request_active_timeline(request)->hwsp_offset,
+				      hwsp_offset(request),
 				      PIPE_CONTROL_FLUSH_ENABLE |
 				      PIPE_CONTROL_CS_STALL);
 
@@ -4898,7 +4911,7 @@ gen11_emit_fini_breadcrumb_rcs(struct i915_request *request, u32 *cs)
 {
 	cs = gen8_emit_ggtt_write_rcs(cs,
 				      request->fence.seqno,
-				      i915_request_active_timeline(request)->hwsp_offset,
+				      hwsp_offset(request),
 				      PIPE_CONTROL_CS_STALL |
 				      PIPE_CONTROL_TILE_CACHE_FLUSH |
 				      PIPE_CONTROL_RENDER_TARGET_CACHE_FLUSH |
@@ -4968,7 +4981,7 @@ gen12_emit_fini_breadcrumb_rcs(struct i915_request *request, u32 *cs)
 {
 	cs = gen12_emit_ggtt_write_rcs(cs,
 				       request->fence.seqno,
-				       i915_request_active_timeline(request)->hwsp_offset,
+				       hwsp_offset(request),
 				       PIPE_CONTROL0_HDC_PIPELINE_FLUSH,
 				       PIPE_CONTROL_CS_STALL |
 				       PIPE_CONTROL_TILE_CACHE_FLUSH |

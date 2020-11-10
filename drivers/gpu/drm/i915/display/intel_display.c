@@ -3432,6 +3432,14 @@ initial_plane_vma(struct drm_i915_private *i915,
 	if (IS_ERR(obj))
 		return NULL;
 
+	/*
+	 * Mark it WT ahead of time to avoid changing the
+	 * cache_level during fbdev initialization. The
+	 * unbind there would get stuck waiting for rcu.
+	 */
+	i915_gem_object_set_cache_coherency(obj, HAS_WT(i915) ?
+					    I915_CACHE_WT : I915_CACHE_NONE);
+
 	switch (plane_config->tiling) {
 	case I915_TILING_NONE:
 		break;
@@ -10580,6 +10588,10 @@ skl_get_initial_plane_config(struct intel_crtc *crtc,
 	if (INTEL_GEN(dev_priv) >= 10 &&
 	    val & PLANE_CTL_FLIP_HORIZONTAL)
 		plane_config->rotation |= DRM_MODE_REFLECT_X;
+
+	/* 90/270 degree rotation would require extra work */
+	if (drm_rotation_90_or_270(plane_config->rotation))
+		goto error;
 
 	base = intel_de_read(dev_priv, PLANE_SURF(pipe, plane_id)) & 0xfffff000;
 	plane_config->base = base;
