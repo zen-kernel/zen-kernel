@@ -1946,6 +1946,50 @@ static int nvme_setup_streams_ns(struct nvme_ctrl *ctrl, struct nvme_ns *ns,
 	return 0;
 }
 
+static int nvme_configure_metadata(struct nvme_ns *ns, struct nvme_id_ns *id)
+{
+	struct nvme_ctrl *ctrl = ns->ctrl;
+
+	/*
+	 * The PI implementation requires the metadata size to be equal to the
+	 * t10 pi tuple size.
+	 */
+	ns->ms = le16_to_cpu(id->lbaf[id->flbas & NVME_NS_FLBAS_LBA_MASK].ms);
+	if (ns->ms == sizeof(struct t10_pi_tuple))
+		ns->pi_type = id->dps & NVME_NS_DPS_PI_MASK;
+	else
+		ns->pi_type = 0;
+
+	ns->features &= ~(NVME_NS_METADATA_SUPPORTED | NVME_NS_EXT_LBAS);
+	if (!ns->ms || !(ctrl->ops->flags & NVME_F_METADATA_SUPPORTED))
+		return 0;
+	if (ctrl->ops->flags & NVME_F_FABRICS) {
+		/*
+		 * The NVMe over Fabrics specification only supports metadata as
+		 * part of the extended data LBA.  We rely on HCA/HBA support to
+		 * remap the separate metadata buffer from the block layer.
+		 */
+		if (WARN_ON_ONCE(!(id->flbas & NVME_NS_FLBAS_META_EXT)))
+			return -EINVAL;
+		if (ctrl->max_integrity_segments)
+			ns->features |=
+				(NVME_NS_METADATA_SUPPORTED | NVME_NS_EXT_LBAS);
+	} else {
+		/*
+		 * For PCIe controllers, we can't easily remap the separate
+		 * metadata buffer from the block layer and thus require a
+		 * separate metadata buffer for block layer metadata/PI support.
+		 * We allow extended LBAs for the passthrough interface, though.
+		 */
+		if (id->flbas & NVME_NS_FLBAS_META_EXT)
+			ns->features |= NVME_NS_EXT_LBAS;
+		else
+			ns->features |= NVME_NS_METADATA_SUPPORTED;
+	}
+
+	return 0;
+}
+
 static void nvme_update_disk_info(struct gendisk *disk,
 		struct nvme_ns *ns, struct nvme_id_ns *id)
 {
@@ -1957,7 +2001,7 @@ static void nvme_update_disk_info(struct gendisk *disk,
 		/* unsupported block size, set capacity to 0 later */
 		bs = (1 << 9);
 	}
-	blk_mq_freeze_queue(disk->queue);
+
 	blk_integrity_unregister(disk);
 
 	atomic_bs = phys_bs = bs;
@@ -2020,10 +2064,6 @@ static void nvme_update_disk_info(struct gendisk *disk,
 
 	if (id->nsattr & NVME_NS_ATTR_RO)
 		set_disk_ro(disk, true);
-	else
-		set_disk_ro(disk, false);
-
-	blk_mq_unfreeze_queue(disk->queue);
 }
 
 static inline bool nvme_first_scan(struct gendisk *disk)
@@ -2070,6 +2110,7 @@ static int __nvme_revalidate_disk(struct gendisk *disk, struct nvme_id_ns *id)
 	struct nvme_ctrl *ctrl = ns->ctrl;
 	int ret;
 
+	blk_mq_freeze_queue(ns->disk->queue);
 	/*
 	 * If identify namespace failed, use default 512 byte block size so
 	 * block layer can use before failing read/write for 0 capacity.
@@ -2087,57 +2128,38 @@ static int __nvme_revalidate_disk(struct gendisk *disk, struct nvme_id_ns *id)
 			dev_warn(ctrl->device,
 				"failed to add zoned namespace:%u ret:%d\n",
 				ns->head->ns_id, ret);
-			return ret;
+			goto out_unfreeze;
 		}
 		break;
 	default:
 		dev_warn(ctrl->device, "unknown csi:%u ns:%u\n",
 			ns->head->ids.csi, ns->head->ns_id);
-		return -ENODEV;
+		ret = -ENODEV;
+		goto out_unfreeze;
 	}
 
-	ns->features = 0;
-	ns->ms = le16_to_cpu(id->lbaf[lbaf].ms);
-	/* the PI implementation requires metadata equal t10 pi tuple size */
-	if (ns->ms == sizeof(struct t10_pi_tuple))
-		ns->pi_type = id->dps & NVME_NS_DPS_PI_MASK;
-	else
-		ns->pi_type = 0;
-
-	if (ns->ms) {
-		/*
-		 * For PCIe only the separate metadata pointer is supported,
-		 * as the block layer supplies metadata in a separate bio_vec
-		 * chain. For Fabrics, only metadata as part of extended data
-		 * LBA is supported on the wire per the Fabrics specification,
-		 * but the HBA/HCA will do the remapping from the separate
-		 * metadata buffers for us.
-		 */
-		if (id->flbas & NVME_NS_FLBAS_META_EXT) {
-			ns->features |= NVME_NS_EXT_LBAS;
-			if ((ctrl->ops->flags & NVME_F_FABRICS) &&
-			    (ctrl->ops->flags & NVME_F_METADATA_SUPPORTED) &&
-			    ctrl->max_integrity_segments)
-				ns->features |= NVME_NS_METADATA_SUPPORTED;
-		} else {
-			if (WARN_ON_ONCE(ctrl->ops->flags & NVME_F_FABRICS))
-				return -EINVAL;
-			if (ctrl->ops->flags & NVME_F_METADATA_SUPPORTED)
-				ns->features |= NVME_NS_METADATA_SUPPORTED;
-		}
-	}
-
+	ret = nvme_configure_metadata(ns, id);
+	if (ret)
+		goto out_unfreeze;
 	nvme_set_chunk_sectors(ns, id);
 	nvme_update_disk_info(disk, ns, id);
+	blk_mq_unfreeze_queue(ns->disk->queue);
+
 #ifdef CONFIG_NVME_MULTIPATH
 	if (ns->head->disk) {
+		blk_mq_freeze_queue(ns->head->disk->queue);
 		nvme_update_disk_info(ns->head->disk, ns, id);
 		blk_stack_limits(&ns->head->disk->queue->limits,
 				 &ns->queue->limits, 0);
 		nvme_mpath_update_disk_size(ns->head->disk);
+		blk_mq_unfreeze_queue(ns->head->disk->queue);
 	}
 #endif
 	return 0;
+
+out_unfreeze:
+	blk_mq_unfreeze_queue(ns->disk->queue);
+	return ret;
 }
 
 static int _nvme_revalidate_disk(struct gendisk *disk)
@@ -4641,8 +4663,7 @@ void nvme_start_queues(struct nvme_ctrl *ctrl)
 }
 EXPORT_SYMBOL_GPL(nvme_start_queues);
 
-
-void nvme_sync_queues(struct nvme_ctrl *ctrl)
+void nvme_sync_io_queues(struct nvme_ctrl *ctrl)
 {
 	struct nvme_ns *ns;
 
@@ -4650,7 +4671,12 @@ void nvme_sync_queues(struct nvme_ctrl *ctrl)
 	list_for_each_entry(ns, &ctrl->namespaces, list)
 		blk_sync_queue(ns->queue);
 	up_read(&ctrl->namespaces_rwsem);
+}
+EXPORT_SYMBOL_GPL(nvme_sync_io_queues);
 
+void nvme_sync_queues(struct nvme_ctrl *ctrl)
+{
+	nvme_sync_io_queues(ctrl);
 	if (ctrl->admin_q)
 		blk_sync_queue(ctrl->admin_q);
 }
