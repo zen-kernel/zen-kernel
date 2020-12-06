@@ -1035,14 +1035,6 @@ static inline void hrtick_rq_init(struct rq *rq)
 }
 #endif	/* CONFIG_SCHED_HRTICK */
 
-static inline int normal_prio(struct task_struct *p)
-{
-	if (task_has_rt_policy(p))
-		return MAX_RT_PRIO - 1 - p->rt_priority;
-
-	return p->static_prio + MAX_PRIORITY_ADJ;
-}
-
 /*
  * Calculate the current priority, i.e. the priority
  * taken into account by the scheduler. This value might
