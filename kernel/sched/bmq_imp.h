@@ -36,6 +36,14 @@ static inline void deboost_task(struct task_struct *p)
 /*
  * Common interfaces
  */
+static inline int normal_prio(struct task_struct *p)
+{
+	if (task_has_rt_policy(p))
+		return MAX_RT_PRIO - 1 - p->rt_priority;
+
+	return p->static_prio + MAX_PRIORITY_ADJ;
+}
+
 static inline int task_sched_prio(struct task_struct *p, struct rq *rq)
 {
 	return (p->prio < MAX_RT_PRIO)? p->prio : MAX_RT_PRIO / 2 + (p->prio + p->boost_prio) / 2;
