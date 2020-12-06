@@ -26,6 +26,14 @@ static const unsigned char dl_level_map[] = {
 	 1,  0
 };
 
+static inline int normal_prio(struct task_struct *p)
+{
+	if (task_has_rt_policy(p))
+		return MAX_RT_PRIO - 1 - p->rt_priority;
+
+	return MAX_USER_RT_PRIO;
+}
+
 static inline int
 task_sched_prio(const struct task_struct *p, const struct rq *rq)
 {
