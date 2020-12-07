@@ -1697,6 +1697,15 @@ ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags)
 	if (p->sched_contributes_to_load)
 		rq->nr_uninterruptible--;
 
+	if (
+#ifdef CONFIG_SMP
+	    !(wake_flags & WF_MIGRATED) &&
+#endif
+	    p->in_iowait) {
+		delayacct_blkio_end(p);
+		atomic_dec(&task_rq(p)->nr_iowait);
+	}
+
 	activate_task(p, rq);
 	ttwu_do_wakeup(rq, p, 0);
 }
@@ -2088,11 +2097,6 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 	if (READ_ONCE(p->on_rq) && ttwu_runnable(p, wake_flags))
 		goto unlock;
 
-	if (p->in_iowait) {
-		delayacct_blkio_end(p);
-		atomic_dec(&task_rq(p)->nr_iowait);
-	}
-
 #ifdef CONFIG_SMP
 	/*
 	 * Ensure we load p->on_cpu _after_ p->on_rq, otherwise it would be
@@ -2166,6 +2170,11 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 	cpu = select_task_rq(p, this_rq());
 
 	if (cpu != task_cpu(p)) {
+		if (p->in_iowait) {
+			delayacct_blkio_end(p);
+			atomic_dec(&task_rq(p)->nr_iowait);
+		}
+
 		wake_flags |= WF_MIGRATED;
 		psi_ttwu_dequeue(p);
 		set_task_cpu(p, cpu);
