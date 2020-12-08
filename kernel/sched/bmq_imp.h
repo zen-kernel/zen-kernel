@@ -62,6 +62,11 @@ static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 	}
 }
 
+static inline int task_running_nice(struct task_struct *p)
+{
+	return (p->prio + p->boost_prio > DEFAULT_PRIO + MAX_PRIORITY_ADJ);
+}
+
 static inline void update_task_priodl(struct task_struct *p) {}
 
 static inline unsigned long sched_queue_watermark(struct rq *rq)
