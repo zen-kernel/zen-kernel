@@ -26,6 +26,13 @@ static const unsigned char dl_level_map[] = {
 	 1,  0
 };
 
+/* DEFAULT_SCHED_PRIO:
+ * dl_level_map[(user_prio2deadline[39] - user_prio2deadline[0]) >> 21] =
+ * dl_level_map[68] =
+ * 10
+ */
+#define DEFAULT_SCHED_PRIO (MAX_RT_PRIO + 10)
+
 static inline int normal_prio(struct task_struct *p)
 {
 	if (task_has_rt_policy(p))
@@ -49,6 +56,11 @@ task_sched_prio(const struct task_struct *p, const struct rq *rq)
 	delta = min((size_t)delta, ARRAY_SIZE(dl_level_map) - 1);
 
 	return MAX_RT_PRIO + dl_level_map[delta];
+}
+
+int task_running_nice(struct task_struct *p)
+{
+	return task_sched_prio(p, task_rq(p)) > DEFAULT_SCHED_PRIO;
 }
 
 static inline void update_task_priodl(struct task_struct *p)
