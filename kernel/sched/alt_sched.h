@@ -373,6 +373,8 @@ static inline bool task_running(struct task_struct *p)
 	return p->on_cpu;
 }
 
+extern int task_running_nice(struct task_struct *p);
+
 extern struct static_key_false sched_schedstats;
 
 #ifdef CONFIG_CPU_IDLE
