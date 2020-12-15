@@ -723,7 +723,9 @@ void __init alternative_instructions(void)
 	 * patching.
 	 */
 
+	printk("clr: Applying alternatives\n");
 	apply_alternatives(__alt_instructions, __alt_instructions_end);
+	printk("clr: Applying alternatives done\n");
 
 #ifdef CONFIG_SMP
 	/* Patch to UP if other cpus not imminent. */

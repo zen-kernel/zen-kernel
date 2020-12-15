@@ -1546,6 +1546,9 @@ unsigned long calibrate_delay_is_known(void)
 	if (!constant_tsc || !mask)
 		return 0;
 
+	if (cpu != 0)
+		return cpu_data(0).loops_per_jiffy;
+
 	sibling = cpumask_any_but(mask, cpu);
 	if (sibling < nr_cpu_ids)
 		return cpu_data(sibling).loops_per_jiffy;

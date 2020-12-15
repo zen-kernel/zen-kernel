@@ -33,14 +33,14 @@
 #include "libata.h"
 
 static int ahci_skip_host_reset;
-int ahci_ignore_sss;
+int ahci_ignore_sss=1;
 EXPORT_SYMBOL_GPL(ahci_ignore_sss);
 
 module_param_named(skip_host_reset, ahci_skip_host_reset, int, 0444);
 MODULE_PARM_DESC(skip_host_reset, "skip global host reset (0=don't skip, 1=skip)");
 
 module_param_named(ignore_sss, ahci_ignore_sss, int, 0444);
-MODULE_PARM_DESC(ignore_sss, "Ignore staggered spinup flag (0=don't ignore, 1=ignore)");
+MODULE_PARM_DESC(ignore_sss, "Ignore staggered spinup flag (0=don't ignore, 1=ignore [default])");
 
 static int ahci_set_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 			unsigned hints);
