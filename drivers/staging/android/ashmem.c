@@ -24,6 +24,7 @@
 #include <linux/bitops.h>
 #include <linux/mutex.h>
 #include <linux/shmem_fs.h>
+#include <linux/module.h>
 #include "ashmem.h"
 
 #define ASHMEM_NAME_PREFIX "dev/ashmem/"
@@ -965,3 +966,5 @@ out:
 	return ret;
 }
 device_initcall(ashmem_init);
+
+MODULE_LICENSE("GPL v2");
