@@ -1937,7 +1937,7 @@ static void intel_pmu_drain_pebs_nhm(struct pt_regs *iregs)
 		if (error[bit]) {
 			perf_log_lost_samples(event, error[bit]);
 
-			if (perf_event_account_interrupt(event))
+			if (iregs && perf_event_account_interrupt(event))
 				x86_pmu_stop(event, 0);
 		}
 

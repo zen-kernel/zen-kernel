@@ -2613,7 +2613,7 @@ static void retire_requests(struct intel_timeline *tl, struct i915_request *end)
 			break;
 }
 
-static void eb_request_add(struct i915_execbuffer *eb)
+static int eb_request_add(struct i915_execbuffer *eb, int err)
 {
 	struct i915_request *rq = eb->request;
 	struct intel_timeline * const tl = i915_request_timeline(rq);
@@ -2634,6 +2634,7 @@ static void eb_request_add(struct i915_execbuffer *eb)
 		/* Serialise with context_close via the add_to_timeline */
 		i915_request_set_error_once(rq, -ENOENT);
 		__i915_request_skip(rq);
+		err = -ENOENT; /* override any transient errors */
 	}
 
 	__i915_request_queue(rq, &attr);
@@ -2643,6 +2644,8 @@ static void eb_request_add(struct i915_execbuffer *eb)
 		retire_requests(tl, prev);
 
 	mutex_unlock(&tl->mutex);
+
+	return err;
 }
 
 static int
@@ -2844,7 +2847,7 @@ i915_gem_do_execbuffer(struct drm_device *dev,
 err_request:
 	add_to_client(eb.request, file);
 	i915_request_get(eb.request);
-	eb_request_add(&eb);
+	err = eb_request_add(&eb, err);
 
 	if (fences)
 		signal_fence_array(&eb, fences);
