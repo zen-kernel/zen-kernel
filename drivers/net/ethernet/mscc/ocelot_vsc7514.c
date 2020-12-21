@@ -1118,6 +1118,7 @@ static int mscc_ocelot_probe(struct platform_device *pdev)
 	}
 
 	ocelot->num_phys_ports = of_get_child_count(ports);
+	ocelot->num_flooding_pgids = 1;
 
 	ocelot->vcap_is2_keys = vsc7514_vcap_is2_keys;
 	ocelot->vcap_is2_actions = vsc7514_vcap_is2_actions;
