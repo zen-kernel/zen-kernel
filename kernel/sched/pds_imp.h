@@ -268,5 +268,7 @@ static void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
 	time_slice_expired(p, rq);
 }
 
+#ifdef CONFIG_SMP
 static void sched_task_ttwu(struct task_struct *p) {}
+#endif
 static void sched_task_deactivate(struct task_struct *p, struct rq *rq) {}
