@@ -185,11 +185,13 @@ static void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
 	p->boost_prio = MAX_PRIORITY_ADJ;
 }
 
+#ifdef CONFIG_SMP
 static void sched_task_ttwu(struct task_struct *p)
 {
 	if(this_rq()->clock_task - p->last_ran > sched_timeslice_ns)
 		boost_task(p);
 }
+#endif
 
 static void sched_task_deactivate(struct task_struct *p, struct rq *rq)
 {
