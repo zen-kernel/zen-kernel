@@ -798,7 +798,7 @@ static int ips_adjust(void *data)
 			ips_gpu_lower(ips);
 
 sleep:
-		schedule_timeout_interruptible(msecs_to_jiffies(IPS_ADJUST_PERIOD));
+		schedule_msec_hrtimeout_interruptible((IPS_ADJUST_PERIOD));
 	} while (!kthread_should_stop());
 
 	dev_dbg(ips->dev, "ips-adjust thread stopped\n");
@@ -974,7 +974,7 @@ static int ips_monitor(void *data)
 	seqno_timestamp = get_jiffies_64();
 
 	old_cpu_power = thm_readl(THM_CEC);
-	schedule_timeout_interruptible(msecs_to_jiffies(IPS_SAMPLE_PERIOD));
+	schedule_msec_hrtimeout_interruptible((IPS_SAMPLE_PERIOD));
 
 	/* Collect an initial average */
 	for (i = 0; i < IPS_SAMPLE_COUNT; i++) {
@@ -1001,7 +1001,7 @@ static int ips_monitor(void *data)
 			mchp_samples[i] = mchp;
 		}
 
-		schedule_timeout_interruptible(msecs_to_jiffies(IPS_SAMPLE_PERIOD));
+		schedule_msec_hrtimeout_interruptible((IPS_SAMPLE_PERIOD));
 		if (kthread_should_stop())
 			break;
 	}
@@ -1028,7 +1028,7 @@ static int ips_monitor(void *data)
 	 * us to reduce the sample frequency if the CPU and GPU are idle.
 	 */
 	old_cpu_power = thm_readl(THM_CEC);
-	schedule_timeout_interruptible(msecs_to_jiffies(IPS_SAMPLE_PERIOD));
+	schedule_msec_hrtimeout_interruptible((IPS_SAMPLE_PERIOD));
 	last_sample_period = IPS_SAMPLE_PERIOD;
 
 	timer_setup(&ips->timer, monitor_timeout, TIMER_DEFERRABLE);

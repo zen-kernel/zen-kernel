@@ -203,7 +203,7 @@ int vmw_fallback_wait(struct vmw_private *dev_priv,
 			break;
 		}
 		if (lazy)
-			schedule_timeout(1);
+			schedule_min_hrtimeout();
 		else if ((++count & 0x0F) == 0) {
 			/**
 			 * FIXME: Use schedule_hr_timeout here for

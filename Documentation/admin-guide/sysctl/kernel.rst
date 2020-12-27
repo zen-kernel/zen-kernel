@@ -436,6 +436,16 @@ this allows system administrators to override the
 ``IA64_THREAD_UAC_NOPRINT`` ``prctl`` and avoid logs being flooded.
 
 
+iso_cpu: (MuQSS CPU scheduler only)
+===================================
+
+This sets the percentage cpu that the unprivileged SCHED_ISO tasks can
+run effectively at realtime priority, averaged over a rolling five
+seconds over the -whole- system, meaning all cpus.
+
+Set to 70 (percent) by default.
+
+
 kexec_load_disabled
 ===================
 
@@ -1077,6 +1087,20 @@ ROM/Flash boot loader. Maybe to tell it what to do after
 rebooting. ???
 
 
+rr_interval: (MuQSS CPU scheduler only)
+=======================================
+
+This is the smallest duration that any cpu process scheduling unit
+will run for. Increasing this value can increase throughput of cpu
+bound tasks substantially but at the expense of increased latencies
+overall. Conversely decreasing it will decrease average and maximum
+latencies but at the expense of throughput. This value is in
+milliseconds and the default value chosen depends on the number of
+cpus available at scheduler initialisation with a minimum of 6.
+
+Valid values are from 1-1000.
+
+
 sched_energy_aware
 ==================
 
@@ -1515,3 +1539,13 @@ is 10 seconds.
 
 The softlockup threshold is (``2 * watchdog_thresh``). Setting this
 tunable to zero will disable lockup detection altogether.
+
+
+yield_type: (MuQSS CPU scheduler only)
+======================================
+
+This determines what type of yield calls to sched_yield will perform.
+
+ 0: No yield.
+ 1: Yield only to better priority/deadline tasks. (default)
+ 2: Expire timeslice and recalculate deadline.

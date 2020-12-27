@@ -235,7 +235,7 @@ static int radio_tea5777_update_read_reg(struct radio_tea5777 *tea, int wait)
 	}
 
 	if (wait) {
-		if (schedule_timeout_interruptible(msecs_to_jiffies(wait)))
+		if (schedule_msec_hrtimeout_interruptible((wait)))
 			return -ERESTARTSYS;
 	}
 
