@@ -480,6 +480,28 @@ static inline u64 calc_reclaim_items_nr(struct btrfs_fs_info *fs_info,
 
 #define EXTENT_SIZE_PER_ITEM	SZ_256K
 
+static void btrfs_writeback_inodes_sb_nr(struct btrfs_fs_info *fs_info,
+					 unsigned long nr_pages, u64 nr_items)
+{
+	struct super_block *sb = fs_info->sb;
+
+	if (down_read_trylock(&sb->s_umount)) {
+		writeback_inodes_sb_nr(sb, nr_pages, WB_REASON_FS_FREE_SPACE);
+		up_read(&sb->s_umount);
+	} else {
+		/*
+		 * We needn't worry the filesystem going from r/w to r/o though
+		 * we don't acquire ->s_umount mutex, because the filesystem
+		 * should guarantee the delalloc inodes list be empty after
+		 * the filesystem is readonly(all dirty pages are written to
+		 * the disk).
+		 */
+		btrfs_start_delalloc_roots(fs_info, nr_items);
+		if (!current->journal_info)
+			btrfs_wait_ordered_roots(fs_info, nr_items, 0, (u64)-1);
+       }
+}
+
 /*
  * shrink metadata reservation for delalloc
  */
@@ -532,7 +554,8 @@ static void shrink_delalloc(struct btrfs_fs_info *fs_info,
 
 	loops = 0;
 	while ((delalloc_bytes || dio_bytes) && loops < 3) {
-		btrfs_start_delalloc_roots(fs_info, items);
+		unsigned long nr_pages = min(delalloc_bytes, to_reclaim) >> PAGE_SHIFT;
+		btrfs_writeback_inodes_sb_nr(fs_info, nr_pages, items);
 
 		loops++;
 		if (wait_ordered && !trans) {
