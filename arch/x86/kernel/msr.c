@@ -48,7 +48,7 @@ enum allow_write_msrs {
 	MSR_WRITES_DEFAULT,
 };
 
-static enum allow_write_msrs allow_writes = MSR_WRITES_DEFAULT;
+static enum allow_write_msrs allow_writes = MSR_WRITES_ON;
 
 static ssize_t msr_read(struct file *file, char __user *buf,
 			size_t count, loff_t *ppos)
