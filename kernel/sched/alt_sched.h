@@ -243,7 +243,7 @@ static inline int __best_mask_cpu(int cpu, const cpumask_t *cpumask,
 #endif
 }
 
-static inline int best_mask_cpu(int cpu, cpumask_t *mask)
+static inline int best_mask_cpu(int cpu, const cpumask_t *mask)
 {
 #if NR_CPUS <= 64
 	unsigned long llc_match;
