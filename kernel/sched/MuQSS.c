@@ -115,7 +115,7 @@
 
 void print_scheduler_version(void)
 {
-	printk(KERN_INFO "MuQSS CPU scheduler v0.204 by Con Kolivas.\n");
+	printk(KERN_INFO "MuQSS CPU scheduler v0.205 by Con Kolivas.\n");
 }
 
 /* Define RQ share levels */
@@ -4684,7 +4684,10 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
 			try_preempt(p, rq);
 	}
 out_unlock:
+	/* Avoid rq from going away on us: */
+	preempt_disable();
 	__task_rq_unlock(rq, NULL);
+	preempt_enable();
 }
 #else
 static inline int rt_effective_prio(struct task_struct *p, int prio)
