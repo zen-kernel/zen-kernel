@@ -144,29 +144,29 @@ static int __init set_rqshare(char *str)
 {
 	if (!strncmp(str, "none", 4)) {
 		rqshare = RQSHARE_NONE;
-		return 0;
+		return 1;
 	}
 	if (!strncmp(str, "smt", 3)) {
 		rqshare = RQSHARE_SMT;
-		return 0;
+		return 1;
 	}
 	if (!strncmp(str, "mc", 2)) {
 		rqshare = RQSHARE_MC;
-		return 0;
+		return 1;
 	}
 	if (!strncmp(str, "llc", 3)) {
 		rqshare = RQSHARE_MC_LLC;
-		return 0;
+		return 1;
 	}
 	if (!strncmp(str, "smp", 3)) {
 		rqshare = RQSHARE_SMP;
-		return 0;
+		return 1;
 	}
 	if (!strncmp(str, "all", 3)) {
 		rqshare = RQSHARE_ALL;
-		return 0;
+		return 1;
 	}
-	return 1;
+	return 0;
 }
 __setup("rqshare=", set_rqshare);
 
