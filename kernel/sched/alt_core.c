@@ -1667,7 +1667,7 @@ ttwu_stat(struct task_struct *p, int cpu, int wake_flags)
 	if (!schedstat_enabled())
 		return;
 
-	rq= this_rq();
+	rq = this_rq();
 
 #ifdef CONFIG_SMP
 	if (cpu == rq->cpu)
