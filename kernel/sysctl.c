@@ -1782,7 +1782,24 @@ int proc_do_static_key(struct ctl_table *table, int write,
 }
 
 static struct ctl_table kern_table[] = {
-#ifndef CONFIG_SCHED_ALT
+#ifdef CONFIG_SCHED_ALT
+/* In ALT, only supported "sched_schedstats" */
+#ifdef CONFIG_SCHED_DEBUG
+#ifdef CONFIG_SMP
+#ifdef CONFIG_SCHEDSTATS
+	{
+		.procname	= "sched_schedstats",
+		.data		= NULL,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= sysctl_schedstats,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+#endif /* CONFIG_SCHEDSTATS */
+#endif /* CONFIG_SMP */
+#endif /* CONFIG_SCHED_DEBUG */
+#else  /* !CONFIG_SCHED_ALT */
 	{
 		.procname	= "sched_child_runs_first",
 		.data		= &sysctl_sched_child_runs_first,
