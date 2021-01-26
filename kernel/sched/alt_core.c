@@ -5163,12 +5163,8 @@ static void do_sched_yield(void)
 			rq->skip = current;
 	}
 
-	/*
-	 * Since we are going to call schedule() anyway, there's
-	 * no need to preempt or enable interrupts:
-	 */
 	preempt_disable();
-	raw_spin_unlock(&rq->lock);
+	raw_spin_unlock_irq(&rq->lock);
 	sched_preempt_enable_no_resched();
 
 	schedule();
