@@ -55,6 +55,12 @@
 #include "pds.h"
 #endif
 
+#ifdef CONFIG_SCHED_DEBUG
+# define SCHED_WARN_ON(x)	WARN_ONCE(x, #x)
+#else
+# define SCHED_WARN_ON(x)	({ (void)(x), 0; })
+#endif
+
 /* task_struct::on_rq states: */
 #define TASK_ON_RQ_QUEUED	1
 #define TASK_ON_RQ_MIGRATING	2
