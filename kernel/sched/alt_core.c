@@ -2617,6 +2617,76 @@ static inline void finish_task(struct task_struct *prev)
 #endif
 }
 
+#ifdef CONFIG_SMP
+
+static void do_balance_callbacks(struct rq *rq, struct callback_head *head)
+{
+	void (*func)(struct rq *rq);
+	struct callback_head *next;
+
+	lockdep_assert_held(&rq->lock);
+
+	while (head) {
+		func = (void (*)(struct rq *))head->func;
+		next = head->next;
+		head->next = NULL;
+		head = next;
+
+		func(rq);
+	}
+}
+
+static void balance_push(struct rq *rq);
+
+struct callback_head balance_push_callback = {
+	.next = NULL,
+	.func = (void (*)(struct callback_head *))balance_push,
+};
+
+static inline struct callback_head *splice_balance_callbacks(struct rq *rq)
+{
+	struct callback_head *head = rq->balance_callback;
+
+	lockdep_assert_held(&rq->lock);
+	if (head)
+		rq->balance_callback = NULL;
+
+	return head;
+}
+
+static void __balance_callbacks(struct rq *rq)
+{
+	do_balance_callbacks(rq, splice_balance_callbacks(rq));
+}
+
+static inline void balance_callbacks(struct rq *rq, struct callback_head *head)
+{
+	unsigned long flags;
+
+	if (unlikely(head)) {
+		raw_spin_lock_irqsave(&rq->lock, flags);
+		do_balance_callbacks(rq, head);
+		raw_spin_unlock_irqrestore(&rq->lock, flags);
+	}
+}
+
+#else
+
+static inline void __balance_callbacks(struct rq *rq)
+{
+}
+
+static inline struct callback_head *splice_balance_callbacks(struct rq *rq)
+{
+	return NULL;
+}
+
+static inline void balance_callbacks(struct rq *rq, struct callback_head *head)
+{
+}
+
+#endif
+
 static inline void
 prepare_lock_switch(struct rq *rq, struct task_struct *next)
 {
@@ -2641,6 +2711,7 @@ static inline void finish_lock_switch(struct rq *rq)
 	 * prev into current:
 	 */
 	spin_acquire(&rq->lock.dep_map, 0, 0, _THIS_IP_);
+	__balance_callbacks(rq);
 	raw_spin_unlock_irq(&rq->lock);
 }
 
@@ -3834,8 +3905,10 @@ static void __sched notrace __schedule(bool preempt)
 
 		/* Also unlocks the rq: */
 		rq = context_switch(rq, prev, next);
-	} else
+	} else {
+		__balance_callbacks(rq);
 		raw_spin_unlock_irq(&rq->lock);
+	}
 
 #ifdef CONFIG_SCHED_SMT
 	sg_balance_check(rq);
@@ -4205,7 +4278,13 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
 
 	check_task_changed(rq, p);
 out_unlock:
+	/* Avoid rq from going away on us: */
+	preempt_disable();
+
+	__balance_callbacks(rq);
 	__task_access_unlock(p, lock);
+
+	preempt_enable();
 }
 #else
 static inline int rt_effective_prio(struct task_struct *p, int prio)
@@ -4422,6 +4501,7 @@ static int __sched_setscheduler(struct task_struct *p,
 	int newprio = MAX_RT_PRIO - 1 - attr->sched_priority;
 	int retval, oldpolicy = -1;
 	int policy = attr->sched_policy;
+	struct callback_head *head;
 	unsigned long flags;
 	struct rq *rq;
 	int reset_on_fork;
@@ -4575,6 +4655,7 @@ change:
 
 	/* Avoid rq from going away on us: */
 	preempt_disable();
+	head = splice_balance_callbacks(rq);
 	__task_access_unlock(p, lock);
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 
@@ -4583,6 +4664,8 @@ change:
 		rt_mutex_adjust_pi(p);
 	}
 
+	/* Run balance callbacks after we've adjusted the PI chain: */
+	balance_callbacks(rq, head);
 	preempt_enable();
 
 	return 0;
