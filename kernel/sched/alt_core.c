@@ -5889,81 +5889,6 @@ void idle_task_exit(void)
 	/* finish_cpu(), as ran on the BP, will clean up the active_mm state */
 }
 
-/*
- * Migrate all tasks from the rq, sleeping tasks will be migrated by
- * try_to_wake_up()->select_task_rq().
- *
- * Called with rq->lock held even though we'er in stop_machine() and
- * there's no concurrency possible, we hold the required locks anyway
- * because of lock validation efforts.
- */
-static void migrate_tasks(struct rq *dead_rq)
-{
-	struct rq *rq = dead_rq;
-	struct task_struct *p, *stop = rq->stop;
-	int count = 0;
-
-	/*
-	 * Fudge the rq selection such that the below task selection loop
-	 * doesn't get stuck on the currently eligible stop task.
-	 *
-	 * We're currently inside stop_machine() and the rq is either stuck
-	 * in the stop_machine_cpu_stop() loop, or we're executing this code,
-	 * either way we should never end up calling schedule() until we're
-	 * done here.
-	 */
-	rq->stop = NULL;
-
-	p = sched_rq_first_task(rq);
-	while (p != rq->idle) {
-		int dest_cpu;
-
-		/* skip the running task */
-		if (task_running(p) || 1 == p->nr_cpus_allowed) {
-			p = sched_rq_next_task(p, rq);
-			continue;
-		}
-
-		/*
-		 * Rules for changing task_struct::cpus_allowed are holding
-		 * both pi_lock and rq->lock, such that holding either
-		 * stabilizes the mask.
-		 *
-		 * Drop rq->lock is not quite as disastrous as it usually is
-		 * because !cpu_active at this point, which means load-balance
-		 * will not interfere. Also, stop-machine.
-		 */
-		raw_spin_unlock(&rq->lock);
-		raw_spin_lock(&p->pi_lock);
-		raw_spin_lock(&rq->lock);
-
-		/*
-		 * Since we're inside stop-machine, _nothing_ should have
-		 * changed the task, WARN if weird stuff happened, because in
-		 * that case the above rq->lock drop is a fail too.
-		 */
-		if (WARN_ON(task_rq(p) != rq || !task_on_rq_queued(p))) {
-			raw_spin_unlock(&p->pi_lock);
-			p = sched_rq_next_task(p, rq);
-			continue;
-		}
-
-		count++;
-		/* Find suitable destination for @next, with force if needed. */
-		dest_cpu = select_fallback_rq(dead_rq->cpu, p);
-		rq = __migrate_task(rq, p, dest_cpu);
-		raw_spin_unlock(&rq->lock);
-		raw_spin_unlock(&p->pi_lock);
-
-		rq = dead_rq;
-		raw_spin_lock(&rq->lock);
-		/* Check queued task all over from the header again */
-		p = sched_rq_first_task(rq);
-	}
-
-	rq->stop = stop;
-}
-
 static void set_rq_offline(struct rq *rq)
 {
 	if (rq->online)
@@ -6107,9 +6032,6 @@ int sched_cpu_deactivate(unsigned int cpu)
 		return ret;
 	}
 
-	/* Wait for all non per CPU kernel threads to vanish. */
-	balance_hotplug_wait();
-
 	return 0;
 }
 
@@ -6142,7 +6064,25 @@ int sched_cpu_starting(unsigned int cpu)
  */
 int sched_cpu_wait_empty(unsigned int cpu)
 {
+	balance_hotplug_wait();
 	return 0;
+}
+
+/*
+ * Since this CPU is going 'away' for a while, fold any nr_active delta we
+ * might have. Called from the CPU stopper task after ensuring that the
+ * stopper is the last running task on the CPU, so nr_active count is
+ * stable. We need to take the teardown thread which is calling this into
+ * account, so we hand in adjust = 1 to the load calculation.
+ *
+ * Also see the comment "Global load-average calculations".
+ */
+static void calc_load_migrate(struct rq *rq)
+{
+	long delta = calc_load_fold_active(rq, 1);
+
+	if (delta)
+		atomic_long_add(delta, &calc_load_tasks);
 }
 
 int sched_cpu_dying(unsigned int cpu)
@@ -6155,7 +6095,6 @@ int sched_cpu_dying(unsigned int cpu)
 
 	raw_spin_lock_irqsave(&rq->lock, flags);
 	set_rq_offline(rq);
-	migrate_tasks(rq);
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
 
 	/*
@@ -6164,6 +6103,7 @@ int sched_cpu_dying(unsigned int cpu)
 	 */
 	balance_push_set(cpu, false);
 
+	calc_load_migrate(rq);
 	hrtick_clear(rq);
 	return 0;
 }
