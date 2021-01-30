@@ -6166,6 +6166,7 @@ void __init sched_init(void)
 #ifdef CONFIG_NO_HZ_COMMON
 		INIT_CSD(&rq->nohz_csd, nohz_csd_func, rq);
 #endif
+		rq->balance_callback = NULL;
 #endif /* CONFIG_SMP */
 		rq->nr_switches = 0;
 
