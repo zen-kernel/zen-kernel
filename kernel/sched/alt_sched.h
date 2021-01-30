@@ -126,9 +126,13 @@ struct rq {
 
 #ifdef CONFIG_SCHED_SMT
 	int active_balance;
-	struct cpu_stop_work active_balance_work;
+	struct cpu_stop_work	active_balance_work;
 #endif
-	struct callback_head    *balance_callback;
+	struct callback_head	*balance_callback;
+	unsigned char		balance_push;
+#ifdef CONFIG_HOTPLUG_CPU
+	struct rcuwait		hotplug_wait;
+#endif
 #endif /* CONFIG_SMP */
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
 	u64 prev_irq_time;
@@ -389,10 +393,24 @@ task_rq_unlock(struct rq *rq, struct task_struct *p, struct rq_flags *rf)
 }
 
 static inline void
+rq_lock(struct rq *rq, struct rq_flags *rf)
+	__acquires(rq->lock)
+{
+	raw_spin_lock(&rq->lock);
+}
+
+static inline void
 rq_unlock_irq(struct rq *rq, struct rq_flags *rf)
 	__releases(rq->lock)
 {
 	raw_spin_unlock_irq(&rq->lock);
+}
+
+static inline void
+rq_unlock(struct rq *rq, struct rq_flags *rf)
+	__releases(rq->lock)
+{
+	raw_spin_unlock(&rq->lock);
 }
 
 static inline struct rq *
