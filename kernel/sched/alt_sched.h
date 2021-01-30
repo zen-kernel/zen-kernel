@@ -128,6 +128,7 @@ struct rq {
 	int active_balance;
 	struct cpu_stop_work active_balance_work;
 #endif
+	struct callback_head    *balance_callback;
 #endif /* CONFIG_SMP */
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
 	u64 prev_irq_time;
