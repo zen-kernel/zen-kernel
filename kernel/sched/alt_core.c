@@ -3419,6 +3419,139 @@ static void sched_tick_stop(int cpu)
 	twork = per_cpu_ptr(tick_work_cpu, cpu);
 	cancel_delayed_work_sync(&twork->work);
 }
+
+static int __balance_push_cpu_stop(void *arg)
+{
+	struct task_struct *p = arg;
+	struct rq *rq = this_rq();
+	struct rq_flags rf;
+	int cpu;
+
+	raw_spin_lock_irq(&p->pi_lock);
+	rq_lock(rq, &rf);
+
+	update_rq_clock(rq);
+
+	if (task_rq(p) == rq && task_on_rq_queued(p)) {
+		cpu = select_fallback_rq(rq->cpu, p);
+		rq = __migrate_task(rq, p, cpu);
+	}
+
+	rq_unlock(rq, &rf);
+	raw_spin_unlock_irq(&p->pi_lock);
+
+	put_task_struct(p);
+
+	return 0;
+}
+
+static DEFINE_PER_CPU(struct cpu_stop_work, push_work);
+
+/*
+ * Ensure we only run per-cpu kthreads once the CPU goes !active.
+ */
+static void balance_push(struct rq *rq)
+{
+	struct task_struct *push_task = rq->curr;
+
+	lockdep_assert_held(&rq->lock);
+	SCHED_WARN_ON(rq->cpu != smp_processor_id());
+	/*
+	 * Ensure the thing is persistent until balance_push_set(.on = false);
+	 */
+	rq->balance_callback = &balance_push_callback;
+
+	/*
+	 * Both the cpu-hotplug and stop task are in this case and are
+	 * required to complete the hotplug process.
+	 *
+	 * XXX: the idle task does not match kthread_is_per_cpu() due to
+	 * histerical raisins.
+	 */
+	if (rq->idle == push_task ||
+	    ((push_task->flags & PF_KTHREAD) && kthread_is_per_cpu(push_task)) ||
+	    is_migration_disabled(push_task)) {
+
+		/*
+		 * If this is the idle task on the outgoing CPU try to wake
+		 * up the hotplug control thread which might wait for the
+		 * last task to vanish. The rcuwait_active() check is
+		 * accurate here because the waiter is pinned on this CPU
+		 * and can't obviously be running in parallel.
+		 *
+		 * On RT kernels this also has to check whether there are
+		 * pinned and scheduled out tasks on the runqueue. They
+		 * need to leave the migrate disabled section first.
+		 */
+		if (!rq->nr_running && !rq_has_pinned_tasks(rq) &&
+		    rcuwait_active(&rq->hotplug_wait)) {
+			raw_spin_unlock(&rq->lock);
+			rcuwait_wake_up(&rq->hotplug_wait);
+			raw_spin_lock(&rq->lock);
+		}
+		return;
+	}
+
+	get_task_struct(push_task);
+	/*
+	 * Temporarily drop rq->lock such that we can wake-up the stop task.
+	 * Both preemption and IRQs are still disabled.
+	 */
+	raw_spin_unlock(&rq->lock);
+	stop_one_cpu_nowait(rq->cpu, __balance_push_cpu_stop, push_task,
+			    this_cpu_ptr(&push_work));
+	/*
+	 * At this point need_resched() is true and we'll take the loop in
+	 * schedule(). The next pick is obviously going to be the stop task
+	 * which kthread_is_per_cpu() and will push this task away.
+	 */
+	raw_spin_lock(&rq->lock);
+}
+
+static void balance_push_set(int cpu, bool on)
+{
+	struct rq *rq = cpu_rq(cpu);
+	struct rq_flags rf;
+
+	rq_lock_irqsave(rq, &rf);
+	rq->balance_push = on;
+	if (on) {
+		WARN_ON_ONCE(rq->balance_callback);
+		rq->balance_callback = &balance_push_callback;
+	} else if (rq->balance_callback == &balance_push_callback) {
+		rq->balance_callback = NULL;
+	}
+	rq_unlock_irqrestore(rq, &rf);
+}
+
+/*
+ * Invoked from a CPUs hotplug control thread after the CPU has been marked
+ * inactive. All tasks which are not per CPU kernel threads are either
+ * pushed off this CPU now via balance_push() or placed on a different CPU
+ * during wakeup. Wait until the CPU is quiescent.
+ */
+static void balance_hotplug_wait(void)
+{
+	struct rq *rq = this_rq();
+
+	rcuwait_wait_event(&rq->hotplug_wait,
+			   rq->nr_running == 1 && !rq_has_pinned_tasks(rq),
+			   TASK_UNINTERRUPTIBLE);
+}
+
+#else
+
+static void balance_push(struct rq *rq)
+{
+}
+
+static void balance_push_set(int cpu, bool on)
+{
+}
+
+static inline void balance_hotplug_wait(void)
+{
+}
 #endif /* CONFIG_HOTPLUG_CPU */
 
 int __init sched_tick_offload_init(void)
@@ -5893,6 +6026,12 @@ int sched_cpu_activate(unsigned int cpu)
 	struct rq *rq = cpu_rq(cpu);
 	unsigned long flags;
 
+	/*
+	 * Make sure that when the hotplug state machine does a roll-back
+	 * we clear balance_push. Ideally that would happen earlier...
+	 */
+	balance_push_set(cpu, false);
+
 #ifdef CONFIG_SCHED_SMT
 	/*
 	 * When going up, increment the number of cores with SMT present.
@@ -5926,6 +6065,15 @@ int sched_cpu_deactivate(unsigned int cpu)
 	int ret;
 
 	set_cpu_active(cpu, false);
+
+	/*
+	 * From this point forward, this CPU will refuse to run any task that
+	 * is not: migrate_disable() or KTHREAD_IS_PER_CPU, and will actively
+	 * push those tasks away until this gets cleared, see
+	 * sched_cpu_dying().
+	 */
+	balance_push_set(cpu, true);
+
 	/*
 	 * We've cleared cpu_active_mask, wait for all preempt-disabled and RCU
 	 * users of this state to go away such that all new such users will
@@ -5951,9 +6099,14 @@ int sched_cpu_deactivate(unsigned int cpu)
 
 	ret = cpuset_cpu_inactive(cpu);
 	if (ret) {
+		balance_push_set(cpu, false);
 		set_cpu_active(cpu, true);
 		return ret;
 	}
+
+	/* Wait for all non per CPU kernel threads to vanish. */
+	balance_hotplug_wait();
+
 	return 0;
 }
 
@@ -6001,6 +6154,12 @@ int sched_cpu_dying(unsigned int cpu)
 	set_rq_offline(rq);
 	migrate_tasks(rq);
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
+
+	/*
+	 * Now that the CPU is offline, make sure we're welcome
+	 * to new tasks once we come back up.
+	 */
+	balance_push_set(cpu, false);
 
 	hrtick_clear(rq);
 	return 0;
@@ -6167,6 +6326,9 @@ void __init sched_init(void)
 		INIT_CSD(&rq->nohz_csd, nohz_csd_func, rq);
 #endif
 		rq->balance_callback = NULL;
+#ifdef CONFIG_HOTPLUG_CPU
+		rcuwait_init(&rq->hotplug_wait);
+#endif
 #endif /* CONFIG_SMP */
 		rq->nr_switches = 0;
 
