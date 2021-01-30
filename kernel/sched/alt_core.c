@@ -5990,6 +5990,8 @@ int sched_cpu_activate(unsigned int cpu)
 
 int sched_cpu_deactivate(unsigned int cpu)
 {
+	struct rq *rq = cpu_rq(cpu);
+	unsigned long flags;
 	int ret;
 
 	set_cpu_active(cpu, false);
@@ -6010,6 +6012,11 @@ int sched_cpu_deactivate(unsigned int cpu)
 	 * Do sync before park smpboot threads to take care the rcu boost case.
 	 */
 	synchronize_rcu();
+
+	raw_spin_lock_irqsave(&rq->lock, flags);
+	update_rq_clock(rq);
+	set_rq_offline(rq);
+	raw_spin_unlock_irqrestore(&rq->lock, flags);
 
 #ifdef CONFIG_SCHED_SMT
 	/*
@@ -6094,7 +6101,6 @@ int sched_cpu_dying(unsigned int cpu)
 	sched_tick_stop(cpu);
 
 	raw_spin_lock_irqsave(&rq->lock, flags);
-	set_rq_offline(rq);
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
 
 	/*
