@@ -9,7 +9,7 @@ config ANDROID
 if ANDROID
 
 config ANDROID_BINDER_IPC
-	tristate "Android Binder IPC Driver"
+	bool "Android Binder IPC Driver"
 	depends on MMU
 	default n
 	help
