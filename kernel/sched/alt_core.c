@@ -1260,17 +1260,26 @@ static int migration_cpu_stop(void *data)
 	return 0;
 }
 
+#define SCA_CHECK		0x01
+
 static inline void
-set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_mask)
+set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_mask, u32 flags)
 {
 	cpumask_copy(&p->cpus_mask, new_mask);
 	p->nr_cpus_allowed = cpumask_weight(new_mask);
 }
 
+static void
+__do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask, u32 flags)
+{
+	set_cpus_allowed_common(p, new_mask, flags);
+}
+
 void do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask)
 {
-	set_cpus_allowed_common(p, new_mask);
+	__do_set_cpus_allowed(p, new_mask, 0);
 }
+
 #endif
 
 /**
@@ -1561,16 +1570,17 @@ void sched_set_stop_task(int cpu, struct task_struct *stop)
  * call is not atomic; no spinlocks may be held.
  */
 static int __set_cpus_allowed_ptr(struct task_struct *p,
-				  const struct cpumask *new_mask, bool check)
+				  const struct cpumask *new_mask,
+				  u32 flags)
 {
 	const struct cpumask *cpu_valid_mask = cpu_active_mask;
 	int dest_cpu;
-	unsigned long flags;
+	unsigned long irq_flags;
 	struct rq *rq;
 	raw_spinlock_t *lock;
 	int ret = 0;
 
-	raw_spin_lock_irqsave(&p->pi_lock, flags);
+	raw_spin_lock_irqsave(&p->pi_lock, irq_flags);
 	rq = __task_access_lock(p, &lock);
 
 	if (p->flags & PF_KTHREAD) {
@@ -1584,7 +1594,7 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 	 * Must re-check here, to close a race against __kthread_bind(),
 	 * sched_setaffinity() is not guaranteed to observe the flag.
 	 */
-	if (check && (p->flags & PF_NO_SETAFFINITY)) {
+	if ((flags & SCA_CHECK) && (p->flags & PF_NO_SETAFFINITY)) {
 		ret = -EINVAL;
 		goto out;
 	}
@@ -1598,7 +1608,7 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 		goto out;
 	}
 
-	do_set_cpus_allowed(p, new_mask);
+	__do_set_cpus_allowed(p, new_mask, flags);
 
 	if (p->flags & PF_KTHREAD) {
 		/*
@@ -1619,7 +1629,7 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 
 		/* Need help from migration thread: drop lock and wait. */
 		__task_access_unlock(p, lock);
-		raw_spin_unlock_irqrestore(&p->pi_lock, flags);
+		raw_spin_unlock_irqrestore(&p->pi_lock, irq_flags);
 		stop_one_cpu(cpu_of(rq), migration_cpu_stop, &arg);
 		return 0;
 	}
@@ -1635,14 +1645,14 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 
 out:
 	__task_access_unlock(p, lock);
-	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
+	raw_spin_unlock_irqrestore(&p->pi_lock, irq_flags);
 
 	return ret;
 }
 
 int set_cpus_allowed_ptr(struct task_struct *p, const struct cpumask *new_mask)
 {
-	return __set_cpus_allowed_ptr(p, new_mask, false);
+	return __set_cpus_allowed_ptr(p, new_mask, 0);
 }
 EXPORT_SYMBOL_GPL(set_cpus_allowed_ptr);
 
@@ -1655,7 +1665,8 @@ static inline int select_task_rq(struct task_struct *p, struct rq *rq)
 
 static inline int
 __set_cpus_allowed_ptr(struct task_struct *p,
-		       const struct cpumask *new_mask, bool check)
+		       const struct cpumask *new_mask,
+		       u32 flags)
 {
 	return set_cpus_allowed_ptr(p, new_mask);
 }
@@ -5270,7 +5281,7 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	cpumask_and(new_mask, in_mask, cpus_allowed);
 
 again:
-	retval = __set_cpus_allowed_ptr(p, new_mask, true);
+	retval = __set_cpus_allowed_ptr(p, new_mask, SCA_CHECK);
 
 	if (!retval) {
 		cpuset_cpus_allowed(p, cpus_allowed);
@@ -5815,7 +5826,7 @@ void init_idle(struct task_struct *idle, int cpu)
 	 *
 	 * And since this is boot we can forgo the serialisation.
 	 */
-	set_cpus_allowed_common(idle, cpumask_of(cpu));
+	set_cpus_allowed_common(idle, cpumask_of(cpu), 0);
 #endif
 
 	/* Silence PROVE_RCU */
