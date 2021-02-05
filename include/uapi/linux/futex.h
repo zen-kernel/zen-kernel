@@ -46,6 +46,11 @@
 #define FUTEX_WAIT_MULTIPLE_PRIVATE	(FUTEX_WAIT_MULTIPLE | \
 					 FUTEX_PRIVATE_FLAG)
 
+/* Size argument to futex2 syscall */
+#define FUTEX_32	2
+
+#define FUTEX_SIZE_MASK	0x3
+
 /*
  * Support for robust futexes: the kernel cleans up held futexes at
  * thread exit time.
