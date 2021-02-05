@@ -905,6 +905,8 @@ __SYSCALL(__NR_landlock_restrict_self, sys_landlock_restrict_self)
 __SYSCALL(__NR_futex_wait, sys_futex_wait)
 #define __NR_futex_wake 449
 __SYSCALL(__NR_futex_wake, sys_futex_wake)
+#define __NR_futex_waitv 450
+__SYSCALL(__NR_futex_wake, sys_futex_wake)
 
 /*
  * Please add new compat syscalls above this comment and update
