@@ -886,8 +886,11 @@ __SYSCALL(__NR_futex_wait, sys_futex_wait)
 #define __NR_futex_wake 450
 __SYSCALL(__NR_futex_wake, sys_futex_wake)
 
+#define __NR_futex_waitv 451
+__SC_COMP(__NR_futex_waitv, sys_futex_waitv, compat_sys_futex_waitv)
+
 #undef __NR_syscalls
-#define __NR_syscalls 451
+#define __NR_syscalls 452
 
 /*
  * 32 bit systems traditionally used different

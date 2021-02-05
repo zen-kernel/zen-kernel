@@ -907,6 +907,8 @@ __SYSCALL(__NR_process_mrelease, sys_process_mrelease)
 __SYSCALL(__NR_futex_wait, sys_futex_wait)
 #define __NR_futex_wake 450
 __SYSCALL(__NR_futex_wake, sys_futex_wake)
+#define __NR_futex_waitv 451
+__SYSCALL(__NR_futex_wake, sys_futex_wake)
 
 /*
  * Please add new compat syscalls above this comment and update
