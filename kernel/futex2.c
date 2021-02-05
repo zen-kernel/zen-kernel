@@ -190,3 +190,27 @@ SYSCALL_DEFINE4(futex_waitv, struct futex_waitv __user *, waiters,
 	kfree(futexv);
 	return ret;
 }
+
+static ssize_t waitv_show(struct kobject *kobj, struct kobj_attribute *attr,
+			     char *buf)
+{
+	return sprintf(buf, "%u\n", __NR_futex_waitv);
+
+}
+static struct kobj_attribute futex2_waitv_attr = __ATTR_RO(waitv);
+
+static struct attribute *futex2_sysfs_attrs[] = {
+	&futex2_waitv_attr.attr,
+	NULL,
+};
+
+static const struct attribute_group futex2_sysfs_attr_group = {
+	.attrs = futex2_sysfs_attrs,
+	.name = "futex2",
+};
+
+static int __init futex2_sysfs_init(void)
+{
+	return sysfs_create_group(kernel_kobj, &futex2_sysfs_attr_group);
+}
+subsys_initcall(futex2_sysfs_init);
