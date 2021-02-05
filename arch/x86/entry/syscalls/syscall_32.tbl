@@ -455,3 +455,4 @@
 448	i386	futex_wait		sys_futex_wait
 449	i386	futex_wake		sys_futex_wake
 450	i386	futex_waitv		sys_futex_waitv			compat_sys_futex_waitv
+451	i386	futex_requeue		sys_futex_requeue		compat_sys_futex_requeue
