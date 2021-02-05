@@ -713,6 +713,177 @@ SYSCALL_DEFINE4(futex_wait, void __user *, uaddr, unsigned int, val,
 	return futex_set_timer_and_wait(futexv, 1, timo, flags);
 }
 
+#ifdef CONFIG_COMPAT
+/**
+ * compat_futex_parse_waitv - Parse a waitv array from userspace
+ * @futexv:	Kernel side list of waiters to be filled
+ * @uwaitv:     Userspace list to be parsed
+ * @nr_futexes: Length of futexv
+ *
+ * Return: Error code on failure, pointer to a prepared futexv otherwise
+ */
+static int compat_futex_parse_waitv(struct futexv_head *futexv,
+				    struct compat_futex_waitv __user *uwaitv,
+				    unsigned int nr_futexes)
+{
+	struct futex_bucket *bucket;
+	struct compat_futex_waitv waitv;
+	unsigned int i;
+
+	for (i = 0; i < nr_futexes; i++) {
+		if (copy_from_user(&waitv, &uwaitv[i], sizeof(waitv)))
+			return -EFAULT;
+
+		if ((waitv.flags & ~FUTEXV_WAITER_MASK) ||
+		    (waitv.flags & FUTEX_SIZE_MASK) != FUTEX_32)
+			return -EINVAL;
+
+		futexv->objects[i].key.pointer = 0;
+		futexv->objects[i].flags  = waitv.flags;
+		futexv->objects[i].uaddr  = (uintptr_t)compat_ptr(waitv.uaddr);
+		futexv->objects[i].val    = waitv.val;
+		futexv->objects[i].index  = i;
+
+		bucket = futex_get_bucket(compat_ptr(waitv.uaddr),
+					  &futexv->objects[i].key,
+					  is_object_shared);
+
+		if (IS_ERR(bucket))
+			return PTR_ERR(bucket);
+
+		futexv->objects[i].bucket = bucket;
+
+		INIT_LIST_HEAD(&futexv->objects[i].list);
+	}
+
+	return 0;
+}
+
+COMPAT_SYSCALL_DEFINE4(futex_waitv, struct compat_futex_waitv __user *, waiters,
+		       unsigned int, nr_futexes, unsigned int, flags,
+		       struct __kernel_timespec __user *, timo)
+{
+	struct futexv_head *futexv;
+	int ret;
+
+	if (flags & ~FUTEXV_MASK)
+		return -EINVAL;
+
+	if (!nr_futexes || nr_futexes > FUTEX_WAITV_MAX || !waiters)
+		return -EINVAL;
+
+	futexv = kmalloc((sizeof(struct futex_waiter) * nr_futexes) +
+			 sizeof(*futexv), GFP_KERNEL);
+	if (!futexv)
+		return -ENOMEM;
+
+	futexv->hint = false;
+	futexv->task = current;
+
+	ret = compat_futex_parse_waitv(futexv, waiters, nr_futexes);
+
+	if (!ret)
+		ret = futex_set_timer_and_wait(futexv, nr_futexes, timo, flags);
+
+	kfree(futexv);
+
+	return ret;
+}
+#endif
+
+/**
+ * futex_parse_waitv - Parse a waitv array from userspace
+ * @futexv:	Kernel side list of waiters to be filled
+ * @uwaitv:     Userspace list to be parsed
+ * @nr_futexes: Length of futexv
+ *
+ * Return: Error code on failure, pointer to a prepared futexv otherwise
+ */
+static int futex_parse_waitv(struct futexv_head *futexv,
+			     struct futex_waitv __user *uwaitv,
+			     unsigned int nr_futexes)
+{
+	struct futex_bucket *bucket;
+	struct futex_waitv waitv;
+	unsigned int i;
+
+	for (i = 0; i < nr_futexes; i++) {
+		if (copy_from_user(&waitv, &uwaitv[i], sizeof(waitv)))
+			return -EFAULT;
+
+		if ((waitv.flags & ~FUTEXV_WAITER_MASK) ||
+		    (waitv.flags & FUTEX_SIZE_MASK) != FUTEX_32)
+			return -EINVAL;
+
+		futexv->objects[i].key.pointer = 0;
+		futexv->objects[i].flags  = waitv.flags;
+		futexv->objects[i].uaddr  = (uintptr_t)waitv.uaddr;
+		futexv->objects[i].val    = waitv.val;
+		futexv->objects[i].index  = i;
+
+		bucket = futex_get_bucket(waitv.uaddr, &futexv->objects[i].key,
+					  is_object_shared);
+
+		if (IS_ERR(bucket))
+			return PTR_ERR(bucket);
+
+		futexv->objects[i].bucket = bucket;
+
+		INIT_LIST_HEAD(&futexv->objects[i].list);
+	}
+
+	return 0;
+}
+
+/**
+ * sys_futex_waitv - Wait on a list of futexes
+ * @waiters:    List of futexes to wait on
+ * @nr_futexes: Length of futexv
+ * @flags:      Flag for timeout (monotonic/realtime)
+ * @timo:	Optional absolute timeout.
+ *
+ * Given an array of `struct futex_waitv`, wait on each uaddr. The thread wakes
+ * if a futex_wake() is performed at any uaddr. The syscall returns immediately
+ * if any waiter has *uaddr != val. *timo is an optional timeout value for the
+ * operation. Each waiter has individual flags. The `flags` argument for the
+ * syscall should be used solely for specifying the timeout as realtime, if
+ * needed. Flags for shared futexes, sizes, etc. should be used on the
+ * individual flags of each waiter.
+ *
+ * Returns the array index of one of the awaken futexes. There's no given
+ * information of how many were awakened, or any particular attribute of it (if
+ * it's the first awakened, if it is of the smaller index...).
+ */
+SYSCALL_DEFINE4(futex_waitv, struct futex_waitv __user *, waiters,
+		unsigned int, nr_futexes, unsigned int, flags,
+		struct __kernel_timespec __user *, timo)
+{
+	struct futexv_head *futexv;
+	int ret;
+
+	if (flags & ~FUTEXV_MASK)
+		return -EINVAL;
+
+	if (!nr_futexes || nr_futexes > FUTEX_WAITV_MAX || !waiters)
+		return -EINVAL;
+
+	futexv = kmalloc((sizeof(struct futex_waiter) * nr_futexes) +
+			 sizeof(*futexv), GFP_KERNEL);
+	if (!futexv)
+		return -ENOMEM;
+
+	futexv->hint = false;
+	futexv->task = current;
+
+	ret = futex_parse_waitv(futexv, waiters, nr_futexes);
+	if (!ret)
+		ret = futex_set_timer_and_wait(futexv, nr_futexes, timo, flags);
+
+	kfree(futexv);
+
+	return ret;
+}
+
 /**
  * futex_get_parent - For a given futex in a futexv list, get a pointer to the futexv
  * @waiter: Address of futex in the list

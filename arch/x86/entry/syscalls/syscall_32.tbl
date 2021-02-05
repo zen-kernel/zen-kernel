@@ -448,3 +448,4 @@
 441	i386	epoll_pwait2		sys_epoll_pwait2		compat_sys_epoll_pwait2
 442	i386	futex_wait		sys_futex_wait
 443	i386	futex_wake		sys_futex_wake
+444	i386	futex_waitv		sys_futex_waitv			compat_sys_futex_waitv
