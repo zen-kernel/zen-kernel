@@ -977,6 +977,221 @@ SYSCALL_DEFINE3(futex_wake, void __user *, uaddr, unsigned int, nr_wake,
 	return ret;
 }
 
+static void futex_double_unlock(struct futex_bucket *b1, struct futex_bucket *b2)
+{
+	spin_unlock(&b1->lock);
+	if (b1 != b2)
+		spin_unlock(&b2->lock);
+}
+
+static inline int __futex_requeue(struct futex_requeue rq1,
+				  struct futex_requeue rq2, unsigned int nr_wake,
+				  unsigned int nr_requeue, unsigned int cmpval,
+				  bool shared1, bool shared2)
+{
+	struct futex_waiter w1, w2, *aux, *tmp;
+	bool retry = false;
+	struct futex_bucket *b1, *b2;
+	DEFINE_WAKE_Q(wake_q);
+	u32 uval;
+	int ret;
+
+	b1 = futex_get_bucket(rq1.uaddr, &w1.key, shared1);
+	if (IS_ERR(b1))
+		return PTR_ERR(b1);
+
+	b2 = futex_get_bucket(rq2.uaddr, &w2.key, shared2);
+	if (IS_ERR(b2))
+		return PTR_ERR(b2);
+
+retry:
+	if (shared1 && retry) {
+		b1 = futex_get_bucket(rq1.uaddr, &w1.key, shared1);
+		if (IS_ERR(b1))
+			return PTR_ERR(b1);
+	}
+
+	if (shared2 && retry) {
+		b2 = futex_get_bucket(rq2.uaddr, &w2.key, shared2);
+		if (IS_ERR(b2))
+			return PTR_ERR(b2);
+	}
+
+	bucket_inc_waiters(b2);
+	/*
+	 * To ensure the locks are taken in the same order for all threads (and
+	 * thus avoiding deadlocks), take the "smaller" one first
+	 */
+	if (b1 <= b2) {
+		spin_lock(&b1->lock);
+		if (b1 < b2)
+			spin_lock_nested(&b2->lock, SINGLE_DEPTH_NESTING);
+	} else {
+		spin_lock(&b2->lock);
+		spin_lock_nested(&b1->lock, SINGLE_DEPTH_NESTING);
+	}
+
+	ret = futex_get_user(&uval, rq1.uaddr);
+
+	if (unlikely(ret)) {
+		futex_double_unlock(b1, b2);
+		if (__get_user(uval, (u32 * __user)rq1.uaddr))
+			return -EFAULT;
+
+		bucket_dec_waiters(b2);
+		retry = true;
+		goto retry;
+	}
+
+	if (uval != cmpval) {
+		futex_double_unlock(b1, b2);
+
+		bucket_dec_waiters(b2);
+		return -EAGAIN;
+	}
+
+	list_for_each_entry_safe(aux, tmp, &b1->list, list) {
+		if (futex_match(w1.key, aux->key)) {
+			if (ret < nr_wake) {
+				futex_mark_wake(aux, b1, &wake_q);
+				ret++;
+				continue;
+			}
+
+			if (ret >= nr_wake + nr_requeue)
+				break;
+
+			aux->key.pointer = w2.key.pointer;
+			aux->key.index = w2.key.index;
+			aux->key.offset = w2.key.offset;
+
+			if (b1 != b2) {
+				list_del_init_careful(&aux->list);
+				bucket_dec_waiters(b1);
+
+				list_add_tail(&aux->list, &b2->list);
+				bucket_inc_waiters(b2);
+			}
+			ret++;
+		}
+	}
+
+	futex_double_unlock(b1, b2);
+	wake_up_q(&wake_q);
+	bucket_dec_waiters(b2);
+
+	return ret;
+}
+
+#ifdef CONFIG_COMPAT
+static int compat_futex_parse_requeue(struct futex_requeue *rq,
+				      struct compat_futex_requeue __user *uaddr,
+				      bool *shared)
+{
+	struct compat_futex_requeue tmp;
+
+	if (copy_from_user(&tmp, uaddr, sizeof(tmp)))
+		return -EFAULT;
+
+	if (tmp.flags & ~FUTEXV_WAITER_MASK ||
+	    (tmp.flags & FUTEX_SIZE_MASK) != FUTEX_32)
+		return -EINVAL;
+
+	*shared = (tmp.flags & FUTEX_SHARED_FLAG) ? true : false;
+
+	rq->uaddr = compat_ptr(tmp.uaddr);
+	rq->flags = tmp.flags;
+
+	return 0;
+}
+
+COMPAT_SYSCALL_DEFINE6(futex_requeue, struct compat_futex_requeue __user *, uaddr1,
+		       struct compat_futex_requeue __user *, uaddr2,
+		       unsigned int, nr_wake, unsigned int, nr_requeue,
+		       unsigned int, cmpval, unsigned int, flags)
+{
+	struct futex_requeue rq1, rq2;
+	bool shared1, shared2;
+	int ret;
+
+	if (flags)
+		return -EINVAL;
+
+	ret = compat_futex_parse_requeue(&rq1, uaddr1, &shared1);
+	if (ret)
+		return ret;
+
+	ret = compat_futex_parse_requeue(&rq2, uaddr2, &shared2);
+	if (ret)
+		return ret;
+
+	return __futex_requeue(rq1, rq2, nr_wake, nr_requeue, cmpval, shared1, shared2);
+}
+#endif
+
+/**
+ * futex_parse_requeue - Copy a user struct futex_requeue and check it's flags
+ * @rq:    Kernel struct
+ * @uaddr: Address of user struct
+ * @shared: Out parameter, defines if this is a shared futex
+ *
+ * Return: 0 on success, error code otherwise
+ */
+static int futex_parse_requeue(struct futex_requeue *rq,
+			       struct futex_requeue __user *uaddr, bool *shared)
+{
+	if (copy_from_user(rq, uaddr, sizeof(*rq)))
+		return -EFAULT;
+
+	if (rq->flags & ~FUTEXV_WAITER_MASK ||
+	    (rq->flags & FUTEX_SIZE_MASK) != FUTEX_32)
+		return -EINVAL;
+
+	*shared = (rq->flags & FUTEX_SHARED_FLAG) ? true : false;
+
+	return 0;
+}
+
+/**
+ * sys_futex_requeue - Wake futexes at uaddr1 and requeue from uaddr1 to uaddr2
+ * @uaddr1:	Address of futexes to be waken/dequeued
+ * @uaddr2:	Address for the futexes to be enqueued
+ * @nr_wake:	Number of futexes waiting in uaddr1 to be woken up
+ * @nr_requeue: Number of futexes to be requeued from uaddr1 to uaddr2
+ * @cmpval:	Expected value at uaddr1
+ * @flags:	Reserved flags arg for requeue operation expansion. Must be 0.
+ *
+ * If (uaddr1->uaddr == cmpval), wake at uaddr1->uaddr a nr_wake number of
+ * waiters and then, remove a number of nr_requeue waiters at uaddr1->uaddr
+ * and add then to uaddr2->uaddr list. Each uaddr has its own set of flags,
+ * that must be defined at struct futex_requeue (such as size, shared, NUMA).
+ *
+ * Return the number of the woken futexes + the number of requeued ones on
+ * success, error code otherwise.
+ */
+SYSCALL_DEFINE6(futex_requeue, struct futex_requeue __user *, uaddr1,
+		struct futex_requeue __user *, uaddr2,
+		unsigned int, nr_wake, unsigned int, nr_requeue,
+		unsigned int, cmpval, unsigned int, flags)
+{
+	struct futex_requeue rq1, rq2;
+	bool shared1, shared2;
+	int ret;
+
+	if (flags)
+		return -EINVAL;
+
+	ret = futex_parse_requeue(&rq1, uaddr1, &shared1);
+	if (ret)
+		return ret;
+
+	ret = futex_parse_requeue(&rq2, uaddr2, &shared2);
+	if (ret)
+		return ret;
+
+	return __futex_requeue(rq1, rq2, nr_wake, nr_requeue, cmpval, shared1, shared2);
+}
+
 static int __init futex2_init(void)
 {
 	int i;
