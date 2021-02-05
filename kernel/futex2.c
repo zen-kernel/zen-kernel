@@ -1220,6 +1220,48 @@ SYSCALL_DEFINE6(futex_requeue, struct futex_requeue __user *, uaddr1,
 	return __futex_requeue(rq1, rq2, nr_wake, nr_requeue, cmpval, shared1, shared2);
 }
 
+static ssize_t wait_show(struct kobject *kobj, struct kobj_attribute *attr,
+			     char *buf)
+{
+	return sprintf(buf, "%u\n", __NR_futex_wait);
+
+}
+static struct kobj_attribute futex2_wait_attr = __ATTR_RO(wait);
+
+static ssize_t wake_show(struct kobject *kobj, struct kobj_attribute *attr,
+			     char *buf)
+{
+	return sprintf(buf, "%u\n", __NR_futex_wake);
+
+}
+static struct kobj_attribute futex2_wake_attr = __ATTR_RO(wake);
+
+static ssize_t waitv_show(struct kobject *kobj, struct kobj_attribute *attr,
+			     char *buf)
+{
+	return sprintf(buf, "%u\n", __NR_futex_waitv);
+
+}
+static struct kobj_attribute futex2_waitv_attr = __ATTR_RO(waitv);
+
+static struct attribute *futex2_sysfs_attrs[] = {
+	&futex2_wait_attr.attr,
+	&futex2_wake_attr.attr,
+	&futex2_waitv_attr.attr,
+	NULL,
+};
+
+static const struct attribute_group futex2_sysfs_attr_group = {
+	.attrs = futex2_sysfs_attrs,
+	.name = "futex2",
+};
+
+static int __init futex2_sysfs_init(void)
+{
+	return sysfs_create_group(kernel_kobj, &futex2_sysfs_attr_group);
+}
+subsys_initcall(futex2_sysfs_init);
+
 static int __init futex2_init(void)
 {
 	int i;
