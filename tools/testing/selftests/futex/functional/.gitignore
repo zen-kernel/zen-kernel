@@ -8,3 +8,4 @@ futex_wait_uninitialized_heap
 futex_wait_wouldblock
 futex2_wait
 futex2_waitv
+futex2_requeue

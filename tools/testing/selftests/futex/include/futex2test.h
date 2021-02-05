@@ -103,3 +103,19 @@ static inline int futex2_waitv(volatile struct futex_waitv *waiters, unsigned lo
 {
 	return syscall(__NR_futex_waitv, waiters, nr_waiters, flags, timo);
 }
+
+/**
+ * futex2_requeue - Wake futexes at uaddr1 and requeue from uaddr1 to uaddr2
+ * @uaddr1:     Original address to wake and requeue from
+ * @uaddr2:     Address to requeue to
+ * @nr_wake:    Number of futexes to wake at uaddr1 before requeuing
+ * @nr_requeue: Number of futexes to requeue from uaddr1 to uaddr2
+ * @cmpval:     If (uaddr1->uaddr != cmpval), return immediatally
+ * @flgas:      Operation flags
+ */
+static inline int futex2_requeue(struct futex_requeue *uaddr1, struct futex_requeue *uaddr2,
+				 unsigned int nr_wake, unsigned int nr_requeue,
+				 unsigned int cmpval, unsigned long flags)
+{
+	return syscall(__NR_futex_requeue, uaddr1, uaddr2, nr_wake, nr_requeue, cmpval, flags);
+}
