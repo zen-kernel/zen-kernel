@@ -50,6 +50,20 @@
 
 #define FUTEX_SHARED_FLAG 8
 
+#define FUTEX_WAITV_MAX 128
+
+/**
+ * struct futex_waitv - A waiter for vectorized wait
+ * @uaddr: User address to wait on
+ * @val:   Expected value at uaddr
+ * @flags: Flags for this waiter
+ */
+struct futex_waitv {
+	void __user *uaddr;
+	unsigned int val;
+	unsigned int flags;
+};
+
 /*
  * Support for robust futexes: the kernel cleans up held futexes at
  * thread exit time.
