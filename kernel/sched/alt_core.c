@@ -3469,8 +3469,9 @@ static void balance_push(struct rq *rq)
 	 * histerical raisins.
 	 */
 	if (rq->idle == push_task ||
-	    ((push_task->flags & PF_KTHREAD) && kthread_is_per_cpu(push_task)) ||
-	    is_migration_disabled(push_task)) {
+	    ((push_task->flags & PF_KTHREAD) && kthread_is_per_cpu(push_task))) {
+	    /*((push_task->flags & PF_KTHREAD) && kthread_is_per_cpu(push_task)) ||
+	    is_migration_disabled(push_task)) {*/
 
 		/*
 		 * If this is the idle task on the outgoing CPU try to wake
@@ -3483,8 +3484,9 @@ static void balance_push(struct rq *rq)
 		 * pinned and scheduled out tasks on the runqueue. They
 		 * need to leave the migrate disabled section first.
 		 */
-		if (!rq->nr_running && !rq_has_pinned_tasks(rq) &&
-		    rcuwait_active(&rq->hotplug_wait)) {
+		if (!rq->nr_running && rcuwait_active(&rq->hotplug_wait)) {
+		/*if (!rq->nr_running && !rq_has_pinned_tasks(rq) &&
+		    rcuwait_active(&rq->hotplug_wait)) {*/
 			raw_spin_unlock(&rq->lock);
 			rcuwait_wake_up(&rq->hotplug_wait);
 			raw_spin_lock(&rq->lock);
@@ -3535,7 +3537,8 @@ static void balance_hotplug_wait(void)
 	struct rq *rq = this_rq();
 
 	rcuwait_wait_event(&rq->hotplug_wait,
-			   rq->nr_running == 1 && !rq_has_pinned_tasks(rq),
+			   rq->nr_running == 1,
+/*			   rq->nr_running == 1 && !rq_has_pinned_tasks(rq),*/
 			   TASK_UNINTERRUPTIBLE);
 }
 
