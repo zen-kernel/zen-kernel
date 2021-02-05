@@ -48,6 +48,8 @@
 
 #define FUTEX_SIZE_MASK	0x3
 
+#define FUTEX_SHARED_FLAG 8
+
 /*
  * Support for robust futexes: the kernel cleans up held futexes at
  * thread exit time.
