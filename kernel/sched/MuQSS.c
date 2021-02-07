@@ -5723,12 +5723,8 @@ static void do_sched_yield(void)
 		time_slice_expired(current, rq);
 	schedstat_inc(rq->yld_count);
 
-	/*
-	 * Since we are going to call schedule() anyway, there's
-	 * no need to preempt or enable interrupts:
-	 */
 	preempt_disable();
-	rq_unlock(rq);
+	rq_unlock_irq(rq, NULL);
 	sched_preempt_enable_no_resched();
 
 	schedule();
