@@ -24,6 +24,7 @@ locking
     percpu-rw-semaphore
     robust-futexes
     robust-futex-ABI
+    futex2
 
 .. only::  subproject and html
 
