@@ -2803,9 +2803,10 @@ static inline struct callback_head *splice_balance_callbacks(struct rq *rq)
 {
 	struct callback_head *head = rq->balance_callback;
 
-	lockdep_assert_held(&rq->lock);
-	if (head)
+	if (head) {
+		lockdep_assert_held(&rq->lock);
 		rq->balance_callback = NULL;
+	}
 
 	return head;
 }
