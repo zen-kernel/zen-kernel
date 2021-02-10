@@ -1649,6 +1649,7 @@ static inline int select_task_rq(struct task_struct *p, struct rq *rq)
 
 void sched_set_stop_task(int cpu, struct task_struct *stop)
 {
+	static struct lock_class_key stop_pi_lock;
 	struct sched_param stop_param = { .sched_priority = STOP_PRIO };
 	struct sched_param start_param = { .sched_priority = 0 };
 	struct task_struct *old_stop = cpu_rq(cpu)->stop;
@@ -1663,6 +1664,20 @@ void sched_set_stop_task(int cpu, struct task_struct *stop)
 		 * rely on PI working anyway.
 		 */
 		sched_setscheduler_nocheck(stop, SCHED_FIFO, &stop_param);
+
+		/*
+		 * The PI code calls rt_mutex_setprio() with ->pi_lock held to
+		 * adjust the effective priority of a task. As a result,
+		 * rt_mutex_setprio() can trigger (RT) balancing operations,
+		 * which can then trigger wakeups of the stop thread to push
+		 * around the current task.
+		 *
+		 * The stop task itself will never be part of the PI-chain, it
+		 * never blocks, therefore that ->pi_lock recursion is safe.
+		 * Tell lockdep about this by placing the stop->pi_lock in its
+		 * own class.
+		 */
+		lockdep_set_class(&stop->pi_lock, &stop_pi_lock);
 	}
 
 	cpu_rq(cpu)->stop = stop;
