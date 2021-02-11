@@ -23,6 +23,10 @@
 #include <linux/syscalls.h>
 #include <uapi/linux/futex.h>
 
+#ifdef CONFIG_X86_64
+#include <linux/compat.h>
+#endif
+
 /**
  * struct futex_key - Components to build unique key for a futex
  * @pointer: Pointer to current->mm or inode's UUID for file backed futexes
@@ -875,7 +879,16 @@ SYSCALL_DEFINE4(futex_waitv, struct futex_waitv __user *, waiters,
 	futexv->hint = false;
 	futexv->task = current;
 
-	ret = futex_parse_waitv(futexv, waiters, nr_futexes);
+#ifdef CONFIG_X86_X32_ABI
+	if (in_x32_syscall()) {
+		ret = compat_futex_parse_waitv(futexv, (struct compat_futex_waitv *)waiters,
+					       nr_futexes);
+	} else
+#endif
+	{
+		ret = futex_parse_waitv(futexv, waiters, nr_futexes);
+	}
+
 	if (!ret)
 		ret = futex_set_timer_and_wait(futexv, nr_futexes, timo, flags);
 
@@ -1181,13 +1194,28 @@ SYSCALL_DEFINE6(futex_requeue, struct futex_requeue __user *, uaddr1,
 	if (flags)
 		return -EINVAL;
 
-	ret = futex_parse_requeue(&rq1, uaddr1, &shared1);
-	if (ret)
-		return ret;
+#ifdef CONFIG_X86_X32_ABI
+	if (in_x32_syscall()) {
+		ret = compat_futex_parse_requeue(&rq1, (struct compat_futex_requeue *)uaddr1,
+						 &shared1);
+		if (ret)
+			return ret;
 
-	ret = futex_parse_requeue(&rq2, uaddr2, &shared2);
-	if (ret)
-		return ret;
+		ret = compat_futex_parse_requeue(&rq2, (struct compat_futex_requeue *)uaddr2,
+						 &shared2);
+		if (ret)
+			return ret;
+	} else
+#endif
+	{
+		ret = futex_parse_requeue(&rq1, uaddr1, &shared1);
+		if (ret)
+			return ret;
+
+		ret = futex_parse_requeue(&rq2, uaddr2, &shared2);
+		if (ret)
+			return ret;
+	}
 
 	return __futex_requeue(rq1, rq2, nr_wake, nr_requeue, cmpval, shared1, shared2);
 }
