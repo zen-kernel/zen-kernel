@@ -1153,20 +1153,6 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 				  const struct cpumask *new_mask,
 				  u32 flags);
 
-static void migrate_disable_switch(struct rq *rq, struct task_struct *p)
-{
-	if (likely(!p->migration_disabled))
-		return;
-
-	if (p->cpus_ptr != &p->cpus_mask)
-		return;
-
-	/*
-	 * Violates locking rules! see comment in __do_set_cpus_allowed().
-	 */
-	__do_set_cpus_allowed(p, cpumask_of(rq->cpu), SCA_MIGRATE_DISABLE);
-}
-
 void migrate_disable(void)
 {
 	struct task_struct *p = current;
@@ -1179,6 +1165,13 @@ void migrate_disable(void)
 	preempt_disable();
 	this_rq()->nr_pinned++;
 	p->migration_disabled = 1;
+
+	/*
+	 * Violates locking rules! see comment in __do_set_cpus_allowed().
+	 */
+	if (p->cpus_ptr == &p->cpus_mask)
+		__do_set_cpus_allowed(p, cpumask_of(smp_processor_id()), SCA_MIGRATE_DISABLE);
+
 	preempt_enable();
 }
 EXPORT_SYMBOL_GPL(migrate_disable);
@@ -1808,8 +1801,6 @@ __set_cpus_allowed_ptr(struct task_struct *p,
 {
 	return set_cpus_allowed_ptr(p, new_mask);
 }
-
-static inline void migrate_disable_switch(struct rq *rq, struct task_struct *p) { }
 
 static inline bool rq_has_pinned_tasks(struct rq *rq)
 {
@@ -4056,7 +4047,6 @@ static void __sched notrace __schedule(bool preempt)
 		 */
 		++*switch_count;
 
-		migrate_disable_switch(rq, prev);
 		psi_sched_switch(prev, next, !task_on_rq_queued(prev));
 
 		trace_sched_switch(preempt, prev, next);
