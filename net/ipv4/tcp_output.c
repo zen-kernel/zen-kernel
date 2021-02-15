@@ -1256,8 +1256,6 @@ static int __tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 	tp->tcp_wstamp_ns = max(tp->tcp_wstamp_ns, tp->tcp_clock_cache);
 	skb->skb_mstamp_ns = tp->tcp_wstamp_ns;
 	if (clone_it) {
-		TCP_SKB_CB(skb)->tx.in_flight = TCP_SKB_CB(skb)->end_seq
-			- tp->snd_una;
 		oskb = skb;
 
 		tcp_skb_tsorted_save(oskb) {
@@ -1536,7 +1534,7 @@ int tcp_fragment(struct sock *sk, enum tcp_queue tcp_queue,
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct sk_buff *buff;
-	int nsize, old_factor;
+	int nsize, old_factor, inflight_prev;
 	long limit;
 	int nlen;
 	u8 flags;
@@ -1615,6 +1613,15 @@ int tcp_fragment(struct sock *sk, enum tcp_queue tcp_queue,
 
 		if (diff)
 			tcp_adjust_pcount(sk, skb, diff);
+
+		/* Set buff tx.in_flight as if buff were sent by itself. */
+		inflight_prev = TCP_SKB_CB(skb)->tx.in_flight - old_factor;
+		if (WARN_ONCE(inflight_prev < 0,
+			      "inconsistent: tx.in_flight: %u old_factor: %d",
+			      TCP_SKB_CB(skb)->tx.in_flight, old_factor))
+			inflight_prev = 0;
+		TCP_SKB_CB(buff)->tx.in_flight = inflight_prev +
+						 tcp_skb_pcount(buff);
 	}
 
 	/* Link BUFF into the send queue. */
@@ -1982,13 +1989,12 @@ static u32 tcp_tso_autosize(const struct sock *sk, unsigned int mss_now,
 static u32 tcp_tso_segs(struct sock *sk, unsigned int mss_now)
 {
 	const struct tcp_congestion_ops *ca_ops = inet_csk(sk)->icsk_ca_ops;
-	u32 min_tso, tso_segs;
+	u32 tso_segs;
 
-	min_tso = ca_ops->min_tso_segs ?
-			ca_ops->min_tso_segs(sk) :
-			sock_net(sk)->ipv4.sysctl_tcp_min_tso_segs;
-
-	tso_segs = tcp_tso_autosize(sk, mss_now, min_tso);
+	tso_segs = ca_ops->tso_segs ?
+		ca_ops->tso_segs(sk, mss_now) :
+		tcp_tso_autosize(sk, mss_now,
+				 sock_net(sk)->ipv4.sysctl_tcp_min_tso_segs);
 	return min_t(u32, tso_segs, sk->sk_gso_max_segs);
 }
 
@@ -2628,6 +2634,7 @@ static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
 			skb->skb_mstamp_ns = tp->tcp_wstamp_ns = tp->tcp_clock_cache;
 			list_move_tail(&skb->tcp_tsorted_anchor, &tp->tsorted_sent_queue);
 			tcp_init_tso_segs(skb, mss_now);
+			tcp_set_tx_in_flight(sk, skb);
 			goto repair; /* Skip network transmission */
 		}
 
