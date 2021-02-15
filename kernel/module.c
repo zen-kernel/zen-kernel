@@ -56,6 +56,7 @@
 #include <linux/bsearch.h>
 #include <linux/dynamic_debug.h>
 #include <linux/audit.h>
+#include <linux/efi.h>
 #include <uapi/linux/module.h>
 #include "module-internal.h"
 
@@ -274,6 +275,10 @@ static void module_assert_mutex_or_preempt(void)
 
 static bool sig_enforce = IS_ENABLED(CONFIG_MODULE_SIG_FORCE);
 module_param(sig_enforce, bool_enable_only, 0644);
+/* Allow disabling module signature requirement by adding boot param */
+static bool sig_unenforce = false;
+module_param(sig_unenforce, bool_enable_only, 0644);
+
 
 /*
  * Export sig_enforce kernel cmdline parameter to allow other subsystems rely
@@ -427,6 +432,8 @@ extern const struct kernel_symbol __stop___ksymtab_unused_gpl[];
 extern const s32 __start___kcrctab_unused[];
 extern const s32 __start___kcrctab_unused_gpl[];
 #endif
+
+extern struct boot_params boot_params;
 
 #ifndef CONFIG_MODVERSIONS
 #define symversion(base, idx) NULL
@@ -4525,6 +4532,19 @@ static const struct proc_ops modules_proc_ops = {
 static int __init proc_modules_init(void)
 {
 	proc_create("modules", 0, NULL, &modules_proc_ops);
+
+#ifdef CONFIG_MODULE_SIG_FORCE
+	switch (boot_params.secure_boot) {
+	case efi_secureboot_mode_unset:
+	case efi_secureboot_mode_unknown:
+	case efi_secureboot_mode_disabled:
+		/*
+		 * sig_unenforce is only applied if SecureBoot is not
+		 * enabled.
+		 */
+		sig_enforce = !sig_unenforce;
+	}
+#endif
 	return 0;
 }
 module_init(proc_modules_init);
