@@ -1190,8 +1190,12 @@ void migrate_enable(void)
 	 * __set_cpus_allowed_ptr(SCA_MIGRATE_ENABLE) doesn't schedule().
 	 */
 	preempt_disable();
+	/*
+	 * Assumption: current should be running on allowed cpu
+	 */
+	WARN_ON_ONCE(!cpumask_test_cpu(smp_processor_id(), &p->cpus_mask));
 	if (p->cpus_ptr != &p->cpus_mask)
-		__set_cpus_allowed_ptr(p, &p->cpus_mask, SCA_MIGRATE_ENABLE);
+		__do_set_cpus_allowed(p, &p->cpus_mask, SCA_MIGRATE_ENABLE);
 	/*
 	 * Mustn't clear migration_disabled() until cpus_ptr points back at the
 	 * regular cpus_mask, otherwise things that race (eg.
@@ -1370,7 +1374,7 @@ __do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask, u32
 	 *
 	 * XXX do further audits, this smells like something putrid.
 	 */
-	if (flags & SCA_MIGRATE_DISABLE)
+	if (flags & (SCA_MIGRATE_DISABLE | SCA_MIGRATE_ENABLE))
 		SCHED_WARN_ON(!p->on_cpu);
 	else
 		lockdep_assert_held(&p->pi_lock);
@@ -1754,6 +1758,14 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 	/* Can the task run on the task's current CPU? If so, we're done */
 	if (cpumask_test_cpu(task_cpu(p), new_mask))
 		goto out;
+
+	if (p->migration_disabled) {
+		if (p->cpus_ptr != &p->cpus_mask)
+			__do_set_cpus_allowed(p, &p->cpus_mask, SCA_MIGRATE_ENABLE);
+		p->migration_disabled = 0;
+		/* When p is migrate_disabled, rq->lock should be held */
+		rq->nr_pinned--;
+	}
 
 	if (task_running(p) || p->state == TASK_WAKING) {
 		struct migration_arg arg = { p, dest_cpu };
