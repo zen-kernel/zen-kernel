@@ -52,7 +52,7 @@
  */
 EXPORT_TRACEPOINT_SYMBOL_GPL(pelt_irq_tp);
 
-#define ALT_SCHED_VERSION "v5.10-r2"
+#define ALT_SCHED_VERSION "v5.11-r0"
 
 /* rt_prio(prio) defined in include/linux/sched/rt.h */
 #define rt_task(p)		rt_prio((p)->prio)
