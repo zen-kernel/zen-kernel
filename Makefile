@@ -2,8 +2,8 @@
 VERSION = 5
 PATCHLEVEL = 11
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = 💕 Valentine's Day Edition 💕
+EXTRAVERSION = -zen
+NAME = 🤗 Hugs & Kisses 😚
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
