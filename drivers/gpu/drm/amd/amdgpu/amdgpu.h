@@ -1002,6 +1002,7 @@ struct amdgpu_device {
 	/* s3/s4 mask */
 	bool                            in_suspend;
 	bool				in_hibernate;
+	bool				in_shutdown;
 
 	atomic_t 			in_gpu_reset;
 	enum pp_mp1_state               mp1_state;
