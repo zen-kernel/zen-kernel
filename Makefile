@@ -2,7 +2,7 @@
 VERSION = 5
 PATCHLEVEL = 11
 SUBLEVEL = 0
-EXTRAVERSION = -zen
+EXTRAVERSION = -zen2
 NAME = 🤗 Hugs & Kisses 😚
 
 # *DOCUMENTATION*
