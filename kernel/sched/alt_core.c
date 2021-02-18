@@ -1980,6 +1980,13 @@ static void __ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags
 static inline bool ttwu_queue_cond(int cpu, int wake_flags)
 {
 	/*
+	 * Do not complicate things with the async wake_list while the CPU is
+	 * in hotplug state.
+	 */
+	if (!cpu_active(cpu))
+		return false;
+
+	/*
 	 * If the CPU does not share cache, then queue the task on the
 	 * remote rqs wakelist to avoid accessing remote data.
 	 */
@@ -6164,6 +6171,9 @@ int sched_cpu_deactivate(unsigned int cpu)
 	 * We've cleared cpu_active_mask, wait for all preempt-disabled and RCU
 	 * users of this state to go away such that all new such users will
 	 * observe it.
+	 *
+	 * Specifically, we rely on ttwu to no longer target this CPU, see
+	 * ttwu_queue_cond() and is_cpu_allowed().
 	 *
 	 * Do sync before park smpboot threads to take care the rcu boost case.
 	 */
