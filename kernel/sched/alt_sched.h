@@ -153,7 +153,7 @@ struct rq {
 	u64 last_ts_switch;
 	u64 clock_task;
 
-	unsigned long nr_running;
+	unsigned int  nr_running;
 	unsigned long nr_uninterruptible;
 
 #ifdef CONFIG_SCHED_HRTICK
