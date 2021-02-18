@@ -1259,6 +1259,7 @@ amdgpu_pci_shutdown(struct pci_dev *pdev)
 	if (amdgpu_ras_intr_triggered())
 		return;
 
+	adev->in_shutdown = true;
 	/* if we are running in a VM, make sure the device
 	 * torn down properly on reboot/shutdown.
 	 * unfortunately we can't detect certain
@@ -1268,6 +1269,7 @@ amdgpu_pci_shutdown(struct pci_dev *pdev)
 		adev->mp1_state = PP_MP1_STATE_UNLOAD;
 	amdgpu_device_ip_suspend(adev);
 	adev->mp1_state = PP_MP1_STATE_NONE;
+	adev->in_shutdown = false;
 }
 
 static int amdgpu_pmops_suspend(struct device *dev)
