@@ -150,6 +150,12 @@ COND_SYSCALL_COMPAT(set_robust_list);
 COND_SYSCALL(get_robust_list);
 COND_SYSCALL_COMPAT(get_robust_list);
 
+/* kernel/futex2.c */
+COND_SYSCALL(futex_wait);
+COND_SYSCALL(futex_wake);
+COND_SYSCALL(futex_waitv);
+COND_SYSCALL(futex_requeue);
+
 /* kernel/hrtimer.c */
 
 /* kernel/itimer.c */

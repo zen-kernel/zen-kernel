@@ -2,8 +2,8 @@
 /*
  * Copyright (C) 2013  Davidlohr Bueso <davidlohr@hp.com>
  *
- * futex-requeue: Block a bunch of threads on futex1 and requeue them
- *                on futex2, N at a time.
+ * futex-requeue: Block a bunch of threads on addr1 and requeue them
+ *                on addr2, N at a time.
  *
  * This program is particularly useful to measure the latency of nthread
  * requeues without waking up any tasks -- thus mimicking a regular futex_wait.
@@ -29,7 +29,10 @@
 #include <stdlib.h>
 #include <sys/time.h>
 
-static u_int32_t futex1 = 0, futex2 = 0;
+static u_int32_t addr1 = 0, addr2 = 0;
+
+static struct futex_requeue rq1 = { .uaddr = &addr1, .flags = FUTEX_32 };
+static struct futex_requeue rq2 = { .uaddr = &addr2, .flags = FUTEX_32 };
 
 /*
  * How many tasks to requeue at a time.
@@ -38,7 +41,7 @@ static u_int32_t futex1 = 0, futex2 = 0;
 static unsigned int nrequeue = 1;
 
 static pthread_t *worker;
-static bool done = false, silent = false, fshared = false;
+static bool done = false, silent = false, fshared = false, futex2 = false;
 static pthread_mutex_t thread_lock;
 static pthread_cond_t thread_parent, thread_worker;
 static struct stats requeuetime_stats, requeued_stats;
@@ -80,7 +83,11 @@ static void *workerfn(void *arg __maybe_unused)
 	pthread_cond_wait(&thread_worker, &thread_lock);
 	pthread_mutex_unlock(&thread_lock);
 
-	futex_wait(&futex1, 0, NULL, futex_flag);
+	if (!futex2)
+		futex_wait(&addr1, 0, NULL, futex_flag);
+	else
+		futex2_wait(&addr1, 0, futex_flag, NULL);
+
 	return NULL;
 }
 
@@ -112,7 +119,7 @@ static void toggle_done(int sig __maybe_unused,
 	done = true;
 }
 
-int bench_futex_requeue(int argc, const char **argv)
+static int __bench_futex_requeue(int argc, const char **argv)
 {
 	int ret = 0;
 	unsigned int i, j;
@@ -140,15 +147,20 @@ int bench_futex_requeue(int argc, const char **argv)
 	if (!worker)
 		err(EXIT_FAILURE, "calloc");
 
-	if (!fshared)
+	if (futex2) {
+		futex_flag = FUTEX_32 | (fshared * FUTEX_SHARED_FLAG);
+		rq1.flags |= FUTEX_SHARED_FLAG * fshared;
+		rq2.flags |= FUTEX_SHARED_FLAG * fshared;
+	} else if (!fshared) {
 		futex_flag = FUTEX_PRIVATE_FLAG;
+	}
 
 	if (nrequeue > nthreads)
 		nrequeue = nthreads;
 
 	printf("Run summary [PID %d]: Requeuing %d threads (from [%s] %p to %p), "
 	       "%d at a time.\n\n",  getpid(), nthreads,
-	       fshared ? "shared":"private", &futex1, &futex2, nrequeue);
+	       fshared ? "shared":"private", &addr1, &addr2, nrequeue);
 
 	init_stats(&requeued_stats);
 	init_stats(&requeuetime_stats);
@@ -177,11 +189,15 @@ int bench_futex_requeue(int argc, const char **argv)
 		gettimeofday(&start, NULL);
 		while (nrequeued < nthreads) {
 			/*
-			 * Do not wakeup any tasks blocked on futex1, allowing
+			 * Do not wakeup any tasks blocked on addr1, allowing
 			 * us to really measure futex_wait functionality.
 			 */
-			nrequeued += futex_cmp_requeue(&futex1, 0, &futex2, 0,
-						       nrequeue, futex_flag);
+			if (!futex2)
+				nrequeued += futex_cmp_requeue(&addr1, 0, &addr2,
+							0, nrequeue, futex_flag);
+			else
+				nrequeued += futex2_requeue(&rq1, &rq2,
+							0, nrequeue, 0, 0);
 		}
 
 		gettimeofday(&end, NULL);
@@ -195,8 +211,12 @@ int bench_futex_requeue(int argc, const char **argv)
 			       j + 1, nrequeued, nthreads, runtime.tv_usec / (double)USEC_PER_MSEC);
 		}
 
-		/* everybody should be blocked on futex2, wake'em up */
-		nrequeued = futex_wake(&futex2, nrequeued, futex_flag);
+		/* everybody should be blocked on addr2, wake'em up */
+		if (!futex2)
+			nrequeued = futex_wake(&addr2, nrequeued, futex_flag);
+		else
+			nrequeued = futex2_wake(&addr2, nrequeued, futex_flag);
+
 		if (nthreads != nrequeued)
 			warnx("couldn't wakeup all tasks (%d/%d)", nrequeued, nthreads);
 
@@ -220,4 +240,15 @@ int bench_futex_requeue(int argc, const char **argv)
 err:
 	usage_with_options(bench_futex_requeue_usage, options);
 	exit(EXIT_FAILURE);
+}
+
+int bench_futex_requeue(int argc, const char **argv)
+{
+       return __bench_futex_requeue(argc, argv);
+}
+
+int bench_futex2_requeue(int argc, const char **argv)
+{
+       futex2 = true;
+       return __bench_futex_requeue(argc, argv);
 }

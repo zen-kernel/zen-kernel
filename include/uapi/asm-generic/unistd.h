@@ -862,8 +862,20 @@ __SYSCALL(__NR_process_madvise, sys_process_madvise)
 #define __NR_epoll_pwait2 441
 __SC_COMP(__NR_epoll_pwait2, sys_epoll_pwait2, compat_sys_epoll_pwait2)
 
+#define __NR_futex_wait 442
+__SYSCALL(__NR_futex_wait, sys_futex_wait)
+
+#define __NR_futex_wake 443
+__SYSCALL(__NR_futex_wake, sys_futex_wake)
+
+#define __NR_futex_waitv 444
+__SC_COMP(__NR_futex_waitv, sys_futex_waitv, compat_sys_futex_waitv)
+
+#define __NR_futex_requeue 445
+__SC_COMP(__NR_futex_requeue, sys_futex_requeue, compat_sys_futex_requeue)
+
 #undef __NR_syscalls
-#define __NR_syscalls 442
+#define __NR_syscalls 446
 
 /*
  * 32 bit systems traditionally used different
