@@ -3761,7 +3761,7 @@ inline void alt_sched_debug(void) {}
 
 #ifdef	CONFIG_SMP
 
-#define SCHED_RQ_NR_MIGRATION (32UL)
+#define SCHED_RQ_NR_MIGRATION (32U)
 /*
  * Migrate pending tasks in @rq to @dest_cpu
  * Will try to migrate mininal of half of @rq nr_running tasks and
@@ -6248,6 +6248,25 @@ static void calc_load_migrate(struct rq *rq)
 		atomic_long_add(delta, &calc_load_tasks);
 }
 
+static void dump_rq_tasks(struct rq *rq, const char *loglvl)
+{
+	struct task_struct *g, *p;
+	int cpu = cpu_of(rq);
+
+	lockdep_assert_held(&rq->lock);
+
+	printk("%sCPU%d enqueued tasks (%u total):\n", loglvl, cpu, rq->nr_running);
+	for_each_process_thread(g, p) {
+		if (task_cpu(p) != cpu)
+			continue;
+
+		if (!task_on_rq_queued(p))
+			continue;
+
+		printk("%s\tpid: %d, name: %s\n", loglvl, p->pid, p->comm);
+	}
+}
+
 int sched_cpu_dying(unsigned int cpu)
 {
 	struct rq *rq = cpu_rq(cpu);
@@ -6257,7 +6276,10 @@ int sched_cpu_dying(unsigned int cpu)
 	sched_tick_stop(cpu);
 
 	raw_spin_lock_irqsave(&rq->lock, flags);
-	BUG_ON(rq->nr_running != 1 || rq_has_pinned_tasks(rq));
+	if (rq->nr_running != 1 || rq_has_pinned_tasks(rq)) {
+		WARN(true, "Dying CPU not properly vacated!");
+		dump_rq_tasks(rq, KERN_WARNING);
+	}
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
 
 	/*
