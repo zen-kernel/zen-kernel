@@ -3563,7 +3563,7 @@ static void cleanup_smi_msgs(struct ipmi_smi *intf)
 	/* Current message first, to preserve order */
 	while (intf->curr_msg && !list_empty(&intf->waiting_rcv_msgs)) {
 		/* Wait for the message to clear out. */
-		schedule_timeout(1);
+		schedule_min_hrtimeout();
 	}
 
 	/* No need for locks, the interface is down. */

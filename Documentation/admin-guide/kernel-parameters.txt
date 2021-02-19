@@ -4671,6 +4671,14 @@
 			Memory area to be used by remote processor image,
 			managed by CMA.
 
+	rqshare=	[X86] Select the MuQSS scheduler runqueue sharing type.
+			Format: <string>
+			smt -- Share SMT (hyperthread) sibling runqueues
+			mc -- Share MC (multicore) sibling runqueues
+			smp -- Share SMP runqueues
+			none -- So not share any runqueues
+			Default value is mc
+
 	rw		[KNL] Mount root device read-write on boot
 
 	S		[KNL] Run init in single mode

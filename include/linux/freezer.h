@@ -311,6 +311,9 @@ static inline void set_freezable(void) {}
 #define wait_event_freezekillable_unsafe(wq, condition)			\
 		wait_event_killable(wq, condition)
 
+#ifdef CONFIG_SCHED_MUQSS
+#define pm_freezing (false)
+#endif
 #endif /* !CONFIG_FREEZER */
 
 #endif	/* FREEZER_H_INCLUDED */

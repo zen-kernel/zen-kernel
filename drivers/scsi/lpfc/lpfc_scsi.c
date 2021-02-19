@@ -5812,7 +5812,7 @@ lpfc_reset_flush_io_context(struct lpfc_vport *vport, uint16_t tgt_id,
 					tgt_id, lun_id, context);
 	later = msecs_to_jiffies(2 * vport->cfg_devloss_tmo * 1000) + jiffies;
 	while (time_after(later, jiffies) && cnt) {
-		schedule_timeout_uninterruptible(msecs_to_jiffies(20));
+		schedule_msec_hrtimeout_uninterruptible((20));
 		cnt = lpfc_sli_sum_iocb(vport, tgt_id, lun_id, context);
 	}
 	if (cnt) {

@@ -37,6 +37,10 @@
 #include <linux/kcsan.h>
 #include <asm/kmap_size.h>
 
+#ifdef CONFIG_SCHED_MUQSS
+#include <linux/skip_list.h>
+#endif
+
 /* task_struct member predeclarations (sorted alphabetically): */
 struct audit_context;
 struct backing_dev_info;
@@ -223,6 +227,34 @@ extern long schedule_timeout_interruptible(long timeout);
 extern long schedule_timeout_killable(long timeout);
 extern long schedule_timeout_uninterruptible(long timeout);
 extern long schedule_timeout_idle(long timeout);
+
+#if defined(CONFIG_HIGH_RES_TIMERS) && defined(CONFIG_SCHED_MUQSS)
+extern long schedule_msec_hrtimeout(long timeout);
+extern long schedule_min_hrtimeout(void);
+extern long schedule_msec_hrtimeout_interruptible(long timeout);
+extern long schedule_msec_hrtimeout_uninterruptible(long timeout);
+#else
+static inline long schedule_msec_hrtimeout(long timeout)
+{
+	return schedule_timeout(msecs_to_jiffies(timeout));
+}
+
+static inline long schedule_min_hrtimeout(void)
+{
+	return schedule_timeout(1);
+}
+
+static inline long schedule_msec_hrtimeout_interruptible(long timeout)
+{
+	return schedule_timeout_interruptible(msecs_to_jiffies(timeout));
+}
+
+static inline long schedule_msec_hrtimeout_uninterruptible(long timeout)
+{
+	return schedule_timeout_uninterruptible(msecs_to_jiffies(timeout));
+}
+#endif
+
 asmlinkage void schedule(void);
 extern void schedule_preempt_disabled(void);
 asmlinkage void preempt_schedule_irq(void);
@@ -669,8 +701,10 @@ struct task_struct {
 	unsigned int			flags;
 	unsigned int			ptrace;
 
-#ifdef CONFIG_SMP
+#if defined(CONFIG_SMP) || defined(CONFIG_SCHED_MUQSS)
 	int				on_cpu;
+#endif
+#ifdef CONFIG_SMP
 	struct __call_single_node	wake_entry;
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 	/* Current CPU: */
@@ -696,10 +730,25 @@ struct task_struct {
 	int				static_prio;
 	int				normal_prio;
 	unsigned int			rt_priority;
+#ifdef CONFIG_SCHED_MUQSS
+	int time_slice;
+	u64 deadline;
+	skiplist_node node; /* Skip list node */
+	u64 last_ran;
+	u64 sched_time; /* sched_clock time spent running */
+#ifdef CONFIG_SMT_NICE
+	int smt_bias; /* Policy/nice level bias across smt siblings */
+#endif
+#ifdef CONFIG_HOTPLUG_CPU
+	bool zerobound; /* Bound to CPU0 for hotplug */
+#endif
+	unsigned long rt_timeout;
+#else /* CONFIG_SCHED_MUQSS */
 
 	const struct sched_class	*sched_class;
 	struct sched_entity		se;
 	struct sched_rt_entity		rt;
+#endif
 #ifdef CONFIG_CGROUP_SCHED
 	struct task_group		*sched_task_group;
 #endif
@@ -900,6 +949,10 @@ struct task_struct {
 #ifdef CONFIG_ARCH_HAS_SCALED_CPUTIME
 	u64				utimescaled;
 	u64				stimescaled;
+#endif
+#ifdef CONFIG_SCHED_MUQSS
+	/* Unbanked cpu time */
+	unsigned long utime_ns, stime_ns;
 #endif
 	u64				gtime;
 	struct prev_cputime		prev_cputime;
@@ -1384,6 +1437,40 @@ struct task_struct {
 	 * Do not put anything below here!
 	 */
 };
+
+#ifdef CONFIG_SCHED_MUQSS
+#define tsk_seruntime(t)		((t)->sched_time)
+#define tsk_rttimeout(t)		((t)->rt_timeout)
+
+static inline void tsk_cpus_current(struct task_struct *p)
+{
+}
+
+void print_scheduler_version(void);
+
+static inline bool iso_task(struct task_struct *p)
+{
+	return (p->policy == SCHED_ISO);
+}
+#else /* CFS */
+#define tsk_seruntime(t)	((t)->se.sum_exec_runtime)
+#define tsk_rttimeout(t)	((t)->rt.timeout)
+
+static inline void tsk_cpus_current(struct task_struct *p)
+{
+	p->nr_cpus_allowed = current->nr_cpus_allowed;
+}
+
+static inline void print_scheduler_version(void)
+{
+	printk(KERN_INFO "CFS CPU scheduler.\n");
+}
+
+static inline bool iso_task(struct task_struct *p)
+{
+	return false;
+}
+#endif /* CONFIG_SCHED_MUQSS */
 
 static inline struct pid *task_pid(struct task_struct *task)
 {

@@ -834,7 +834,7 @@ xpc_allocate_msg_wait(struct xpc_channel *ch)
 
 	atomic_inc(&ch->n_on_msg_allocate_wq);
 	prepare_to_wait(&ch->msg_allocate_wq, &wait, TASK_INTERRUPTIBLE);
-	ret = schedule_timeout(1);
+	ret = schedule_min_hrtimeout();
 	finish_wait(&ch->msg_allocate_wq, &wait);
 	atomic_dec(&ch->n_on_msg_allocate_wq);
 

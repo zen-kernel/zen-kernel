@@ -1288,7 +1288,7 @@ static void shutdown_ssif(void *send_info)
 
 	/* make sure the driver is not looking for flags any more. */
 	while (ssif_info->ssif_state != SSIF_NORMAL)
-		schedule_timeout(1);
+		schedule_min_hrtimeout();
 
 	ssif_info->stopping = true;
 	del_timer_sync(&ssif_info->watch_timer);

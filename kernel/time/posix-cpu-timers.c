@@ -216,7 +216,7 @@ static void task_sample_cputime(struct task_struct *p, u64 *samples)
 	u64 stime, utime;
 
 	task_cputime(p, &utime, &stime);
-	store_samples(samples, stime, utime, p->se.sum_exec_runtime);
+	store_samples(samples, stime, utime, tsk_seruntime(p));
 }
 
 static void proc_sample_cputime_atomic(struct task_cputime_atomic *at,
@@ -850,7 +850,7 @@ static void check_thread_timers(struct task_struct *tsk,
 	soft = task_rlimit(tsk, RLIMIT_RTTIME);
 	if (soft != RLIM_INFINITY) {
 		/* Task RT timeout is accounted in jiffies. RTTIME is usec */
-		unsigned long rttime = tsk->rt.timeout * (USEC_PER_SEC / HZ);
+		unsigned long rttime = tsk_rttimeout(tsk) * (USEC_PER_SEC / HZ);
 		unsigned long hard = task_rlimit_max(tsk, RLIMIT_RTTIME);
 
 		/* At the hard limit, send SIGKILL. No further action. */

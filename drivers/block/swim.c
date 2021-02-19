@@ -328,7 +328,7 @@ static inline void swim_motor(struct swim __iomem *base,
 			if (swim_readbit(base, MOTOR_ON))
 				break;
 			set_current_state(TASK_INTERRUPTIBLE);
-			schedule_timeout(1);
+			schedule_min_hrtimeout();
 		}
 	} else if (action == OFF) {
 		swim_action(base, MOTOR_OFF);
@@ -347,7 +347,7 @@ static inline void swim_eject(struct swim __iomem *base)
 		if (!swim_readbit(base, DISK_IN))
 			break;
 		set_current_state(TASK_INTERRUPTIBLE);
-		schedule_timeout(1);
+		schedule_min_hrtimeout();
 	}
 	swim_select(base, RELAX);
 }
@@ -372,6 +372,7 @@ static inline int swim_step(struct swim __iomem *base)
 
 		set_current_state(TASK_INTERRUPTIBLE);
 		schedule_timeout(1);
+		schedule_min_hrtimeout();
 
 		swim_select(base, RELAX);
 		if (!swim_readbit(base, STEP))
