@@ -38,9 +38,13 @@ int bench_mem_memcpy(int argc, const char **argv);
 int bench_mem_memset(int argc, const char **argv);
 int bench_mem_find_bit(int argc, const char **argv);
 int bench_futex_hash(int argc, const char **argv);
+int bench_futex2_hash(int argc, const char **argv);
 int bench_futex_wake(int argc, const char **argv);
+int bench_futex2_wake(int argc, const char **argv);
 int bench_futex_wake_parallel(int argc, const char **argv);
+int bench_futex2_wake_parallel(int argc, const char **argv);
 int bench_futex_requeue(int argc, const char **argv);
+int bench_futex2_requeue(int argc, const char **argv);
 /* pi futexes */
 int bench_futex_lock_pi(int argc, const char **argv);
 int bench_epoll_wait(int argc, const char **argv);

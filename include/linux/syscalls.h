@@ -68,6 +68,8 @@ union bpf_attr;
 struct io_uring_params;
 struct clone_args;
 struct open_how;
+struct futex_waitv;
+struct futex_requeue;
 
 #include <linux/types.h>
 #include <linux/aio_abi.h>
@@ -612,6 +614,20 @@ asmlinkage long sys_get_robust_list(int pid,
 				    size_t __user *len_ptr);
 asmlinkage long sys_set_robust_list(struct robust_list_head __user *head,
 				    size_t len);
+
+/* kernel/futex2.c */
+asmlinkage long sys_futex_wait(void __user *uaddr, unsigned int val,
+			       unsigned int flags,
+			       struct __kernel_timespec __user __user *timo);
+asmlinkage long sys_futex_wake(void __user *uaddr, unsigned int nr_wake,
+			       unsigned int flags);
+asmlinkage long sys_futex_waitv(struct futex_waitv __user *waiters,
+				unsigned int nr_futexes, unsigned int flags,
+				struct __kernel_timespec __user *timo);
+asmlinkage long sys_futex_requeue(struct futex_requeue __user *uaddr1,
+				  struct futex_requeue __user *uaddr2,
+				  unsigned int nr_wake, unsigned int nr_requeue,
+				  unsigned int cmpval, unsigned int flags);
 
 /* kernel/hrtimer.c */
 asmlinkage long sys_nanosleep(struct __kernel_timespec __user *rqtp,

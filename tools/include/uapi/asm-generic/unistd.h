@@ -860,8 +860,17 @@ __SYSCALL(__NR_faccessat2, sys_faccessat2)
 #define __NR_process_madvise 440
 __SYSCALL(__NR_process_madvise, sys_process_madvise)
 
+#define __NR_futex_wait 441
+__SYSCALL(__NR_futex_wait, sys_futex_wait)
+
+#define __NR_futex_wake 442
+__SYSCALL(__NR_futex_wake, sys_futex_wake)
+
+#define __NR_futex_waitv 443
+__SYSCALL(__NR_futex_wait, sys_futex_wait)
+
 #undef __NR_syscalls
-#define __NR_syscalls 441
+#define __NR_syscalls 444
 
 /*
  * 32 bit systems traditionally used different
