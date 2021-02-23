@@ -34,7 +34,7 @@ static unsigned int nthreads = 0;
 static unsigned int nsecs    = 10;
 /* amount of futexes per thread */
 static unsigned int nfutexes = 1024;
-static bool fshared = false, done = false, silent = false, futex2 = false;
+static bool fshared = false, done = false, silent = false;
 static int futex_flag = 0;
 
 struct timeval bench__start, bench__end, bench__runtime;
@@ -86,10 +86,7 @@ static void *workerfn(void *arg)
 			 * such as internal waitqueue handling, thus enlarging
 			 * the critical region protected by hb->lock.
 			 */
-			if (!futex2)
-				ret = futex_wait(&w->futex[i], 1234, NULL, futex_flag);
-			else
-				ret = futex2_wait(&w->futex[i], 1234, futex_flag, NULL);
+			ret = futex_wait(&w->futex[i], 1234, NULL, futex_flag);
 			if (!silent &&
 			    (!ret || errno != EAGAIN || errno != EWOULDBLOCK))
 				warn("Non-expected futex return call");
@@ -120,7 +117,7 @@ static void print_summary(void)
 	       (int)bench__runtime.tv_sec);
 }
 
-static int __bench_futex_hash(int argc, const char **argv)
+int bench_futex_hash(int argc, const char **argv)
 {
 	int ret = 0;
 	cpu_set_t cpuset;
@@ -152,9 +149,7 @@ static int __bench_futex_hash(int argc, const char **argv)
 	if (!worker)
 		goto errmem;
 
-	if (futex2)
-		futex_flag = FUTEX_32 | (fshared * FUTEX_SHARED_FLAG);
-	else if (!fshared)
+	if (!fshared)
 		futex_flag = FUTEX_PRIVATE_FLAG;
 
 	printf("Run summary [PID %d]: %d threads, each operating on %d [%s] futexes for %d secs.\n\n",
@@ -233,15 +228,4 @@ static int __bench_futex_hash(int argc, const char **argv)
 	return ret;
 errmem:
 	err(EXIT_FAILURE, "calloc");
-}
-
-int bench_futex_hash(int argc, const char **argv)
-{
-	return __bench_futex_hash(argc, argv);
-}
-
-int bench_futex2_hash(int argc, const char **argv)
-{
-	futex2 = true;
-	return __bench_futex_hash(argc, argv);
 }

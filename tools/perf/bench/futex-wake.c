@@ -39,7 +39,7 @@ static u_int32_t futex1 = 0;
 static unsigned int nwakes = 1;
 
 pthread_t *worker;
-static bool done = false, silent = false, fshared = false, futex2 = false;
+static bool done = false, silent = false, fshared = false;
 static pthread_mutex_t thread_lock;
 static pthread_cond_t thread_parent, thread_worker;
 static struct stats waketime_stats, wakeup_stats;
@@ -69,13 +69,8 @@ static void *workerfn(void *arg __maybe_unused)
 	pthread_mutex_unlock(&thread_lock);
 
 	while (1) {
-		if (!futex2) {
-			if (futex_wait(&futex1, 0, NULL, futex_flag) != EINTR)
-				break;
-		} else {
-			if (futex2_wait(&futex1, 0, futex_flag, NULL) != EINTR)
-				break;
-		}
+		if (futex_wait(&futex1, 0, NULL, futex_flag) != EINTR)
+			break;
 	}
 
 	pthread_exit(NULL);
@@ -123,7 +118,7 @@ static void toggle_done(int sig __maybe_unused,
 	done = true;
 }
 
-static int __bench_futex_wake(int argc, const char **argv)
+int bench_futex_wake(int argc, const char **argv)
 {
 	int ret = 0;
 	unsigned int i, j;
@@ -153,9 +148,7 @@ static int __bench_futex_wake(int argc, const char **argv)
 	if (!worker)
 		err(EXIT_FAILURE, "calloc");
 
-	if (futex2)
-		futex_flag = FUTEX_32 | (fshared * FUTEX_SHARED_FLAG);
-	else if (!fshared)
+	if (!fshared)
 		futex_flag = FUTEX_PRIVATE_FLAG;
 
 	printf("Run summary [PID %d]: blocking on %d threads (at [%s] futex %p), "
@@ -187,14 +180,9 @@ static int __bench_futex_wake(int argc, const char **argv)
 
 		/* Ok, all threads are patiently blocked, start waking folks up */
 		gettimeofday(&start, NULL);
-		while (nwoken != nthreads) {
-			if (!futex2)
-				nwoken += futex_wake(&futex1, nwakes, futex_flag);
-			else
-				nwoken += futex2_wake(&futex1, nwakes, futex_flag);
-		}
+		while (nwoken != nthreads)
+			nwoken += futex_wake(&futex1, nwakes, futex_flag);
 		gettimeofday(&end, NULL);
-
 		timersub(&end, &start, &runtime);
 
 		update_stats(&wakeup_stats, nwoken);
@@ -223,15 +211,4 @@ static int __bench_futex_wake(int argc, const char **argv)
 
 	free(worker);
 	return ret;
-}
-
-int bench_futex_wake(int argc, const char **argv)
-{
-	return __bench_futex_wake(argc, argv);
-}
-
-int bench_futex2_wake(int argc, const char **argv)
-{
-	futex2 = true;
-	return __bench_futex_wake(argc, argv);
 }

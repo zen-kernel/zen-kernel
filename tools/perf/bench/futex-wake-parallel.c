@@ -17,12 +17,6 @@ int bench_futex_wake_parallel(int argc __maybe_unused, const char **argv __maybe
 	pr_err("%s: pthread_barrier_t unavailable, disabling this test...\n", __func__);
 	return 0;
 }
-
-int bench_futex2_wake_parallel(int argc __maybe_unused, const char **argv __maybe_unused)
-{
-	pr_err("%s: pthread_barrier_t unavailable, disabling this test...\n", __func__);
-	return 0;
-}
 #else /* HAVE_PTHREAD_BARRIER */
 /* For the CLR_() macros */
 #include <string.h>
@@ -54,7 +48,7 @@ static unsigned int nwakes = 1;
 static u_int32_t futex = 0;
 
 static pthread_t *blocked_worker;
-static bool done = false, silent = false, fshared = false, futex2 = false;
+static bool done = false, silent = false, fshared = false;
 static unsigned int nblocked_threads = 0, nwaking_threads = 0;
 static pthread_mutex_t thread_lock;
 static pthread_cond_t thread_parent, thread_worker;
@@ -85,11 +79,7 @@ static void *waking_workerfn(void *arg)
 
 	gettimeofday(&start, NULL);
 
-	if (!futex2)
-		waker->nwoken = futex_wake(&futex, nwakes, futex_flag);
-	else
-		waker->nwoken = futex2_wake(&futex, nwakes, futex_flag);
-
+	waker->nwoken = futex_wake(&futex, nwakes, futex_flag);
 	if (waker->nwoken != nwakes)
 		warnx("couldn't wakeup all tasks (%d/%d)",
 		      waker->nwoken, nwakes);
@@ -140,13 +130,8 @@ static void *blocked_workerfn(void *arg __maybe_unused)
 	pthread_mutex_unlock(&thread_lock);
 
 	while (1) { /* handle spurious wakeups */
-		if (!futex2) {
-			if (futex_wait(&futex, 0, NULL, futex_flag) != EINTR)
-				break;
-		} else {
-			if (futex2_wait(&futex, 0, futex_flag, NULL) != EINTR)
-				break;
-		}
+		if (futex_wait(&futex, 0, NULL, futex_flag) != EINTR)
+			break;
 	}
 
 	pthread_exit(NULL);
@@ -233,7 +218,7 @@ static void toggle_done(int sig __maybe_unused,
 	done = true;
 }
 
-static int __bench_futex_wake_parallel(int argc, const char **argv)
+int bench_futex_wake_parallel(int argc, const char **argv)
 {
 	int ret = 0;
 	unsigned int i, j;
@@ -277,9 +262,7 @@ static int __bench_futex_wake_parallel(int argc, const char **argv)
 	if (!blocked_worker)
 		err(EXIT_FAILURE, "calloc");
 
-	if (futex2)
-		futex_flag = FUTEX_32 | (fshared * FUTEX_SHARED_FLAG);
-	else if (!fshared)
+	if (!fshared)
 		futex_flag = FUTEX_PRIVATE_FLAG;
 
 	printf("Run summary [PID %d]: blocking on %d threads (at [%s] "
@@ -339,16 +322,4 @@ static int __bench_futex_wake_parallel(int argc, const char **argv)
 	free(blocked_worker);
 	return ret;
 }
-
-int bench_futex_wake_parallel(int argc, const char **argv)
-{
-	return __bench_futex_wake_parallel(argc, argv);
-}
-
-int bench_futex2_wake_parallel(int argc, const char **argv)
-{
-	futex2 = true;
-	return __bench_futex_wake_parallel(argc, argv);
-}
-
 #endif /* HAVE_PTHREAD_BARRIER */
