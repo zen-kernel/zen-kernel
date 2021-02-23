@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 5
 PATCHLEVEL = 11
-SUBLEVEL = 0
+SUBLEVEL = 1
 EXTRAVERSION = -zen
 NAME = 🤗 Hugs & Kisses 😚
 
