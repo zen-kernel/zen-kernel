@@ -1146,6 +1146,8 @@ static inline bool is_per_cpu_kthread(struct task_struct *p)
 	return ((p->flags & PF_KTHREAD) && (1 == p->nr_cpus_allowed));
 }
 
+#define MDF_FORCE_ENABLED	0x80
+
 static void
 __do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask, u32 flags);
 
@@ -1165,6 +1167,7 @@ void migrate_disable(void)
 	preempt_disable();
 	this_rq()->nr_pinned++;
 	p->migration_disabled = 1;
+	p->migration_flags &= ~MDF_FORCE_ENABLED;
 
 	/*
 	 * Violates locking rules! see comment in __do_set_cpus_allowed().
@@ -1763,6 +1766,7 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 		if (p->cpus_ptr != &p->cpus_mask)
 			__do_set_cpus_allowed(p, &p->cpus_mask, SCA_MIGRATE_ENABLE);
 		p->migration_disabled = 0;
+		p->migration_flags |= MDF_FORCE_ENABLED;
 		/* When p is migrate_disabled, rq->lock should be held */
 		rq->nr_pinned--;
 	}
@@ -6608,6 +6612,35 @@ EXPORT_SYMBOL_GPL(__cant_sleep);
 #ifdef CONFIG_SMP
 void __cant_migrate(const char *file, int line)
 {
+	static unsigned long prev_jiffy;
+
+	if (irqs_disabled())
+		return;
+
+	if (is_migration_disabled(current))
+		return;
+
+	if (!IS_ENABLED(CONFIG_PREEMPT_COUNT))
+		return;
+
+	if (preempt_count() > 0)
+		return;
+
+	if (current->migration_flags & MDF_FORCE_ENABLED)
+		return;
+
+	if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)
+		return;
+	prev_jiffy = jiffies;
+
+	pr_err("BUG: assuming non migratable context at %s:%d\n", file, line);
+	pr_err("in_atomic(): %d, irqs_disabled(): %d, migration_disabled() %u pid: %d, name: %s\n",
+	       in_atomic(), irqs_disabled(), is_migration_disabled(current),
+	       current->pid, current->comm);
+
+	debug_show_held_locks(current);
+	dump_stack();
+	add_taint(TAINT_WARN, LOCKDEP_STILL_OK);
 }
 EXPORT_SYMBOL_GPL(__cant_migrate);
 #endif
