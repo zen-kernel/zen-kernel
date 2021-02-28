@@ -674,8 +674,10 @@ rwsem_spin_on_owner(struct rw_semaphore *sem)
 	if (state != OWNER_WRITER)
 		return state;
 
-	rcu_read_lock();
 	for (;;) {
+		bool same_owner;
+
+		rcu_read_lock();
 		/*
 		 * When a waiting writer set the handoff flag, it may spin
 		 * on the owner as well. Once that writer acquires the lock,
@@ -683,27 +685,32 @@ rwsem_spin_on_owner(struct rw_semaphore *sem)
 		 * handoff bit is set.
 		 */
 		new = rwsem_owner_flags(sem, &new_flags);
-		if ((new != owner) || (new_flags != flags)) {
+
+		/*
+		 * Ensure sem->owner still matches owner. If that fails,
+		 * owner might point to free()d memory, if it still matches,
+		 * the rcu_read_lock() ensures the memory stays valid.
+		 */
+		same_owner = new == owner && new_flags == flags;
+		if (same_owner && !owner_on_cpu(owner))
+			state = OWNER_NONSPINNABLE;
+		rcu_read_unlock();
+
+		if (!same_owner) {
 			state = rwsem_owner_state(new, new_flags);
 			break;
 		}
 
-		/*
-		 * Ensure we emit the owner->on_cpu, dereference _after_
-		 * checking sem->owner still matches owner, if that fails,
-		 * owner might point to free()d memory, if it still matches,
-		 * the rcu_read_lock() ensures the memory stays valid.
-		 */
-		barrier();
+		if (state == OWNER_NONSPINNABLE)
+			break;
 
-		if (need_resched() || !owner_on_cpu(owner)) {
+		if (need_resched()) {
 			state = OWNER_NONSPINNABLE;
 			break;
 		}
 
 		cpu_relax();
 	}
-	rcu_read_unlock();
 
 	return state;
 }
