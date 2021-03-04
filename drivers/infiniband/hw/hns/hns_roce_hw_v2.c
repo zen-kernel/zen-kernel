@@ -741,6 +741,7 @@ static int hns_roce_v2_post_recv(struct ib_qp *ibqp,
 	unsigned long flags;
 	void *wqe = NULL;
 	u32 wqe_idx;
+	u32 max_sge;
 	int nreq;
 	int ret;
 	int i;
@@ -754,6 +755,7 @@ static int hns_roce_v2_post_recv(struct ib_qp *ibqp,
 		goto out;
 	}
 
+	max_sge = hr_qp->rq.max_gs - hr_qp->rq.rsv_sge;
 	for (nreq = 0; wr; ++nreq, wr = wr->next) {
 		if (unlikely(hns_roce_wq_overflow(&hr_qp->rq, nreq,
 						  hr_qp->ibqp.recv_cq))) {
@@ -764,9 +766,9 @@ static int hns_roce_v2_post_recv(struct ib_qp *ibqp,
 
 		wqe_idx = (hr_qp->rq.head + nreq) & (hr_qp->rq.wqe_cnt - 1);
 
-		if (unlikely(wr->num_sge > hr_qp->rq.max_gs)) {
+		if (unlikely(wr->num_sge > max_sge)) {
 			ibdev_err(ibdev, "num_sge = %d >= max_sge = %u.\n",
-				  wr->num_sge, hr_qp->rq.max_gs);
+				  wr->num_sge, max_sge);
 			ret = -EINVAL;
 			*bad_wr = wr;
 			goto out;
@@ -781,9 +783,10 @@ static int hns_roce_v2_post_recv(struct ib_qp *ibqp,
 			dseg++;
 		}
 
-		if (wr->num_sge < hr_qp->rq.max_gs) {
+		if (hr_qp->rq.rsv_sge) {
 			dseg->lkey = cpu_to_le32(HNS_ROCE_INVALID_LKEY);
 			dseg->addr = 0;
+			dseg->len = cpu_to_le32(HNS_ROCE_INVALID_SGE_LENGTH);
 		}
 
 		/* rq support inline data */
@@ -846,9 +849,18 @@ static void hns_roce_free_srq_wqe(struct hns_roce_srq *srq, int wqe_index)
 	spin_lock(&srq->lock);
 
 	bitmap_clear(srq->idx_que.bitmap, wqe_index, 1);
-	srq->tail++;
+	srq->idx_que.tail++;
 
 	spin_unlock(&srq->lock);
+}
+
+int hns_roce_srqwq_overflow(struct hns_roce_srq *srq, int nreq)
+{
+	struct hns_roce_idx_que *idx_que = &srq->idx_que;
+	unsigned int cur;
+
+	cur = idx_que->head - idx_que->tail;
+	return cur + nreq >= srq->wqe_cnt;
 }
 
 static int find_empty_entry(struct hns_roce_idx_que *idx_que,
@@ -879,22 +891,27 @@ static int hns_roce_v2_post_srq_recv(struct ib_srq *ibsrq,
 	__le32 *srq_idx;
 	int ret = 0;
 	int wqe_idx;
+	u32 max_sge;
 	void *wqe;
 	int nreq;
 	int i;
 
 	spin_lock_irqsave(&srq->lock, flags);
 
-	ind = srq->head & (srq->wqe_cnt - 1);
+	ind = srq->idx_que.head & (srq->wqe_cnt - 1);
+	max_sge = srq->max_gs - srq->rsv_sge;
 
 	for (nreq = 0; wr; ++nreq, wr = wr->next) {
-		if (unlikely(wr->num_sge >= srq->max_gs)) {
+		if (unlikely(wr->num_sge > max_sge)) {
+			ibdev_err(&hr_dev->ib_dev,
+				  "srq: num_sge = %d, max_sge = %u.\n",
+				  wr->num_sge, max_sge);
 			ret = -EINVAL;
 			*bad_wr = wr;
 			break;
 		}
 
-		if (unlikely(srq->head == srq->tail)) {
+		if (unlikely(hns_roce_srqwq_overflow(srq, nreq))) {
 			ret = -ENOMEM;
 			*bad_wr = wr;
 			break;
@@ -916,9 +933,9 @@ static int hns_roce_v2_post_srq_recv(struct ib_srq *ibsrq,
 			dseg[i].addr = cpu_to_le64(wr->sg_list[i].addr);
 		}
 
-		if (wr->num_sge < srq->max_gs) {
-			dseg[i].len = 0;
-			dseg[i].lkey = cpu_to_le32(0x100);
+		if (srq->rsv_sge) {
+			dseg[i].len = cpu_to_le32(HNS_ROCE_INVALID_SGE_LENGTH);
+			dseg[i].lkey = cpu_to_le32(HNS_ROCE_INVALID_LKEY);
 			dseg[i].addr = 0;
 		}
 
@@ -930,7 +947,7 @@ static int hns_roce_v2_post_srq_recv(struct ib_srq *ibsrq,
 	}
 
 	if (likely(nreq)) {
-		srq->head += nreq;
+		srq->idx_que.head += nreq;
 
 		/*
 		 * Make sure that descriptors are written before
@@ -942,7 +959,7 @@ static int hns_roce_v2_post_srq_recv(struct ib_srq *ibsrq,
 			cpu_to_le32(HNS_ROCE_V2_SRQ_DB << V2_DB_BYTE_4_CMD_S |
 				    (srq->srqn & V2_DB_BYTE_4_TAG_M));
 		srq_db.parameter =
-			cpu_to_le32(srq->head & V2_DB_PARAMETER_IDX_M);
+			cpu_to_le32(srq->idx_que.head & V2_DB_PARAMETER_IDX_M);
 
 		hns_roce_write64(hr_dev, (__le32 *)&srq_db, srq->db_reg_l);
 	}
@@ -1247,7 +1264,7 @@ static int __hns_roce_cmq_send(struct hns_roce_dev *hr_dev,
 	u32 timeout = 0;
 	int handle = 0;
 	u16 desc_ret;
-	int ret = 0;
+	int ret;
 	int ntc;
 
 	spin_lock_bh(&csq->lock);
@@ -1292,15 +1309,14 @@ static int __hns_roce_cmq_send(struct hns_roce_dev *hr_dev,
 	if (hns_roce_cmq_csq_done(hr_dev)) {
 		complete = true;
 		handle = 0;
+		ret = 0;
 		while (handle < num) {
 			/* get the result of hardware write back */
 			desc_to_use = &csq->desc[ntc];
 			desc[handle] = *desc_to_use;
 			dev_dbg(hr_dev->dev, "Get cmq desc:\n");
 			desc_ret = le16_to_cpu(desc[handle].retval);
-			if (desc_ret == CMD_EXEC_SUCCESS)
-				ret = 0;
-			else
+			if (unlikely(desc_ret != CMD_EXEC_SUCCESS))
 				ret = -EIO;
 			priv->cmq.last_status = desc_ret;
 			ntc++;
@@ -1866,7 +1882,6 @@ static void set_default_caps(struct hns_roce_dev *hr_dev)
 
 	caps->flags		= HNS_ROCE_CAP_FLAG_REREG_MR |
 				  HNS_ROCE_CAP_FLAG_ROCE_V1_V2 |
-				  HNS_ROCE_CAP_FLAG_RQ_INLINE |
 				  HNS_ROCE_CAP_FLAG_RECORD_DB |
 				  HNS_ROCE_CAP_FLAG_SQ_RECORD_DB;
 
@@ -1999,10 +2014,12 @@ static int hns_roce_query_pf_caps(struct hns_roce_dev *hr_dev)
 	caps->max_sq_sg		     = le16_to_cpu(resp_a->max_sq_sg);
 	caps->max_sq_inline	     = le16_to_cpu(resp_a->max_sq_inline);
 	caps->max_rq_sg		     = le16_to_cpu(resp_a->max_rq_sg);
+	caps->max_rq_sg = roundup_pow_of_two(caps->max_rq_sg);
 	caps->max_extend_sg	     = le32_to_cpu(resp_a->max_extend_sg);
 	caps->num_qpc_timer	     = le16_to_cpu(resp_a->num_qpc_timer);
 	caps->num_cqc_timer	     = le16_to_cpu(resp_a->num_cqc_timer);
 	caps->max_srq_sges	     = le16_to_cpu(resp_a->max_srq_sges);
+	caps->max_srq_sges = roundup_pow_of_two(caps->max_srq_sges);
 	caps->num_aeq_vectors	     = resp_a->num_aeq_vectors;
 	caps->num_other_vectors	     = resp_a->num_other_vectors;
 	caps->max_sq_desc_sz	     = resp_a->max_sq_desc_sz;
@@ -4235,7 +4252,6 @@ static int modify_qp_init_to_rtr(struct ib_qp *ibqp,
 				 struct hns_roce_v2_qp_context *context,
 				 struct hns_roce_v2_qp_context *qpc_mask)
 {
-	const struct ib_global_route *grh = rdma_ah_read_grh(&attr->ah_attr);
 	struct hns_roce_dev *hr_dev = to_hr_dev(ibqp->device);
 	struct hns_roce_qp *hr_qp = to_hr_qp(ibqp);
 	struct ib_device *ibdev = &hr_dev->ib_dev;
@@ -4243,7 +4259,6 @@ static int modify_qp_init_to_rtr(struct ib_qp *ibqp,
 	dma_addr_t irrl_ba;
 	enum ib_mtu mtu;
 	u8 lp_pktn_ini;
-	u8 port_num;
 	u64 *mtts;
 	u8 *dmac;
 	u8 *smac;
@@ -4323,15 +4338,6 @@ static int modify_qp_init_to_rtr(struct ib_qp *ibqp,
 		roce_set_field(qpc_mask->byte_56_dqpn_err,
 			       V2_QPC_BYTE_56_DQPN_M, V2_QPC_BYTE_56_DQPN_S, 0);
 	}
-
-	/* Configure GID index */
-	port_num = rdma_ah_get_port_num(&attr->ah_attr);
-	roce_set_field(context->byte_20_smac_sgid_idx,
-		       V2_QPC_BYTE_20_SGID_IDX_M, V2_QPC_BYTE_20_SGID_IDX_S,
-		       hns_get_gid_index(hr_dev, port_num - 1,
-					 grh->sgid_index));
-	roce_set_field(qpc_mask->byte_20_smac_sgid_idx,
-		       V2_QPC_BYTE_20_SGID_IDX_M, V2_QPC_BYTE_20_SGID_IDX_S, 0);
 
 	memcpy(&(context->dmac), dmac, sizeof(u32));
 	roce_set_field(context->byte_52_udpspn_dmac, V2_QPC_BYTE_52_DMAC_M,
@@ -5083,7 +5089,7 @@ static int hns_roce_v2_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr,
 done:
 	qp_attr->cur_qp_state = qp_attr->qp_state;
 	qp_attr->cap.max_recv_wr = hr_qp->rq.wqe_cnt;
-	qp_attr->cap.max_recv_sge = hr_qp->rq.max_gs;
+	qp_attr->cap.max_recv_sge = hr_qp->rq.max_gs - hr_qp->rq.rsv_sge;
 
 	if (!ibqp->uobject) {
 		qp_attr->cap.max_send_wr = hr_qp->sq.wqe_cnt;
@@ -5331,7 +5337,7 @@ static int hns_roce_v2_modify_srq(struct ib_srq *ibsrq,
 		return -EINVAL;
 
 	if (srq_attr_mask & IB_SRQ_LIMIT) {
-		if (srq_attr->srq_limit >= srq->wqe_cnt)
+		if (srq_attr->srq_limit > srq->wqe_cnt)
 			return -EINVAL;
 
 		mailbox = hns_roce_alloc_cmd_mailbox(hr_dev);
@@ -5394,8 +5400,8 @@ static int hns_roce_v2_query_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr)
 				  SRQC_BYTE_8_SRQ_LIMIT_WL_S);
 
 	attr->srq_limit = limit_wl;
-	attr->max_wr = srq->wqe_cnt - 1;
-	attr->max_sge = srq->max_gs;
+	attr->max_wr = srq->wqe_cnt;
+	attr->max_sge = srq->max_gs - srq->rsv_sge;
 
 out:
 	hns_roce_free_cmd_mailbox(hr_dev, mailbox);

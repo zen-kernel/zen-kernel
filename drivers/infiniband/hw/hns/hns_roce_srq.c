@@ -3,6 +3,7 @@
  * Copyright (c) 2018 Hisilicon Limited.
  */
 
+#include <linux/pci.h>
 #include <rdma/ib_umem.h>
 #include "hns_roce_device.h"
 #include "hns_roce_cmd.h"
@@ -246,6 +247,9 @@ static int alloc_srq_idx(struct hns_roce_dev *hr_dev, struct hns_roce_srq *srq,
 		}
 	}
 
+	idx_que->head = 0;
+	idx_que->tail = 0;
+
 	return 0;
 err_idx_mtr:
 	hns_roce_mtr_destroy(hr_dev, &idx_que->mtr);
@@ -264,8 +268,6 @@ static void free_srq_idx(struct hns_roce_dev *hr_dev, struct hns_roce_srq *srq)
 
 static int alloc_srq_wrid(struct hns_roce_dev *hr_dev, struct hns_roce_srq *srq)
 {
-	srq->head = 0;
-	srq->tail = srq->wqe_cnt - 1;
 	srq->wrid = kvmalloc_array(srq->wqe_cnt, sizeof(u64), GFP_KERNEL);
 	if (!srq->wrid)
 		return -ENOMEM;
@@ -279,6 +281,28 @@ static void free_srq_wrid(struct hns_roce_srq *srq)
 	srq->wrid = NULL;
 }
 
+static u32 proc_srq_sge(struct hns_roce_dev *dev, struct hns_roce_srq *hr_srq,
+			bool user)
+{
+	u32 max_sge = dev->caps.max_srq_sges;
+
+	if (dev->pci_dev->revision >= PCI_REVISION_ID_HIP09)
+		return max_sge;
+
+	/* Reserve SGEs only for HIP08 in kernel; The userspace driver will
+	 * calculate number of max_sge with reserved SGEs when allocating wqe
+	 * buf, so there is no need to do this again in kernel. But the number
+	 * may exceed the capacity of SGEs recorded in the firmware, so the
+	 * kernel driver should just adapt the value accordingly.
+	 */
+	if (user)
+		max_sge = roundup_pow_of_two(max_sge + 1);
+	else
+		hr_srq->rsv_sge = 1;
+
+	return max_sge;
+}
+
 int hns_roce_create_srq(struct ib_srq *ib_srq,
 			struct ib_srq_init_attr *init_attr,
 			struct ib_udata *udata)
@@ -288,6 +312,7 @@ int hns_roce_create_srq(struct ib_srq *ib_srq,
 	struct hns_roce_srq *srq = to_hr_srq(ib_srq);
 	struct ib_device *ibdev = &hr_dev->ib_dev;
 	struct hns_roce_ib_create_srq ucmd = {};
+	u32 max_sge;
 	int ret;
 	u32 cqn;
 
@@ -295,16 +320,27 @@ int hns_roce_create_srq(struct ib_srq *ib_srq,
 	    init_attr->srq_type != IB_SRQT_XRC)
 		return -EOPNOTSUPP;
 
-	/* Check the actual SRQ wqe and SRQ sge num */
-	if (init_attr->attr.max_wr >= hr_dev->caps.max_srq_wrs ||
-	    init_attr->attr.max_sge > hr_dev->caps.max_srq_sges)
+	max_sge = proc_srq_sge(hr_dev, srq, !!udata);
+
+	if (init_attr->attr.max_wr > hr_dev->caps.max_srq_wrs ||
+	    init_attr->attr.max_sge > max_sge) {
+		ibdev_err(&hr_dev->ib_dev,
+			  "SRQ config error, depth = %u, sge = %d\n",
+			  init_attr->attr.max_wr, init_attr->attr.max_sge);
 		return -EINVAL;
+	}
 
 	mutex_init(&srq->mutex);
 	spin_lock_init(&srq->lock);
 
-	srq->wqe_cnt = roundup_pow_of_two(init_attr->attr.max_wr + 1);
-	srq->max_gs = init_attr->attr.max_sge;
+	init_attr->attr.max_wr = max_t(u32, init_attr->attr.max_wr,
+				       HNS_ROCE_MIN_SRQ_WQE_NUM);
+	srq->wqe_cnt = roundup_pow_of_two(init_attr->attr.max_wr);
+	srq->max_gs =
+		roundup_pow_of_two(init_attr->attr.max_sge + srq->rsv_sge);
+	init_attr->attr.max_wr = srq->wqe_cnt;
+	init_attr->attr.max_sge = srq->max_gs;
+	init_attr->attr.srq_limit = 0;
 
 	if (udata) {
 		ret = ib_copy_from_udata(&ucmd, udata,
@@ -351,6 +387,8 @@ int hns_roce_create_srq(struct ib_srq *ib_srq,
 
 	srq->event = hns_roce_ib_srq_event;
 	resp.srqn = srq->srqn;
+	srq->max_gs = init_attr->attr.max_sge;
+	init_attr->attr.max_sge = srq->max_gs - srq->rsv_sge;
 
 	if (udata) {
 		ret = ib_copy_to_udata(udata, &resp,

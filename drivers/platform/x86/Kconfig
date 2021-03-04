@@ -1369,7 +1369,7 @@ config INTEL_PMC_CORE
 		- MPHY/PLL gating status (Sunrisepoint PCH only)
 
 config INTEL_PMT_CLASS
-	tristate "Intel Platform Monitoring Technology (PMT) Class driver"
+	tristate
 	help
 	  The Intel Platform Monitoring Technology (PMT) class driver provides
 	  the basic sysfs interface and file hierarchy uses by PMT devices.
@@ -1382,6 +1382,7 @@ config INTEL_PMT_CLASS
 
 config INTEL_PMT_TELEMETRY
 	tristate "Intel Platform Monitoring Technology (PMT) Telemetry driver"
+	depends on MFD_INTEL_PMT
 	select INTEL_PMT_CLASS
 	help
 	  The Intel Platform Monitory Technology (PMT) Telemetry driver provides
@@ -1393,6 +1394,7 @@ config INTEL_PMT_TELEMETRY
 
 config INTEL_PMT_CRASHLOG
 	tristate "Intel Platform Monitoring Technology (PMT) Crashlog driver"
+	depends on MFD_INTEL_PMT
 	select INTEL_PMT_CLASS
 	help
 	  The Intel Platform Monitoring Technology (PMT) crashlog driver provides

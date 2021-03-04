@@ -54,6 +54,7 @@
 /* Hardware specification only for v1 engine */
 #define HNS_ROCE_MIN_CQE_NUM			0x40
 #define HNS_ROCE_MIN_WQE_NUM			0x20
+#define HNS_ROCE_MIN_SRQ_WQE_NUM		1
 
 /* Hardware specification only for v1 engine */
 #define HNS_ROCE_MAX_INNER_MTPT_NUM		0x7
@@ -64,6 +65,8 @@
 	(5000 / HNS_ROCE_EACH_FREE_CQ_WAIT_MSECS)
 #define HNS_ROCE_CQE_WCMD_EMPTY_BIT		0x2
 #define HNS_ROCE_MIN_CQE_CNT			16
+
+#define HNS_ROCE_RESERVED_SGE			1
 
 #define HNS_ROCE_MAX_IRQ_NUM			128
 
@@ -393,6 +396,7 @@ struct hns_roce_wq {
 	spinlock_t	lock;
 	u32		wqe_cnt;  /* WQE num */
 	u32		max_gs;
+	u32		rsv_sge;
 	int		offset;
 	int		wqe_shift;	/* WQE size */
 	u32		head;
@@ -489,6 +493,8 @@ struct hns_roce_idx_que {
 	struct hns_roce_mtr		mtr;
 	int				entry_shift;
 	unsigned long			*bitmap;
+	u32				head;
+	u32				tail;
 };
 
 struct hns_roce_srq {
@@ -496,6 +502,7 @@ struct hns_roce_srq {
 	unsigned long		srqn;
 	u32			wqe_cnt;
 	int			max_gs;
+	u32			rsv_sge;
 	int			wqe_shift;
 	void __iomem		*db_reg_l;
 
@@ -507,8 +514,6 @@ struct hns_roce_srq {
 	u64		       *wrid;
 	struct hns_roce_idx_que idx_que;
 	spinlock_t		lock;
-	u16			head;
-	u16			tail;
 	struct mutex		mutex;
 	void (*event)(struct hns_roce_srq *srq, enum hns_roce_event event);
 };
@@ -647,7 +652,7 @@ struct hns_roce_qp {
 	struct hns_roce_db	sdb;
 	unsigned long		en_flags;
 	u32			doorbell_qpn;
-	u32			sq_signal_bits;
+	enum ib_sig_type	sq_signal_bits;
 	struct hns_roce_wq	sq;
 
 	struct hns_roce_mtr	mtr;
