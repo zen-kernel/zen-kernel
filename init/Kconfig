@@ -1165,7 +1165,8 @@ menuconfig CGROUP_SCHED
 	  bandwidth allocation to such task groups. It uses cgroups to group
 	  tasks.
 
-if CGROUP_SCHED && !SCHED_ALT
+if CGROUP_SCHED
+if !SCHED_ALT
 config GROUP_SCHED_WEIGHT
 	def_bool n
 
@@ -1219,6 +1220,7 @@ config EXT_GROUP_SCHED
 	select GROUP_SCHED_BANDWIDTH
 	default y
 
+endif #!SCHED_ALT
 endif #CGROUP_SCHED
 
 config EXT_SUB_SCHED
