@@ -6411,6 +6411,9 @@ struct task_group {
 	struct task_group *parent;
 	struct list_head siblings;
 	struct list_head children;
+#ifdef CONFIG_FAIR_GROUP_SCHED
+	unsigned long		shares;
+#endif
 };
 
 /*
@@ -6829,7 +6832,54 @@ static void cpu_cgroup_attach(struct cgroup_taskset *tset)
 {
 }
 
+#ifdef CONFIG_FAIR_GROUP_SCHED
+static DEFINE_MUTEX(shares_mutex);
+
+int sched_group_set_shares(struct task_group *tg, unsigned long shares)
+{
+	/*
+	 * We can't change the weight of the root cgroup.
+	 */
+	if (&root_task_group == tg)
+		return -EINVAL;
+
+	shares = clamp(shares, scale_load(MIN_SHARES), scale_load(MAX_SHARES));
+
+	mutex_lock(&shares_mutex);
+	if (tg->shares == shares)
+		goto done;
+
+	tg->shares = shares;
+done:
+	mutex_unlock(&shares_mutex);
+	return 0;
+}
+
+static int cpu_shares_write_u64(struct cgroup_subsys_state *css,
+				struct cftype *cftype, u64 shareval)
+{
+	if (shareval > scale_load_down(ULONG_MAX))
+		shareval = MAX_SHARES;
+	return sched_group_set_shares(css_tg(css), scale_load(shareval));
+}
+
+static u64 cpu_shares_read_u64(struct cgroup_subsys_state *css,
+			       struct cftype *cft)
+{
+	struct task_group *tg = css_tg(css);
+
+	return (u64) scale_load_down(tg->shares);
+}
+#endif
+
 static struct cftype cpu_legacy_files[] = {
+#ifdef CONFIG_FAIR_GROUP_SCHED
+	{
+		.name = "shares",
+		.read_u64 = cpu_shares_read_u64,
+		.write_u64 = cpu_shares_write_u64,
+	},
+#endif
 	{ }	/* Terminate */
 };
 
