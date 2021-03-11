@@ -411,7 +411,6 @@ struct io_poll_remove {
 
 struct io_close {
 	struct file			*file;
-	struct file			*put_file;
 	int				fd;
 };
 
@@ -908,8 +907,6 @@ static const struct io_op_def io_op_defs[] = {
 						IO_WQ_WORK_FS | IO_WQ_WORK_MM,
 	},
 	[IORING_OP_CLOSE] = {
-		.needs_file		= 1,
-		.needs_file_no_error	= 1,
 		.work_flags		= IO_WQ_WORK_FILES | IO_WQ_WORK_BLKCG,
 	},
 	[IORING_OP_FILES_UPDATE] = {
@@ -996,9 +993,9 @@ enum io_mem_account {
 	ACCT_PINNED,
 };
 
-static void __io_uring_cancel_task_requests(struct io_ring_ctx *ctx,
-					    struct task_struct *task);
-
+static void io_uring_try_cancel_requests(struct io_ring_ctx *ctx,
+					 struct task_struct *task,
+					 struct files_struct *files);
 static void destroy_fixed_file_ref_node(struct fixed_file_ref_node *ref_node);
 static struct fixed_file_ref_node *alloc_fixed_file_ref_node(
 			struct io_ring_ctx *ctx);
@@ -2172,6 +2169,16 @@ static int io_req_task_work_add(struct io_kiocb *req)
 	return ret;
 }
 
+static void io_req_task_work_add_fallback(struct io_kiocb *req,
+					  void (*cb)(struct callback_head *))
+{
+	struct task_struct *tsk = io_wq_get_task(req->ctx->io_wq);
+
+	init_task_work(&req->task_work, cb);
+	task_work_add(tsk, &req->task_work, TWA_NONE);
+	wake_up_process(tsk);
+}
+
 static void __io_req_task_cancel(struct io_kiocb *req, int error)
 {
 	struct io_ring_ctx *ctx = req->ctx;
@@ -2191,7 +2198,9 @@ static void io_req_task_cancel(struct callback_head *cb)
 	struct io_kiocb *req = container_of(cb, struct io_kiocb, task_work);
 	struct io_ring_ctx *ctx = req->ctx;
 
+	mutex_lock(&ctx->uring_lock);
 	__io_req_task_cancel(req, -ECANCELED);
+	mutex_unlock(&ctx->uring_lock);
 	percpu_ref_put(&ctx->refs);
 }
 
@@ -2229,14 +2238,8 @@ static void io_req_task_queue(struct io_kiocb *req)
 	percpu_ref_get(&req->ctx->refs);
 
 	ret = io_req_task_work_add(req);
-	if (unlikely(ret)) {
-		struct task_struct *tsk;
-
-		init_task_work(&req->task_work, io_req_task_cancel);
-		tsk = io_wq_get_task(req->ctx->io_wq);
-		task_work_add(tsk, &req->task_work, TWA_NONE);
-		wake_up_process(tsk);
-	}
+	if (unlikely(ret))
+		io_req_task_work_add_fallback(req, io_req_task_cancel);
 }
 
 static inline void io_queue_next(struct io_kiocb *req)
@@ -2354,35 +2357,14 @@ static void io_free_req_deferred(struct io_kiocb *req)
 
 	init_task_work(&req->task_work, io_put_req_deferred_cb);
 	ret = io_req_task_work_add(req);
-	if (unlikely(ret)) {
-		struct task_struct *tsk;
-
-		tsk = io_wq_get_task(req->ctx->io_wq);
-		task_work_add(tsk, &req->task_work, TWA_NONE);
-		wake_up_process(tsk);
-	}
+	if (unlikely(ret))
+		io_req_task_work_add_fallback(req, io_put_req_deferred_cb);
 }
 
 static inline void io_put_req_deferred(struct io_kiocb *req, int refs)
 {
 	if (refcount_sub_and_test(refs, &req->refs))
 		io_free_req_deferred(req);
-}
-
-static struct io_wq_work *io_steal_work(struct io_kiocb *req)
-{
-	struct io_kiocb *nxt;
-
-	/*
-	 * A ref is owned by io-wq in which context we're. So, if that's the
-	 * last one, it's safe to steal next work. False negatives are Ok,
-	 * it just will be re-punted async in io_put_work()
-	 */
-	if (refcount_read(&req->refs) != 1)
-		return NULL;
-
-	nxt = io_req_find_next(req);
-	return nxt ? &nxt->work : NULL;
 }
 
 static void io_double_put_req(struct io_kiocb *req)
@@ -3439,15 +3421,8 @@ static int io_async_buf_func(struct wait_queue_entry *wait, unsigned mode,
 	/* submit ref gets dropped, acquire a new one */
 	refcount_inc(&req->refs);
 	ret = io_req_task_work_add(req);
-	if (unlikely(ret)) {
-		struct task_struct *tsk;
-
-		/* queue just for cancelation */
-		init_task_work(&req->task_work, io_req_task_cancel);
-		tsk = io_wq_get_task(req->ctx->io_wq);
-		task_work_add(tsk, &req->task_work, TWA_NONE);
-		wake_up_process(tsk);
-	}
+	if (unlikely(ret))
+		io_req_task_work_add_fallback(req, io_req_task_cancel);
 	return 1;
 }
 
@@ -4481,13 +4456,6 @@ static int io_statx(struct io_kiocb *req, bool force_nonblock)
 
 static int io_close_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 {
-	/*
-	 * If we queue this for async, it must not be cancellable. That would
-	 * leave the 'file' in an undeterminate state, and here need to modify
-	 * io_wq_work.flags, so initialize io_wq_work firstly.
-	 */
-	io_req_init_async(req);
-
 	if (unlikely(req->ctx->flags & IORING_SETUP_IOPOLL))
 		return -EINVAL;
 	if (sqe->ioprio || sqe->off || sqe->addr || sqe->len ||
@@ -4497,43 +4465,59 @@ static int io_close_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 		return -EBADF;
 
 	req->close.fd = READ_ONCE(sqe->fd);
-	if ((req->file && req->file->f_op == &io_uring_fops))
-		return -EBADF;
-
-	req->close.put_file = NULL;
 	return 0;
 }
 
 static int io_close(struct io_kiocb *req, bool force_nonblock,
 		    struct io_comp_state *cs)
 {
+	struct files_struct *files = current->files;
 	struct io_close *close = &req->close;
+	struct fdtable *fdt;
+	struct file *file;
 	int ret;
 
-	/* might be already done during nonblock submission */
-	if (!close->put_file) {
-		ret = close_fd_get_file(close->fd, &close->put_file);
-		if (ret < 0)
-			return (ret == -ENOENT) ? -EBADF : ret;
+	file = NULL;
+	ret = -EBADF;
+	spin_lock(&files->file_lock);
+	fdt = files_fdtable(files);
+	if (close->fd >= fdt->max_fds) {
+		spin_unlock(&files->file_lock);
+		goto err;
+	}
+	file = fdt->fd[close->fd];
+	if (!file) {
+		spin_unlock(&files->file_lock);
+		goto err;
+	}
+
+	if (file->f_op == &io_uring_fops) {
+		spin_unlock(&files->file_lock);
+		file = NULL;
+		goto err;
 	}
 
 	/* if the file has a flush method, be safe and punt to async */
-	if (close->put_file->f_op->flush && force_nonblock) {
-		/* not safe to cancel at this point */
-		req->work.flags |= IO_WQ_WORK_NO_CANCEL;
-		/* was never set, but play safe */
-		req->flags &= ~REQ_F_NOWAIT;
-		/* avoid grabbing files - we don't need the files */
-		req->flags |= REQ_F_NO_FILE_TABLE;
+	if (file->f_op->flush && force_nonblock) {
+		spin_unlock(&files->file_lock);
 		return -EAGAIN;
 	}
 
+	ret = __close_fd_get_file(close->fd, &file);
+	spin_unlock(&files->file_lock);
+	if (ret < 0) {
+		if (ret == -ENOENT)
+			ret = -EBADF;
+		goto err;
+	}
+
 	/* No ->flush() or already async, safely close from here */
-	ret = filp_close(close->put_file, req->work.identity->files);
+	ret = filp_close(file, current->files);
+err:
 	if (ret < 0)
 		req_set_fail_links(req);
-	fput(close->put_file);
-	close->put_file = NULL;
+	if (file)
+		fput(file);
 	__io_req_complete(req, ret, 0, cs);
 	return 0;
 }
@@ -5159,12 +5143,8 @@ static int __io_async_wake(struct io_kiocb *req, struct io_poll_iocb *poll,
 	 */
 	ret = io_req_task_work_add(req);
 	if (unlikely(ret)) {
-		struct task_struct *tsk;
-
 		WRITE_ONCE(poll->canceled, true);
-		tsk = io_wq_get_task(req->ctx->io_wq);
-		task_work_add(tsk, &req->task_work, TWA_NONE);
-		wake_up_process(tsk);
+		io_req_task_work_add_fallback(req, func);
 	}
 	return 1;
 }
@@ -6384,7 +6364,7 @@ static int io_issue_sqe(struct io_kiocb *req, bool force_nonblock,
 	return 0;
 }
 
-static struct io_wq_work *io_wq_submit_work(struct io_wq_work *work)
+static void io_wq_submit_work(struct io_wq_work *work)
 {
 	struct io_kiocb *req = container_of(work, struct io_kiocb, work);
 	struct io_kiocb *timeout;
@@ -6394,10 +6374,12 @@ static struct io_wq_work *io_wq_submit_work(struct io_wq_work *work)
 	if (timeout)
 		io_queue_linked_timeout(timeout);
 
-	/* if NO_CANCEL is set, we must still run the work */
-	if ((work->flags & (IO_WQ_WORK_CANCEL|IO_WQ_WORK_NO_CANCEL)) ==
-				IO_WQ_WORK_CANCEL) {
-		ret = -ECANCELED;
+	if (work->flags & IO_WQ_WORK_CANCEL) {
+		/* io-wq is going to take down one */
+		refcount_inc(&req->refs);
+		percpu_ref_get(&req->ctx->refs);
+		io_req_task_work_add_fallback(req, io_req_task_cancel);
+		return;
 	}
 
 	if (!ret) {
@@ -6438,8 +6420,6 @@ static struct io_wq_work *io_wq_submit_work(struct io_wq_work *work)
 		if (lock_ctx)
 			mutex_unlock(&lock_ctx->uring_lock);
 	}
-
-	return io_steal_work(req);
 }
 
 static inline struct file *io_file_from_index(struct io_ring_ctx *ctx,
@@ -6506,9 +6486,10 @@ static enum hrtimer_restart io_link_timeout_fn(struct hrtimer *timer)
 	if (prev) {
 		req_set_fail_links(prev);
 		io_async_find_and_cancel(ctx, req, prev->user_data, -ETIME);
-		io_put_req(prev);
+		io_put_req_deferred(prev, 1);
 	} else {
-		io_req_complete(req, -ETIME);
+		io_cqring_add_event(req, -ETIME, 0);
+		io_put_req_deferred(req, 1);
 	}
 	return HRTIMER_NORESTART;
 }
@@ -8070,12 +8051,12 @@ static int io_sqe_files_update(struct io_ring_ctx *ctx, void __user *arg,
 	return __io_sqe_files_update(ctx, &up, nr_args);
 }
 
-static void io_free_work(struct io_wq_work *work)
+static struct io_wq_work *io_free_work(struct io_wq_work *work)
 {
 	struct io_kiocb *req = container_of(work, struct io_kiocb, work);
 
-	/* Consider that io_steal_work() relies on this ref */
-	io_put_req(req);
+	req = io_put_req_find_next(req);
+	return req ? &req->work : NULL;
 }
 
 static int io_init_wq_offload(struct io_ring_ctx *ctx,
@@ -8779,7 +8760,7 @@ static void io_ring_exit_work(struct work_struct *work)
 	 * as nobody else will be looking for them.
 	 */
 	do {
-		__io_uring_cancel_task_requests(ctx, NULL);
+		io_uring_try_cancel_requests(ctx, NULL, NULL);
 	} while (!wait_for_completion_timeout(&ctx->ref_comp, HZ/20));
 	io_ring_ctx_free(ctx);
 }
@@ -8893,6 +8874,40 @@ static void io_cancel_defer_files(struct io_ring_ctx *ctx,
 	}
 }
 
+static void io_uring_try_cancel_requests(struct io_ring_ctx *ctx,
+					 struct task_struct *task,
+					 struct files_struct *files)
+{
+	struct io_task_cancel cancel = { .task = task, .files = files, };
+
+	while (1) {
+		enum io_wq_cancel cret;
+		bool ret = false;
+
+		if (ctx->io_wq) {
+			cret = io_wq_cancel_cb(ctx->io_wq, io_cancel_task_cb,
+					       &cancel, true);
+			ret |= (cret != IO_WQ_CANCEL_NOTFOUND);
+		}
+
+		/* SQPOLL thread does its own polling */
+		if (!(ctx->flags & IORING_SETUP_SQPOLL) && !files) {
+			while (!list_empty_careful(&ctx->iopoll_list)) {
+				io_iopoll_try_reap_events(ctx);
+				ret = true;
+			}
+		}
+
+		ret |= io_poll_remove_all(ctx, task, files);
+		ret |= io_kill_timeouts(ctx, task, files);
+		ret |= io_run_task_work();
+		io_cqring_overflow_flush(ctx, true, task, files);
+		if (!ret)
+			break;
+		cond_resched();
+	}
+}
+
 static int io_uring_count_inflight(struct io_ring_ctx *ctx,
 				   struct task_struct *task,
 				   struct files_struct *files)
@@ -8912,7 +8927,6 @@ static void io_uring_cancel_files(struct io_ring_ctx *ctx,
 				  struct files_struct *files)
 {
 	while (!list_empty_careful(&ctx->inflight_list)) {
-		struct io_task_cancel cancel = { .task = task, .files = files };
 		DEFINE_WAIT(wait);
 		int inflight;
 
@@ -8920,49 +8934,17 @@ static void io_uring_cancel_files(struct io_ring_ctx *ctx,
 		if (!inflight)
 			break;
 
-		io_wq_cancel_cb(ctx->io_wq, io_cancel_task_cb, &cancel, true);
-		io_poll_remove_all(ctx, task, files);
-		io_kill_timeouts(ctx, task, files);
-		io_cqring_overflow_flush(ctx, true, task, files);
-		/* cancellations _may_ trigger task work */
-		io_run_task_work();
+		io_uring_try_cancel_requests(ctx, task, files);
 
+		if (ctx->sq_data)
+			io_sq_thread_unpark(ctx->sq_data);
 		prepare_to_wait(&task->io_uring->wait, &wait,
 				TASK_UNINTERRUPTIBLE);
 		if (inflight == io_uring_count_inflight(ctx, task, files))
 			schedule();
 		finish_wait(&task->io_uring->wait, &wait);
-	}
-}
-
-static void __io_uring_cancel_task_requests(struct io_ring_ctx *ctx,
-					    struct task_struct *task)
-{
-	while (1) {
-		struct io_task_cancel cancel = { .task = task, .files = NULL, };
-		enum io_wq_cancel cret;
-		bool ret = false;
-
-		if (ctx->io_wq) {
-			cret = io_wq_cancel_cb(ctx->io_wq, io_cancel_task_cb,
-					       &cancel, true);
-			ret |= (cret != IO_WQ_CANCEL_NOTFOUND);
-		}
-
-		/* SQPOLL thread does its own polling */
-		if (!(ctx->flags & IORING_SETUP_SQPOLL)) {
-			while (!list_empty_careful(&ctx->iopoll_list)) {
-				io_iopoll_try_reap_events(ctx);
-				ret = true;
-			}
-		}
-
-		ret |= io_poll_remove_all(ctx, task, NULL);
-		ret |= io_kill_timeouts(ctx, task, NULL);
-		ret |= io_run_task_work();
-		if (!ret)
-			break;
-		cond_resched();
+		if (ctx->sq_data)
+			io_sq_thread_park(ctx->sq_data);
 	}
 }
 
@@ -8995,11 +8977,10 @@ static void io_uring_cancel_task_requests(struct io_ring_ctx *ctx,
 	}
 
 	io_cancel_defer_files(ctx, task, files);
-	io_cqring_overflow_flush(ctx, true, task, files);
 
 	io_uring_cancel_files(ctx, task, files);
 	if (!files)
-		__io_uring_cancel_task_requests(ctx, task);
+		io_uring_try_cancel_requests(ctx, task, NULL);
 
 	if ((ctx->flags & IORING_SETUP_SQPOLL) && ctx->sq_data) {
 		atomic_dec(&task->io_uring->in_idle);
