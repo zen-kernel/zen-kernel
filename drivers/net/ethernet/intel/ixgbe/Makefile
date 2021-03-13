@@ -48,11 +48,7 @@ else	# ifneq($(KERNELRELEASE),)
 
 DRIVER := ixgbe
 
-ifeq (,$(wildcard common.mk))
-  $(error Cannot find common.mk build rules)
-else
-  include common.mk
-endif
+include common.mk
 
 # Check that kernel version is at least 2.6.0, since we don't support 2.4.x
 # kernels with the ixgbe driver. We can't use minimum_kver_check since SLES 10
