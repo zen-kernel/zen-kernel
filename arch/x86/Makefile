@@ -111,9 +111,9 @@ else
 	KBUILD_CFLAGS += $(call cc-option,-mskip-rax-setup)
 
         # FIXME - should be integrated in Makefile.cpu (Makefile_32.cpu)
-        cflags-$(CONFIG_MNATIVE) += $(call cc-option,-march=native)
         cflags-$(CONFIG_MK8) += $(call cc-option,-march=k8)
-        cflags-$(CONFIG_MK8SSE3) += $(call cc-option,-march=k8-sse3,-mtune=k8)
+        cflags-$(CONFIG_MPSC) += $(call cc-option,-march=nocona)
+        cflags-$(CONFIG_MK8SSE3) += $(call cc-option,-march=k8-sse3)
         cflags-$(CONFIG_MK10) += $(call cc-option,-march=amdfam10)
         cflags-$(CONFIG_MBARCELONA) += $(call cc-option,-march=barcelona)
         cflags-$(CONFIG_MBOBCAT) += $(call cc-option,-march=btver1)
@@ -126,45 +126,33 @@ else
         cflags-$(CONFIG_MEXCAVATOR) += $(call cc-option,-march=bdver4)
         cflags-$(CONFIG_MEXCAVATOR) += $(call cc-option,-mno-tbm)
         cflags-$(CONFIG_MZEN) += $(call cc-option,-march=znver1)
-        cflags-$(CONFIG_MZEN2) += $(call cc-option,-march=znver2)
-        cflags-$(CONFIG_MPSC) += $(call cc-option,-march=nocona)
+        cflags-$(CONFIG_MZEN2) +=  $(call cc-option,-march=znver2)
+        cflags-$(CONFIG_MZEN3) +=  $(call cc-option,-march=znver3)
 
-        cflags-$(CONFIG_MCORE2) += \
-                $(call cc-option,-march=core2,$(call cc-option,-mtune=core2))
-        cflags-$(CONFIG_MNEHALEM) += \
-                $(call cc-option,-march=nehalem,$(call cc-option,-mtune=nehalem))
-        cflags-$(CONFIG_MWESTMERE) += \
-                $(call cc-option,-march=westmere,$(call cc-option,-mtune=westmere))
-        cflags-$(CONFIG_MSILVERMONT) += \
-                $(call cc-option,-march=silvermont,$(call cc-option,-mtune=silvermont))
-        cflags-$(CONFIG_MGOLDMONT) += \
-                $(call cc-option,-march=goldmont,$(call cc-option,-mtune=goldmont))
-        cflags-$(CONFIG_MGOLDMONTPLUS) += \
-                $(call cc-option,-march=goldmont-plus,$(call cc-option,-mtune=goldmont-plus))
-        cflags-$(CONFIG_MSANDYBRIDGE) += \
-                $(call cc-option,-march=sandybridge,$(call cc-option,-mtune=sandybridge))
-        cflags-$(CONFIG_MIVYBRIDGE) += \
-                $(call cc-option,-march=ivybridge,$(call cc-option,-mtune=ivybridge))
-        cflags-$(CONFIG_MHASWELL) += \
-                $(call cc-option,-march=haswell,$(call cc-option,-mtune=haswell))
-        cflags-$(CONFIG_MBROADWELL) += \
-                $(call cc-option,-march=broadwell,$(call cc-option,-mtune=broadwell))
-        cflags-$(CONFIG_MSKYLAKE) += \
-                $(call cc-option,-march=skylake,$(call cc-option,-mtune=skylake))
-        cflags-$(CONFIG_MSKYLAKEX) += \
-                $(call cc-option,-march=skylake-avx512,$(call cc-option,-mtune=skylake-avx512))
-        cflags-$(CONFIG_MCANNONLAKE) += \
-                $(call cc-option,-march=cannonlake,$(call cc-option,-mtune=cannonlake))
-        cflags-$(CONFIG_MICELAKE) += \
-                $(call cc-option,-march=icelake-client,$(call cc-option,-mtune=icelake-client))
-        cflags-$(CONFIG_MCASCADELAKE) += \
-                $(call cc-option,-march=cascadelake,$(call cc-option,-mtune=cascadelake))
-        cflags-$(CONFIG_MCOOPERLAKE) += \
-                $(call cc-option,-march=cooperlake,$(call cc-option,-mtune=cooperlake))
-        cflags-$(CONFIG_MTIGERLAKE) += \
-                $(call cc-option,-march=tigerlake,$(call cc-option,-mtune=tigerlake))
-        cflags-$(CONFIG_MATOM) += $(call cc-option,-march=bonnell) \
-                $(call cc-option,-mtune=bonnell,$(call cc-option,-mtune=generic))
+        cflags-$(CONFIG_MNATIVE) += $(call cc-option,-march=native)
+        cflags-$(CONFIG_MATOM) += $(call cc-option,-march=bonnell)
+        cflags-$(CONFIG_MCORE2) += $(call cc-option,-march=core2)
+        cflags-$(CONFIG_MNEHALEM) += $(call cc-option,-march=nehalem)
+        cflags-$(CONFIG_MWESTMERE) += $(call cc-option,-march=westmere)
+        cflags-$(CONFIG_MSILVERMONT) += $(call cc-option,-march=silvermont)
+        cflags-$(CONFIG_MGOLDMONT) += $(call cc-option,-march=goldmont)
+        cflags-$(CONFIG_MGOLDMONTPLUS) += $(call cc-option,-march=goldmont-plus)
+        cflags-$(CONFIG_MSANDYBRIDGE) += $(call cc-option,-march=sandybridge)
+        cflags-$(CONFIG_MIVYBRIDGE) += $(call cc-option,-march=ivybridge)
+        cflags-$(CONFIG_MHASWELL) += $(call cc-option,-march=haswell)
+        cflags-$(CONFIG_MBROADWELL) += $(call cc-option,-march=broadwell)
+        cflags-$(CONFIG_MSKYLAKE) += $(call cc-option,-march=skylake)
+        cflags-$(CONFIG_MSKYLAKEX) += $(call cc-option,-march=skylake-avx512)
+        cflags-$(CONFIG_MCANNONLAKE) += $(call cc-option,-march=cannonlake)
+        cflags-$(CONFIG_MICELAKE) += $(call cc-option,-march=icelake-client)
+        cflags-$(CONFIG_MCASCADELAKE) += $(call cc-option,-march=cascadelake)
+        cflags-$(CONFIG_MCOOPERLAKE) += $(call cc-option,-march=cooperlake)
+        cflags-$(CONFIG_MTIGERLAKE) += $(call cc-option,-march=tigerlake)
+        cflags-$(CONFIG_MSAPPHIRERAPIDS) += $(call cc-option,-march=sapphirerapids)
+        cflags-$(CONFIG_MALDERLAKE) += $(call cc-option,-march=alderlake)
+        cflags-$(CONFIG_GENERIC_CPU2) += $(call cc-option,-march=x86-64-v2)
+        cflags-$(CONFIG_GENERIC_CPU3) += $(call cc-option,-march=x86-64-v3)
+        cflags-$(CONFIG_GENERIC_CPU4) += $(call cc-option,-march=x86-64-v4)
         cflags-$(CONFIG_GENERIC_CPU) += $(call cc-option,-mtune=generic)
         KBUILD_CFLAGS += $(cflags-y)
 
