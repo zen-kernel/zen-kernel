@@ -162,11 +162,16 @@ static void sugov_get_util(struct sugov_cpu *sg_cpu)
 	sg_cpu->util = effective_cpu_util(sg_cpu->cpu, cpu_util_cfs(sg_cpu->cpu),
 					  FREQUENCY_UTIL, NULL);
 }
+
 #else /* CONFIG_SCHED_ALT */
-static unsigned long sugov_get_util(struct sugov_cpu *sg_cpu)
+
+static void sugov_get_util(struct sugov_cpu *sg_cpu)
 {
-	sg_cpu->max = arch_scale_cpu_capacity(sg_cpu->cpu);
-	return sg_cpu->max;
+	unsigned long max = arch_scale_cpu_capacity(sg_cpu->cpu);
+
+	sg_cpu->max = max;
+	sg_cpu->bw_dl = 0;
+	sg_cpu->util = cpu_rq(sg_cpu->cpu)->nr_running ? max:0UL;
 }
 #endif
 
@@ -315,8 +320,8 @@ static inline void ignore_dl_rate_limit(struct sugov_cpu *sg_cpu)
 {
 #ifndef CONFIG_SCHED_ALT
 	if (cpu_bw_dl(cpu_rq(sg_cpu->cpu)) > sg_cpu->bw_dl)
-#endif
 		sg_cpu->sg_policy->limits_changed = true;
+#endif
 }
 
 static inline bool sugov_update_single_common(struct sugov_cpu *sg_cpu,
