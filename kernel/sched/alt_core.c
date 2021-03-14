@@ -1183,6 +1183,9 @@ void migrate_enable(void)
 {
 	struct task_struct *p = current;
 
+	if (0 == p->migration_disabled)
+		return;
+
 	if (p->migration_disabled > 1) {
 		p->migration_disabled--;
 		return;
@@ -3389,7 +3392,8 @@ static inline int active_load_balance_cpu_stop(void *data)
 	rq->active_balance = 0;
 	/* _something_ may have changed the task, double check again */
 	if (task_on_rq_queued(p) && task_rq(p) == rq &&
-	    cpumask_and(&tmp, p->cpus_ptr, &sched_sg_idle_mask)) {
+	    cpumask_and(&tmp, p->cpus_ptr, &sched_sg_idle_mask) &&
+	    !is_migration_disabled(p)) {
 		int cpu = cpu_of(rq);
 		int dcpu = __best_mask_cpu(cpu, &tmp,
 					   per_cpu(sched_cpu_llc_mask, cpu));
@@ -3417,7 +3421,7 @@ static inline int sg_balance_trigger(const int cpu)
 	curr = rq->curr;
 	res = (!is_idle_task(curr)) && (1 == rq->nr_running) &&\
 	      cpumask_intersects(curr->cpus_ptr, &sched_sg_idle_mask) &&\
-	      (!rq->active_balance);
+	      !is_migration_disabled(curr) && (!rq->active_balance);
 
 	if (res)
 		rq->active_balance = 1;
