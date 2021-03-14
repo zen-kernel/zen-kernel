@@ -235,11 +235,16 @@ static void sugov_get_util(struct sugov_cpu *sg_cpu, unsigned long boost)
 	sg_cpu->bw_min = min;
 	sg_cpu->util = sugov_effective_cpu_perf(sg_cpu->cpu, util, min, max);
 }
+
 #else /* CONFIG_SCHED_ALT */
-static unsigned long sugov_get_util(struct sugov_cpu *sg_cpu)
+
+static void sugov_get_util(struct sugov_cpu *sg_cpu)
 {
-	sg_cpu->max = arch_scale_cpu_capacity(sg_cpu->cpu);
-	return sg_cpu->max;
+	unsigned long max = arch_scale_cpu_capacity(sg_cpu->cpu);
+
+	sg_cpu->max = max;
+	sg_cpu->bw_dl = 0;
+	sg_cpu->util = cpu_rq(sg_cpu->cpu)->nr_running ? max:0UL;
 }
 #endif
 
