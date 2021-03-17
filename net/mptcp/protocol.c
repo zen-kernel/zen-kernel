@@ -114,11 +114,7 @@ static int __mptcp_socket_create(struct mptcp_sock *msk)
 	list_add(&subflow->node, &msk->conn_list);
 	sock_hold(ssock->sk);
 	subflow->request_mptcp = 1;
-
-	/* accept() will wait on first subflow sk_wq, and we always wakes up
-	 * via msk->sk_socket
-	 */
-	RCU_INIT_POINTER(msk->first->sk_wq, &sk->sk_socket->wq);
+	mptcp_sock_graft(msk->first, sk->sk_socket);
 
 	return 0;
 }
@@ -1180,6 +1176,7 @@ static bool mptcp_tx_cache_refill(struct sock *sk, int size,
 			 */
 			while (skbs->qlen > 1) {
 				skb = __skb_dequeue_tail(skbs);
+				*total_ts -= skb->truesize;
 				__kfree_skb(skb);
 			}
 			return skbs->qlen > 0;
@@ -2114,8 +2111,7 @@ static struct sock *mptcp_subflow_get_retrans(const struct mptcp_sock *msk)
 void __mptcp_close_ssk(struct sock *sk, struct sock *ssk,
 		       struct mptcp_subflow_context *subflow)
 {
-	bool dispose_socket = false;
-	struct socket *sock;
+	struct mptcp_sock *msk = mptcp_sk(sk);
 
 	list_del(&subflow->node);
 
@@ -2124,11 +2120,8 @@ void __mptcp_close_ssk(struct sock *sk, struct sock *ssk,
 	/* if we are invoked by the msk cleanup code, the subflow is
 	 * already orphaned
 	 */
-	sock = ssk->sk_socket;
-	if (sock) {
-		dispose_socket = sock != sk->sk_socket;
+	if (ssk->sk_socket)
 		sock_orphan(ssk);
-	}
 
 	subflow->disposable = 1;
 
@@ -2146,10 +2139,11 @@ void __mptcp_close_ssk(struct sock *sk, struct sock *ssk,
 		__sock_put(ssk);
 	}
 	release_sock(ssk);
-	if (dispose_socket)
-		iput(SOCK_INODE(sock));
 
 	sock_put(ssk);
+
+	if (ssk == msk->last_snd)
+		msk->last_snd = NULL;
 }
 
 static unsigned int mptcp_sync_mss(struct sock *sk, u32 pmtu)
@@ -2535,6 +2529,12 @@ static void __mptcp_destroy_sock(struct sock *sk)
 
 	pr_debug("msk=%p", msk);
 
+	/* dispose the ancillatory tcp socket, if any */
+	if (msk->subflow) {
+		iput(SOCK_INODE(msk->subflow));
+		msk->subflow = NULL;
+	}
+
 	/* be sure to always acquire the join list lock, to sync vs
 	 * mptcp_finish_join().
 	 */
@@ -2585,20 +2585,10 @@ cleanup:
 	inet_csk(sk)->icsk_mtup.probe_timestamp = tcp_jiffies32;
 	list_for_each_entry(subflow, &mptcp_sk(sk)->conn_list, node) {
 		struct sock *ssk = mptcp_subflow_tcp_sock(subflow);
-		bool slow, dispose_socket;
-		struct socket *sock;
+		bool slow = lock_sock_fast(ssk);
 
-		slow = lock_sock_fast(ssk);
-		sock = ssk->sk_socket;
-		dispose_socket = sock && sock != sk->sk_socket;
 		sock_orphan(ssk);
 		unlock_sock_fast(ssk, slow);
-
-		/* for the outgoing subflows we additionally need to free
-		 * the associated socket
-		 */
-		if (dispose_socket)
-			iput(SOCK_INODE(sock));
 	}
 	sock_orphan(sk);
 
@@ -3040,7 +3030,7 @@ void mptcp_finish_connect(struct sock *ssk)
 	mptcp_rcv_space_init(msk, ssk);
 }
 
-static void mptcp_sock_graft(struct sock *sk, struct socket *parent)
+void mptcp_sock_graft(struct sock *sk, struct socket *parent)
 {
 	write_lock_bh(&sk->sk_callback_lock);
 	rcu_assign_pointer(sk->sk_wq, &parent->wq);
