@@ -134,6 +134,8 @@ select_local_address(const struct pm_nl_pernet *pernet,
 {
 	struct mptcp_pm_addr_entry *entry, *ret = NULL;
 
+	msk_owned_by_me(msk);
+
 	rcu_read_lock();
 	__mptcp_flush_join_list(msk);
 	list_for_each_entry_rcu(entry, &pernet->local_addr_list, list) {
@@ -190,6 +192,8 @@ lookup_anno_list_by_saddr(struct mptcp_sock *msk,
 			  struct mptcp_addr_info *addr)
 {
 	struct mptcp_pm_add_entry *entry;
+
+	lockdep_assert_held(&msk->pm.lock);
 
 	list_for_each_entry(entry, &msk->pm.anno_list, list) {
 		if (addresses_equal(&entry->addr, addr, false))
@@ -265,6 +269,8 @@ static bool mptcp_pm_alloc_anno_list(struct mptcp_sock *msk,
 	struct mptcp_pm_add_entry *add_entry = NULL;
 	struct sock *sk = (struct sock *)msk;
 	struct net *net = sock_net(sk);
+
+	lockdep_assert_held(&msk->pm.lock);
 
 	if (lookup_anno_list_by_saddr(msk, &entry->addr))
 		return false;
@@ -408,8 +414,10 @@ void mptcp_pm_nl_add_addr_send_ack(struct mptcp_sock *msk)
 {
 	struct mptcp_subflow_context *subflow;
 
-	if (!mptcp_pm_should_add_signal_ipv6(msk) &&
-	    !mptcp_pm_should_add_signal_port(msk))
+	msk_owned_by_me(msk);
+	lockdep_assert_held(&msk->pm.lock);
+
+	if (!mptcp_pm_should_add_signal(msk))
 		return;
 
 	__mptcp_flush_join_list(msk);
@@ -419,10 +427,9 @@ void mptcp_pm_nl_add_addr_send_ack(struct mptcp_sock *msk)
 		u8 add_addr;
 
 		spin_unlock_bh(&msk->pm.lock);
-		if (mptcp_pm_should_add_signal_ipv6(msk))
-			pr_debug("send ack for add_addr6");
-		if (mptcp_pm_should_add_signal_port(msk))
-			pr_debug("send ack for add_addr_port");
+		pr_debug("send ack for add_addr%s%s",
+			 mptcp_pm_should_add_signal_ipv6(msk) ? " [ipv6]" : "",
+			 mptcp_pm_should_add_signal_port(msk) ? " [port]" : "");
 
 		lock_sock(ssk);
 		tcp_send_ack(ssk);
@@ -444,6 +451,8 @@ void mptcp_pm_nl_rm_addr_received(struct mptcp_sock *msk)
 	struct sock *sk = (struct sock *)msk;
 
 	pr_debug("address rm_id %d", msk->pm.rm_id);
+
+	msk_owned_by_me(msk);
 
 	if (!msk->pm.rm_id)
 		return;
@@ -479,6 +488,8 @@ void mptcp_pm_nl_rm_subflow_received(struct mptcp_sock *msk, u8 rm_id)
 	struct sock *sk = (struct sock *)msk;
 
 	pr_debug("subflow rm_id %d", rm_id);
+
+	msk_owned_by_me(msk);
 
 	if (!rm_id)
 		return;

@@ -20,6 +20,8 @@ int mptcp_pm_announce_addr(struct mptcp_sock *msk,
 
 	pr_debug("msk=%p, local_id=%d", msk, addr->id);
 
+	lockdep_assert_held(&msk->pm.lock);
+
 	if (add_addr) {
 		pr_warn("addr_signal error, add_addr=%d", add_addr);
 		return -EINVAL;
@@ -188,8 +190,7 @@ void mptcp_pm_add_addr_received(struct mptcp_sock *msk,
 
 void mptcp_pm_add_addr_send_ack(struct mptcp_sock *msk)
 {
-	if (!mptcp_pm_should_add_signal_ipv6(msk) &&
-	    !mptcp_pm_should_add_signal_port(msk))
+	if (!mptcp_pm_should_add_signal(msk))
 		return;
 
 	mptcp_pm_schedule_work(msk, MPTCP_PM_ADD_ADDR_SEND_ACK);

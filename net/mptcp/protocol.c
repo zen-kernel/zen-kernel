@@ -2100,6 +2100,14 @@ static struct sock *mptcp_subflow_get_retrans(const struct mptcp_sock *msk)
 	return backup;
 }
 
+static void mptcp_dispose_initial_subflow(struct mptcp_sock *msk)
+{
+	if (msk->subflow) {
+		iput(SOCK_INODE(msk->subflow));
+		msk->subflow = NULL;
+	}
+}
+
 /* subflow sockets can be either outgoing (connect) or incoming
  * (accept).
  *
@@ -2144,6 +2152,9 @@ void __mptcp_close_ssk(struct sock *sk, struct sock *ssk,
 
 	if (ssk == msk->last_snd)
 		msk->last_snd = NULL;
+
+	if (msk->subflow && ssk == msk->subflow->sk)
+		mptcp_dispose_initial_subflow(msk);
 }
 
 static unsigned int mptcp_sync_mss(struct sock *sk, u32 pmtu)
@@ -2185,6 +2196,8 @@ static void pm_work(struct mptcp_sock *msk)
 static void __mptcp_close_subflow(struct mptcp_sock *msk)
 {
 	struct mptcp_subflow_context *subflow, *tmp;
+
+	might_sleep();
 
 	list_for_each_entry_safe(subflow, tmp, &msk->conn_list, node) {
 		struct sock *ssk = mptcp_subflow_tcp_sock(subflow);
@@ -2529,11 +2542,7 @@ static void __mptcp_destroy_sock(struct sock *sk)
 
 	pr_debug("msk=%p", msk);
 
-	/* dispose the ancillatory tcp socket, if any */
-	if (msk->subflow) {
-		iput(SOCK_INODE(msk->subflow));
-		msk->subflow = NULL;
-	}
+	might_sleep();
 
 	/* be sure to always acquire the join list lock, to sync vs
 	 * mptcp_finish_join().
@@ -2559,6 +2568,7 @@ static void __mptcp_destroy_sock(struct sock *sk)
 	sk_stream_kill_queues(sk);
 	xfrm_sk_free_policy(sk);
 	sk_refcnt_debug_release(sk);
+	mptcp_dispose_initial_subflow(msk);
 	sock_put(sk);
 }
 
