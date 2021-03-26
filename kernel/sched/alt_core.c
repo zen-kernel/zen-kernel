@@ -3816,15 +3816,13 @@ static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 
 			if ((nr_migrated = migrate_pending_tasks(src_rq, rq, cpu))) {
 				src_rq->nr_running -= nr_migrated;
-#ifdef CONFIG_SMP
 				if (src_rq->nr_running < 2)
 					cpumask_clear_cpu(i, &sched_rq_pending_mask);
-#endif
+
 				rq->nr_running += nr_migrated;
-#ifdef CONFIG_SMP
 				if (rq->nr_running > 1)
 					cpumask_set_cpu(cpu, &sched_rq_pending_mask);
-#endif
+
 				update_sched_rq_watermark(rq);
 				cpufreq_update_util(rq, 0);
 
