@@ -558,14 +558,6 @@ static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
 #endif
 
 	sched_update_tick_dependency(rq);
-
-	/*
-	 * If in_iowait is set, the code below may not trigger any cpufreq
-	 * utilization updates, so do it here explicitly with the IOWAIT flag
-	 * passed.
-	 */
-	if (p->in_iowait)
-		cpufreq_update_util(rq, SCHED_CPUFREQ_IOWAIT);
 }
 
 static inline void requeue_task(struct task_struct *p, struct rq *rq)
@@ -1057,7 +1049,13 @@ static void activate_task(struct task_struct *p, struct rq *rq)
 {
 	enqueue_task(p, rq, ENQUEUE_WAKEUP);
 	p->on_rq = TASK_ON_RQ_QUEUED;
-	cpufreq_update_util(rq, 0);
+
+	/*
+	 * If in_iowait is set, the code below may not trigger any cpufreq
+	 * utilization updates, so do it here explicitly with the IOWAIT flag
+	 * passed.
+	 */
+	cpufreq_update_util(rq, SCHED_CPUFREQ_IOWAIT * p->in_iowait);
 }
 
 /*
