@@ -49,6 +49,13 @@ struct sugov_cpu {
 	unsigned long		util;
 	unsigned long		bw_dl;
 
+#ifdef CONFIG_SCHED_ALT
+	/* For genenal cpu load util */
+	s32			load_history;
+	u64			load_block;
+	u64			load_stamp;
+#endif
+
 	/* The field below is for single-CPU policies only: */
 #ifdef CONFIG_NO_HZ_COMMON
 	unsigned long		saved_idle_calls;
@@ -165,15 +172,52 @@ static void sugov_get_util(struct sugov_cpu *sg_cpu)
 
 #else /* CONFIG_SCHED_ALT */
 
+#define SG_CPU_LOAD_HISTORY_BITS	(sizeof(s32) * 8ULL)
+#define SG_CPU_UTIL_SHIFT		(8)
+#define SG_CPU_LOAD_HISTORY_SHIFT	(SG_CPU_LOAD_HISTORY_BITS - 1 - SG_CPU_UTIL_SHIFT)
+#define SG_CPU_LOAD_HISTORY_TO_UTIL(l)	(((l) >> SG_CPU_LOAD_HISTORY_SHIFT) & 0xff)
+
+#define LOAD_BLOCK(t)		((t) >> 17)
+#define LOAD_HALF_BLOCK(t)	((t) >> 16)
+#define BLOCK_MASK(t)		((t) & ((0x01 << 18) - 1))
+#define LOAD_BLOCK_BIT(b)	(1UL << (SG_CPU_LOAD_HISTORY_BITS - 1 - (b)))
+#define CURRENT_LOAD_BIT	LOAD_BLOCK_BIT(0)
+
 static void sugov_get_util(struct sugov_cpu *sg_cpu)
 {
 	unsigned long max = arch_scale_cpu_capacity(sg_cpu->cpu);
 
 	sg_cpu->max = max;
 	sg_cpu->bw_dl = 0;
-	sg_cpu->util = cpu_rq(sg_cpu->cpu)->nr_running ? max:0UL;
+	sg_cpu->util = SG_CPU_LOAD_HISTORY_TO_UTIL(sg_cpu->load_history) *
+		(max >> SG_CPU_UTIL_SHIFT);
 }
-#endif
+
+static inline void sugov_cpu_load_update(struct sugov_cpu *sg_cpu, u64 time)
+{
+	u64 delta = min(LOAD_BLOCK(time) - LOAD_BLOCK(sg_cpu->load_stamp),
+			SG_CPU_LOAD_HISTORY_BITS - 1);
+	u64 prev = !!(sg_cpu->load_history & CURRENT_LOAD_BIT);
+	u64 curr = !!cpu_rq(sg_cpu->cpu)->nr_running;
+
+	if (delta) {
+		sg_cpu->load_history = sg_cpu->load_history >> delta;
+
+		if (delta <= SG_CPU_UTIL_SHIFT) {
+			sg_cpu->load_block += (~BLOCK_MASK(sg_cpu->load_stamp)) * prev;
+			if (!!LOAD_HALF_BLOCK(sg_cpu->load_block) ^ curr)
+				sg_cpu->load_history ^= LOAD_BLOCK_BIT(delta);
+		}
+
+		sg_cpu->load_block = BLOCK_MASK(time) * prev;
+	} else {
+		sg_cpu->load_block += (time - sg_cpu->load_stamp) * prev;
+	}
+	if (prev ^ curr)
+		sg_cpu->load_history ^= CURRENT_LOAD_BIT;
+	sg_cpu->load_stamp = time;
+}
+#endif /* CONFIG_SCHED_ALT */
 
 /**
  * sugov_iowait_reset() - Reset the IO boost status of a CPU.
@@ -328,6 +372,10 @@ static inline bool sugov_update_single_common(struct sugov_cpu *sg_cpu,
 					      u64 time, unsigned long max_cap,
 					      unsigned int flags)
 {
+#ifdef CONFIG_SCHED_ALT
+	sugov_cpu_load_update(sg_cpu, time);
+#endif /* CONFIG_SCHED_ALT */
+
 	sugov_iowait_boost(sg_cpu, time, flags);
 	sg_cpu->last_update = time;
 
@@ -455,6 +503,10 @@ sugov_update_shared(struct update_util_data *hook, u64 time, unsigned int flags)
 	unsigned int next_f;
 
 	raw_spin_lock(&sg_policy->update_lock);
+
+#ifdef CONFIG_SCHED_ALT
+	sugov_cpu_load_update(sg_cpu, time);
+#endif /* CONFIG_SCHED_ALT */
 
 	sugov_iowait_boost(sg_cpu, time, flags);
 	sg_cpu->last_update = time;
