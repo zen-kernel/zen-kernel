@@ -552,31 +552,21 @@ bool mutex_spin_on_owner(struct mutex *lock, struct task_struct *owner,
 {
 	bool ret = true;
 
-	for (;;) {
-		unsigned int cpu;
-		bool same_owner;
-
+	rcu_read_lock();
+	while (__mutex_owner(lock) == owner) {
 		/*
-		 * Ensure lock->owner still matches owner. If that fails,
+		 * Ensure we emit the owner->on_cpu, dereference _after_
+		 * checking lock->owner still matches owner. If that fails,
 		 * owner might point to freed memory. If it still matches,
 		 * the rcu_read_lock() ensures the memory stays valid.
 		 */
-		rcu_read_lock();
-		same_owner = __mutex_owner(lock) == owner;
-		if (same_owner) {
-			ret = owner->on_cpu;
-			if (ret)
-				cpu = task_cpu(owner);
-		}
-		rcu_read_unlock();
-
-		if (!ret || !same_owner)
-			break;
+		barrier();
 
 		/*
 		 * Use vcpu_is_preempted to detect lock holder preemption issue.
 		 */
-		if (need_resched() || vcpu_is_preempted(cpu)) {
+		if (!owner->on_cpu || need_resched() ||
+				vcpu_is_preempted(task_cpu(owner))) {
 			ret = false;
 			break;
 		}
@@ -588,6 +578,7 @@ bool mutex_spin_on_owner(struct mutex *lock, struct task_struct *owner,
 
 		cpu_relax();
 	}
+	rcu_read_unlock();
 
 	return ret;
 }
