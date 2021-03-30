@@ -76,9 +76,9 @@ struct task_struct init_task __aligned(L1_CACHE_BYTES) = {
 	.normal_prio	= DEFAULT_PRIO + MAX_PRIORITY_ADJ,
 #endif
 #ifdef CONFIG_SCHED_PDS
-	.prio		= MAX_USER_RT_PRIO,
+	.prio		= MAX_RT_PRIO,
 	.static_prio	= DEFAULT_PRIO,
-	.normal_prio	= MAX_USER_RT_PRIO,
+	.normal_prio	= MAX_RT_PRIO,
 #else
 	.prio		= MAX_PRIO - 20,
 	.static_prio	= MAX_PRIO - 20,
