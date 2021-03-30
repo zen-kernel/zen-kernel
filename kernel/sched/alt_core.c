@@ -4697,11 +4697,11 @@ recheck:
 
 	/*
 	 * Valid priorities for SCHED_FIFO and SCHED_RR are
-	 * 1..MAX_USER_RT_PRIO-1, valid priority for SCHED_NORMAL and
+	 * 1..MAX_RT_PRIO-1, valid priority for SCHED_NORMAL and
 	 * SCHED_BATCH and SCHED_IDLE is 0.
 	 */
 	if (attr->sched_priority < 0 ||
-	    (p->mm && attr->sched_priority > MAX_USER_RT_PRIO - 1) ||
+	    (p->mm && attr->sched_priority > MAX_RT_PRIO - 1) ||
 	    (!p->mm && attr->sched_priority > MAX_RT_PRIO - 1))
 		return -EINVAL;
 	if ((SCHED_RR == policy || SCHED_FIFO == policy) !=
@@ -5614,7 +5614,7 @@ SYSCALL_DEFINE1(sched_get_priority_max, int, policy)
 	switch (policy) {
 	case SCHED_FIFO:
 	case SCHED_RR:
-		ret = MAX_USER_RT_PRIO-1;
+		ret = MAX_RT_PRIO - 1;
 		break;
 	case SCHED_NORMAL:
 	case SCHED_BATCH:
