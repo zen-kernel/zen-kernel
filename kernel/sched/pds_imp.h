@@ -38,7 +38,7 @@ static inline int normal_prio(struct task_struct *p)
 	if (task_has_rt_policy(p))
 		return MAX_RT_PRIO - 1 - p->rt_priority;
 
-	return MAX_USER_RT_PRIO;
+	return MAX_RT_PRIO;
 }
 
 static inline int
@@ -76,7 +76,8 @@ static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 	p->time_slice = sched_timeslice_ns;
 
 	if (p->prio >= MAX_RT_PRIO)
-		p->deadline = rq->clock + user_prio2deadline[TASK_USER_PRIO(p)];
+		p->deadline = rq->clock +
+			user_prio2deadline[p->static_prio - MAX_RT_PRIO];
 	update_task_priodl(p);
 
 	if (SCHED_FIFO != p->policy && task_on_rq_queued(p))
@@ -237,7 +238,8 @@ static void sched_task_fork(struct task_struct *p, struct rq *rq)
 {
 	p->sl_level = pds_skiplist_random_level(p);
 	if (p->prio >= MAX_RT_PRIO)
-		p->deadline = rq->clock + user_prio2deadline[TASK_USER_PRIO(p)];
+		p->deadline = rq->clock +
+			user_prio2deadline[p->static_prio - MAX_RT_PRIO];
 	update_task_priodl(p);
 }
 
