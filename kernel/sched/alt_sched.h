@@ -206,7 +206,8 @@ struct rq {
 #ifdef CONFIG_SMP
 	call_single_data_t hrtick_csd;
 #endif
-	struct hrtimer hrtick_timer;
+	struct hrtimer		hrtick_timer;
+	ktime_t			hrtick_time;
 #endif
 
 #ifdef CONFIG_SCHEDSTATS
