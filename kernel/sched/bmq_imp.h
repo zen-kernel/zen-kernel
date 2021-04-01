@@ -170,8 +170,11 @@ static void sched_task_fork(struct task_struct *p, struct rq *rq)
  * @p: the task in question.
  *
  * Return: The priority value as seen by users in /proc.
- * RT tasks are offset by -100. Normal tasks are centered around 1, value goes
- * from 0(SCHED_ISO) up to 82 (nice +19 SCHED_IDLE).
+ *
+ * sched policy         return value   kernel prio    user prio/nice/boost
+ *
+ * normal, batch, idle     [0 ... 53]  [100 ... 139]          0/[-20 ... 19]/[-7 ... 7]
+ * fifo, rr             [-1 ... -100]     [99 ... 0]  [0 ... 99]
  */
 int task_prio(const struct task_struct *p)
 {
