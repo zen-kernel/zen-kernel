@@ -907,10 +907,11 @@ struct cpufreq_governor *cpufreq_default_governor(void)
 cpufreq_governor_init(schedutil_gov);
 
 #ifdef CONFIG_ENERGY_MODEL
-#ifndef CONFIG_SCHED_ALT
 static void rebuild_sd_workfn(struct work_struct *work)
 {
+#ifndef CONFIG_SCHED_ALT
 	rebuild_sched_domains_energy();
+#endif /* CONFIG_SCHED_ALT */
 }
 static DECLARE_WORK(rebuild_sd_work, rebuild_sd_workfn);
 
@@ -931,10 +932,4 @@ void sched_cpufreq_governor_change(struct cpufreq_policy *policy,
 	}
 
 }
-#else /* CONFIG_SCHED_ALT */
-void sched_cpufreq_governor_change(struct cpufreq_policy *policy,
-				  struct cpufreq_governor *old_gov)
-{
-}
-#endif
 #endif
