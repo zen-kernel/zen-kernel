@@ -1138,19 +1138,10 @@ void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 	__set_task_cpu(p, new_cpu);
 }
 
-static inline bool is_per_cpu_kthread(struct task_struct *p)
-{
-	return ((p->flags & PF_KTHREAD) && (1 == p->nr_cpus_allowed));
-}
-
 #define MDF_FORCE_ENABLED	0x80
 
 static void
 __do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask, u32 flags);
-
-static int __set_cpus_allowed_ptr(struct task_struct *p,
-				  const struct cpumask *new_mask,
-				  u32 flags);
 
 void migrate_disable(void)
 {
@@ -1753,7 +1744,7 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 		goto out;
 
 	if (p->migration_disabled) {
-		if (p->cpus_ptr != &p->cpus_mask)
+		if (likely(p->cpus_ptr != &p->cpus_mask))
 			__do_set_cpus_allowed(p, &p->cpus_mask, SCA_MIGRATE_ENABLE);
 		p->migration_disabled = 0;
 		p->migration_flags |= MDF_FORCE_ENABLED;
