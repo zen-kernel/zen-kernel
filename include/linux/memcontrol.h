@@ -230,6 +230,8 @@ struct obj_cgroup {
 	};
 };
 
+struct lru_gen_mm_list;
+
 /*
  * The memory controller data structure. The memory controller controls both
  * page cache and RSS per cgroup. We would eventually like to provide
@@ -347,6 +349,10 @@ struct mem_cgroup {
 
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 	struct deferred_split deferred_split_queue;
+#endif
+
+#ifdef CONFIG_LRU_GEN
+	struct lru_gen_mm_list *mm_list;
 #endif
 
 	struct mem_cgroup_per_node *nodeinfo[];
