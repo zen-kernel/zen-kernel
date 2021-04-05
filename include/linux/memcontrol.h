@@ -1347,10 +1347,13 @@ mem_cgroup_print_oom_meminfo(struct mem_cgroup *memcg)
 
 static inline void lock_page_memcg(struct page *page)
 {
+	/* to match page_memcg_rcu() */
+	rcu_read_lock();
 }
 
 static inline void unlock_page_memcg(struct page *page)
 {
+	rcu_read_unlock();
 }
 
 static inline void mem_cgroup_handle_over_high(void)

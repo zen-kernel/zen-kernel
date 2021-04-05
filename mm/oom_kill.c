@@ -507,8 +507,8 @@ bool process_shares_mm(struct task_struct *p, struct mm_struct *mm)
  * victim (if that is possible) to help the OOM killer to move on.
  */
 static struct task_struct *oom_reaper_th;
-static DECLARE_WAIT_QUEUE_HEAD(oom_reaper_wait);
-static struct task_struct *oom_reaper_list;
+DECLARE_WAIT_QUEUE_HEAD(oom_reaper_wait);
+struct task_struct *oom_reaper_list;
 static DEFINE_SPINLOCK(oom_reaper_lock);
 
 bool __oom_reap_task_mm(struct mm_struct *mm)
