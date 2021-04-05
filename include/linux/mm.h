@@ -1778,6 +1778,25 @@ void unmap_mapping_pages(struct address_space *mapping,
 		pgoff_t start, pgoff_t nr, bool even_cows);
 void unmap_mapping_range(struct address_space *mapping,
 		loff_t const holebegin, loff_t const holelen, int even_cows);
+
+static inline void task_enter_nonseq_fault(void)
+{
+	WARN_ON(current->in_nonseq_fault);
+
+	current->in_nonseq_fault = 1;
+}
+
+static inline void task_exit_nonseq_fault(void)
+{
+	WARN_ON(!current->in_nonseq_fault);
+
+	current->in_nonseq_fault = 0;
+}
+
+static inline bool task_in_nonseq_fault(void)
+{
+	return current->in_nonseq_fault;
+}
 #else
 static inline vm_fault_t handle_mm_fault(struct vm_area_struct *vma,
 					 unsigned long address, unsigned int flags,
@@ -1799,6 +1818,19 @@ static inline void unmap_mapping_pages(struct address_space *mapping,
 		pgoff_t start, pgoff_t nr, bool even_cows) { }
 static inline void unmap_mapping_range(struct address_space *mapping,
 		loff_t const holebegin, loff_t const holelen, int even_cows) { }
+
+static inline void task_enter_nonseq_fault(void)
+{
+}
+
+static inline void task_exit_nonseq_fault(void)
+{
+}
+
+static inline bool task_in_nonseq_fault(void)
+{
+	return false;
+}
 #endif
 
 static inline void unmap_shared_mapping_range(struct address_space *mapping,
