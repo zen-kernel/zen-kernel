@@ -1146,6 +1146,7 @@ __do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask, u32
 void migrate_disable(void)
 {
 	struct task_struct *p = current;
+	int cpu;
 
 	if (p->migration_disabled) {
 		p->migration_disabled++;
@@ -1153,16 +1154,18 @@ void migrate_disable(void)
 	}
 
 	preempt_disable();
-	this_rq()->nr_pinned++;
-	p->migration_disabled = 1;
-	p->migration_flags &= ~MDF_FORCE_ENABLED;
+	cpu = smp_processor_id();
+	if (cpumask_test_cpu(cpu, &p->cpus_mask)) {
+		cpu_rq(cpu)->nr_pinned++;
+		p->migration_disabled = 1;
+		p->migration_flags &= ~MDF_FORCE_ENABLED;
 
-	/*
-	 * Violates locking rules! see comment in __do_set_cpus_allowed().
-	 */
-	if (p->cpus_ptr == &p->cpus_mask)
-		__do_set_cpus_allowed(p, cpumask_of(smp_processor_id()), SCA_MIGRATE_DISABLE);
-
+		/*
+		 * Violates locking rules! see comment in __do_set_cpus_allowed().
+		 */
+		if (p->cpus_ptr == &p->cpus_mask)
+			__do_set_cpus_allowed(p, cpumask_of(cpu), SCA_MIGRATE_DISABLE);
+	}
 	preempt_enable();
 }
 EXPORT_SYMBOL_GPL(migrate_disable);
