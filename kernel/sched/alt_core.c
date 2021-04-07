@@ -1097,8 +1097,6 @@ static inline bool is_migration_disabled(struct task_struct *p)
 }
 
 #define SCA_CHECK		0x01
-#define SCA_MIGRATE_DISABLE	0x02
-#define SCA_MIGRATE_ENABLE	0x04
 
 #ifdef CONFIG_SMP
 
@@ -1141,7 +1139,23 @@ void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 #define MDF_FORCE_ENABLED	0x80
 
 static void
-__do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask, u32 flags);
+__do_set_cpus_ptr(struct task_struct *p, const struct cpumask *new_mask)
+{
+	/*
+	 * This here violates the locking rules for affinity, since we're only
+	 * supposed to change these variables while holding both rq->lock and
+	 * p->pi_lock.
+	 *
+	 * HOWEVER, it magically works, because ttwu() is the only code that
+	 * accesses these variables under p->pi_lock and only does so after
+	 * smp_cond_load_acquire(&p->on_cpu, !VAL), and we're in __schedule()
+	 * before finish_task().
+	 *
+	 * XXX do further audits, this smells like something putrid.
+	 */
+	SCHED_WARN_ON(!p->on_cpu);
+	p->cpus_ptr = new_mask;
+}
 
 void migrate_disable(void)
 {
@@ -1161,10 +1175,10 @@ void migrate_disable(void)
 		p->migration_flags &= ~MDF_FORCE_ENABLED;
 
 		/*
-		 * Violates locking rules! see comment in __do_set_cpus_allowed().
+		 * Violates locking rules! see comment in __do_set_cpus_ptr().
 		 */
 		if (p->cpus_ptr == &p->cpus_mask)
-			__do_set_cpus_allowed(p, cpumask_of(cpu), SCA_MIGRATE_DISABLE);
+			__do_set_cpus_ptr(p, cpumask_of(cpu));
 	}
 	preempt_enable();
 }
@@ -1192,7 +1206,7 @@ void migrate_enable(void)
 	 */
 	WARN_ON_ONCE(!cpumask_test_cpu(smp_processor_id(), &p->cpus_mask));
 	if (p->cpus_ptr != &p->cpus_mask)
-		__do_set_cpus_allowed(p, &p->cpus_mask, SCA_MIGRATE_ENABLE);
+		__do_set_cpus_ptr(p, &p->cpus_mask);
 	/*
 	 * Mustn't clear migration_disabled() until cpus_ptr points back at the
 	 * regular cpus_mask, otherwise things that race (eg.
@@ -1345,43 +1359,22 @@ static int migration_cpu_stop(void *data)
 }
 
 static inline void
-set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_mask, u32 flags)
+set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_mask)
 {
-	if (flags & (SCA_MIGRATE_ENABLE | SCA_MIGRATE_DISABLE)) {
-		p->cpus_ptr = new_mask;
-		return;
-	}
-
 	cpumask_copy(&p->cpus_mask, new_mask);
 	p->nr_cpus_allowed = cpumask_weight(new_mask);
 }
 
 static void
-__do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask, u32 flags)
+__do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask)
 {
-	/*
-	 * This here violates the locking rules for affinity, since we're only
-	 * supposed to change these variables while holding both rq->lock and
-	 * p->pi_lock.
-	 *
-	 * HOWEVER, it magically works, because ttwu() is the only code that
-	 * accesses these variables under p->pi_lock and only does so after
-	 * smp_cond_load_acquire(&p->on_cpu, !VAL), and we're in __schedule()
-	 * before finish_task().
-	 *
-	 * XXX do further audits, this smells like something putrid.
-	 */
-	if (flags & (SCA_MIGRATE_DISABLE | SCA_MIGRATE_ENABLE))
-		SCHED_WARN_ON(!p->on_cpu);
-	else
-		lockdep_assert_held(&p->pi_lock);
-
-	set_cpus_allowed_common(p, new_mask, flags);
+	lockdep_assert_held(&p->pi_lock);
+	set_cpus_allowed_common(p, new_mask);
 }
 
 void do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask)
 {
-	__do_set_cpus_allowed(p, new_mask, 0);
+	__do_set_cpus_allowed(p, new_mask);
 }
 
 #endif
@@ -1740,7 +1733,7 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 		goto out;
 	}
 
-	__do_set_cpus_allowed(p, new_mask, flags);
+	__do_set_cpus_allowed(p, new_mask);
 
 	/* Can the task run on the task's current CPU? If so, we're done */
 	if (cpumask_test_cpu(task_cpu(p), new_mask))
@@ -1748,7 +1741,7 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 
 	if (p->migration_disabled) {
 		if (likely(p->cpus_ptr != &p->cpus_mask))
-			__do_set_cpus_allowed(p, &p->cpus_mask, SCA_MIGRATE_ENABLE);
+			__do_set_cpus_ptr(p, &p->cpus_mask);
 		p->migration_disabled = 0;
 		p->migration_flags |= MDF_FORCE_ENABLED;
 		/* When p is migrate_disabled, rq->lock should be held */
@@ -6076,7 +6069,7 @@ void init_idle(struct task_struct *idle, int cpu)
 	 *
 	 * And since this is boot we can forgo the serialisation.
 	 */
-	set_cpus_allowed_common(idle, cpumask_of(cpu), 0);
+	set_cpus_allowed_common(idle, cpumask_of(cpu));
 #endif
 
 	/* Silence PROVE_RCU */
