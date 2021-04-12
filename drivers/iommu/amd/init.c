@@ -2998,9 +2998,6 @@ int __init amd_iommu_prepare(void)
 {
 	int ret;
 
-	if (amd_iommu_disabled)
-		return -ENODEV;
-
 	amd_iommu_irq_remap = true;
 
 	ret = iommu_go_to_state(IOMMU_ACPI_FINISHED);
