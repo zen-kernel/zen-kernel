@@ -1619,7 +1619,7 @@ static inline int select_task_rq(struct task_struct *p, struct rq *rq)
 {
 	cpumask_t chk_mask, tmp;
 
-	if (unlikely(!cpumask_and(&chk_mask, p->cpus_ptr, cpu_online_mask)))
+	if (unlikely(!cpumask_and(&chk_mask, p->cpus_ptr, cpu_active_mask)))
 		return select_fallback_rq(task_cpu(p), p);
 
 	if (
@@ -3418,6 +3418,10 @@ static inline void sg_balance_check(struct rq *rq)
 
 	/* exit when no sg in idle */
 	if (cpumask_empty(&sched_sg_idle_mask))
+		return;
+
+	/* exit when cpu is offline */
+	if (unlikely(!rq->online))
 		return;
 
 	cpu = cpu_of(rq);
