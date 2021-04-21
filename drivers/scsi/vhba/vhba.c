@@ -1,7 +1,7 @@
 /*
  * vhba.c
  *
- * Copyright (C) 2007-2012 Chia-I Wu <b90201047 AT ntu DOT edu DOT tw>
+ * Copyright (C) 2007-2012 Chia-I Wu <olvaffe AT gmail DOT com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,6 +17,8 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
+
+#define pr_fmt(fmt) "vhba: " fmt
 
 #include <linux/version.h>
 
@@ -42,6 +44,7 @@
 #include <scsi/scsi_host.h>
 #include <scsi/scsi_cmnd.h>
 #include <scsi/scsi_device.h>
+#include <scsi/scsi_tcq.h>
 
 
 MODULE_AUTHOR("Chia-I Wu");
@@ -49,29 +52,26 @@ MODULE_VERSION(VHBA_VERSION);
 MODULE_DESCRIPTION("Virtual SCSI HBA");
 MODULE_LICENSE("GPL");
 
-#ifdef DEBUG
-#define DPRINTK(fmt, args...) printk(KERN_DEBUG "%s: " fmt, __FUNCTION__, ## args)
-#else
-#define DPRINTK(fmt, args...)
-#endif
 
-/* scmd_dbg was introduced in 3.15 */
-#ifndef scmd_dbg
-#define scmd_dbg(scmd, fmt, a...)       \
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 15, 0)
+#define sdev_dbg(sdev, fmt, a...) \
+    dev_dbg(&(sdev)->sdev_gendev, fmt, ##a)
+#define scmd_dbg(scmd, fmt, a...) \
     dev_dbg(&(scmd)->device->sdev_gendev, fmt, ##a)
 #endif
 
 #define VHBA_MAX_SECTORS_PER_IO 256
 #define VHBA_MAX_BUS 16
-#define VHBA_MAX_ID 16 /* Usually 8 or 16 */
+#define VHBA_MAX_ID 16
 #define VHBA_MAX_DEVICES (VHBA_MAX_BUS * (VHBA_MAX_ID-1))
-#define VHBA_CAN_QUEUE 32
-#define VHBA_INVALID_BUS -1
-#define VHBA_INVALID_ID -1
 #define VHBA_KBUF_SIZE PAGE_SIZE
 
 #define DATA_TO_DEVICE(dir) ((dir) == DMA_TO_DEVICE || (dir) == DMA_BIDIRECTIONAL)
 #define DATA_FROM_DEVICE(dir) ((dir) == DMA_FROM_DEVICE || (dir) == DMA_BIDIRECTIONAL)
+
+
+static int vhba_can_queue = 32;
+module_param_named(can_queue, vhba_can_queue, int, 0);
 
 
 enum vhba_req_state {
@@ -84,15 +84,15 @@ enum vhba_req_state {
 
 struct vhba_command {
     struct scsi_cmnd *cmd;
-    unsigned long serial_number;
+    /* metatags are per-host. not to be confused with
+       queue tags that are usually per-lun */
+    unsigned long metatag;
     int status;
     struct list_head entry;
 };
 
 struct vhba_device {
-    int bus; /* aka. channel */
-    int id;
-    int num;
+    unsigned int num;
     spinlock_t cmd_lock;
     struct list_head cmd_list;
     wait_queue_head_t cmd_wq;
@@ -100,15 +100,13 @@ struct vhba_device {
 
     unsigned char *kbuf;
     size_t kbuf_size;
-
-    unsigned long cmd_count;
 };
 
 struct vhba_host {
     struct Scsi_Host *shost;
     spinlock_t cmd_lock;
     int cmd_next;
-    struct vhba_command commands[VHBA_CAN_QUEUE];
+    struct vhba_command *commands;
     spinlock_t dev_lock;
     struct vhba_device *devices[VHBA_MAX_DEVICES];
     int num_devices;
@@ -120,7 +118,7 @@ struct vhba_host {
 #define MAX_COMMAND_SIZE 16
 
 struct vhba_request {
-    __u32 tag;
+    __u32 metatag;
     __u32 lun;
     __u8 cdb[MAX_COMMAND_SIZE];
     __u8 cdb_len;
@@ -128,17 +126,34 @@ struct vhba_request {
 };
 
 struct vhba_response {
-    __u32 tag;
+    __u32 metatag;
     __u32 status;
     __u32 data_len;
 };
 
-static struct vhba_command *vhba_alloc_command (void);
-static void vhba_free_command (struct vhba_command *vcmd);
+
+
+struct vhba_command *vhba_alloc_command (void);
+void vhba_free_command (struct vhba_command *vcmd);
 
 static struct platform_device vhba_platform_device;
 
-static struct vhba_device *vhba_device_alloc (void)
+
+
+/* These functions define a symmetric 1:1 mapping between device numbers and
+   the bus and id. We have reserved the last id per bus for the host itself. */
+void devnum_to_bus_and_id(unsigned int devnum, unsigned int *bus, unsigned int *id)
+{
+    *bus = devnum / (VHBA_MAX_ID-1);
+    *id  = devnum % (VHBA_MAX_ID-1);
+}
+
+unsigned int bus_and_id_to_devnum(unsigned int bus, unsigned int id)
+{
+    return (bus * (VHBA_MAX_ID-1)) + id;
+}
+
+struct vhba_device *vhba_device_alloc (void)
 {
     struct vhba_device *vdev;
 
@@ -147,8 +162,6 @@ static struct vhba_device *vhba_device_alloc (void)
         return NULL;
     }
 
-    vdev->bus = VHBA_INVALID_BUS;
-    vdev->id = VHBA_INVALID_ID;
     spin_lock_init(&vdev->cmd_lock);
     INIT_LIST_HEAD(&vdev->cmd_list);
     init_waitqueue_head(&vdev->cmd_wq);
@@ -157,43 +170,30 @@ static struct vhba_device *vhba_device_alloc (void)
     vdev->kbuf = NULL;
     vdev->kbuf_size = 0;
 
-    vdev->cmd_count = 0;
-
     return vdev;
 }
 
-static void devnum_to_bus_and_id(int devnum, int *bus, int *id)
-{
-    int a = devnum / (VHBA_MAX_ID-1);
-    int b = devnum % (VHBA_MAX_ID-1);
-
-    *bus = a;
-    *id  = b + 1;
-}
-
-static int bus_and_id_to_devnum(int bus, int id)
-{
-    return (bus * (VHBA_MAX_ID-1)) + id - 1;
-}
-
-static void vhba_device_put (struct vhba_device *vdev)
+void vhba_device_put (struct vhba_device *vdev)
 {
     if (atomic_dec_and_test(&vdev->refcnt)) {
         kfree(vdev);
     }
 }
 
-static struct vhba_device *vhba_device_get (struct vhba_device *vdev)
+struct vhba_device *vhba_device_get (struct vhba_device *vdev)
 {
     atomic_inc(&vdev->refcnt);
 
     return vdev;
 }
 
-static int vhba_device_queue (struct vhba_device *vdev, struct scsi_cmnd *cmd)
+int vhba_device_queue (struct vhba_device *vdev, struct scsi_cmnd *cmd)
 {
+    struct vhba_host *vhost;
     struct vhba_command *vcmd;
     unsigned long flags;
+
+    vhost = platform_get_drvdata(&vhba_platform_device);
 
     vcmd = vhba_alloc_command();
     if (!vcmd) {
@@ -203,7 +203,7 @@ static int vhba_device_queue (struct vhba_device *vdev, struct scsi_cmnd *cmd)
     vcmd->cmd = cmd;
 
     spin_lock_irqsave(&vdev->cmd_lock, flags);
-    vcmd->serial_number = vdev->cmd_count++;
+    vcmd->metatag = vcmd->cmd->request->tag;
     list_add_tail(&vcmd->entry, &vdev->cmd_list);
     spin_unlock_irqrestore(&vdev->cmd_lock, flags);
 
@@ -212,7 +212,7 @@ static int vhba_device_queue (struct vhba_device *vdev, struct scsi_cmnd *cmd)
     return 0;
 }
 
-static int vhba_device_dequeue (struct vhba_device *vdev, struct scsi_cmnd *cmd)
+int vhba_device_dequeue (struct vhba_device *vdev, struct scsi_cmnd *cmd)
 {
     struct vhba_command *vcmd;
     int retval;
@@ -248,7 +248,26 @@ static int vhba_device_dequeue (struct vhba_device *vdev, struct scsi_cmnd *cmd)
     return retval;
 }
 
-static inline void vhba_scan_devices_add (struct vhba_host *vhost, int bus, int id)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 19, 0)
+int vhba_slave_alloc(struct scsi_device *sdev)
+{
+    struct Scsi_Host *shost = sdev->host;
+
+    sdev_dbg(sdev, "enabling tagging (queue depth: %i).\n", sdev->queue_depth);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 17, 0)
+    if (!shost_use_blk_mq(shost) && shost->bqt) {
+#else
+    if (shost->bqt) {
+#endif
+        blk_queue_init_tags(sdev->request_queue, sdev->queue_depth, shost->bqt);
+    }
+    scsi_adjust_queue_depth(sdev, 0, sdev->queue_depth);
+
+    return 0;
+}
+#endif
+
+void vhba_scan_devices_add (struct vhba_host *vhost, int bus, int id)
 {
     struct scsi_device *sdev;
 
@@ -261,7 +280,7 @@ static inline void vhba_scan_devices_add (struct vhba_host *vhost, int bus, int 
     }
 }
 
-static inline void vhba_scan_devices_remove (struct vhba_host *vhost, int bus, int id)
+void vhba_scan_devices_remove (struct vhba_host *vhost, int bus, int id)
 {
     struct scsi_device *sdev;
 
@@ -274,14 +293,15 @@ static inline void vhba_scan_devices_remove (struct vhba_host *vhost, int bus, i
     }
 }
 
-static void vhba_scan_devices (struct work_struct *work)
+void vhba_scan_devices (struct work_struct *work)
 {
     struct vhba_host *vhost = container_of(work, struct vhba_host, scan_devices);
     unsigned long flags;
-    int devnum, change, exists;
-    int bus, id;
+    int change, exists;
+    unsigned int devnum;
+    unsigned int bus, id;
 
-    while (1) {
+    for (;;) {
         spin_lock_irqsave(&vhost->dev_lock, flags);
 
         devnum = find_first_bit(vhost->chgmap, VHBA_MAX_DEVICES);
@@ -321,12 +341,11 @@ static void vhba_scan_devices (struct work_struct *work)
     }
 }
 
-static int vhba_add_device (struct vhba_device *vdev)
+int vhba_add_device (struct vhba_device *vdev)
 {
     struct vhba_host *vhost;
-    int i;
+    unsigned int devnum;
     unsigned long flags;
-    int bus, id;
 
     vhost = platform_get_drvdata(&vhba_platform_device);
 
@@ -339,17 +358,13 @@ static int vhba_add_device (struct vhba_device *vdev)
         return -EBUSY;
     }
 
-    for (i = 0; i < VHBA_MAX_DEVICES; i++) {
-        devnum_to_bus_and_id(i, &bus, &id);
-
-        if (vhost->devices[i] == NULL) {
-            vdev->bus = bus;
-            vdev->id  = id;
-            vdev->num = i;
-            vhost->devices[i] = vdev;
+    for (devnum = 0; devnum < VHBA_MAX_DEVICES; devnum++) {
+        if (vhost->devices[devnum] == NULL) {
+            vdev->num = devnum;
+            vhost->devices[devnum] = vdev;
             vhost->num_devices++;
-            set_bit(i, vhost->chgmap);
-            vhost->chgtype[i]++;
+            set_bit(devnum, vhost->chgmap);
+            vhost->chgtype[devnum]++;
             break;
         }
     }
@@ -360,7 +375,7 @@ static int vhba_add_device (struct vhba_device *vdev)
     return 0;
 }
 
-static int vhba_remove_device (struct vhba_device *vdev)
+int vhba_remove_device (struct vhba_device *vdev)
 {
     struct vhba_host *vhost;
     unsigned long flags;
@@ -372,8 +387,6 @@ static int vhba_remove_device (struct vhba_device *vdev)
     vhost->chgtype[vdev->num]--;
     vhost->devices[vdev->num] = NULL;
     vhost->num_devices--;
-    vdev->bus = VHBA_INVALID_BUS;
-    vdev->id = VHBA_INVALID_ID;
     spin_unlock_irqrestore(&vhost->dev_lock, flags);
 
     vhba_device_put(vdev);
@@ -383,7 +396,7 @@ static int vhba_remove_device (struct vhba_device *vdev)
     return 0;
 }
 
-static struct vhba_device *vhba_lookup_device (int devnum)
+struct vhba_device *vhba_lookup_device (int devnum)
 {
     struct vhba_host *vhost;
     struct vhba_device *vdev = NULL;
@@ -404,7 +417,7 @@ static struct vhba_device *vhba_lookup_device (int devnum)
     return vdev;
 }
 
-static struct vhba_command *vhba_alloc_command (void)
+struct vhba_command *vhba_alloc_command (void)
 {
     struct vhba_host *vhost;
     struct vhba_command *vcmd;
@@ -417,7 +430,7 @@ static struct vhba_command *vhba_alloc_command (void)
 
     vcmd = vhost->commands + vhost->cmd_next++;
     if (vcmd->status != VHBA_REQ_FREE) {
-        for (i = 0; i < vhost->shost->can_queue; i++) {
+        for (i = 0; i < vhba_can_queue; i++) {
             vcmd = vhost->commands + i;
 
             if (vcmd->status == VHBA_REQ_FREE) {
@@ -426,7 +439,7 @@ static struct vhba_command *vhba_alloc_command (void)
             }
         }
 
-        if (i == vhost->shost->can_queue) {
+        if (i == vhba_can_queue) {
             vcmd = NULL;
         }
     }
@@ -435,14 +448,14 @@ static struct vhba_command *vhba_alloc_command (void)
         vcmd->status = VHBA_REQ_PENDING;
     }
 
-    vhost->cmd_next %= vhost->shost->can_queue;
+    vhost->cmd_next %= vhba_can_queue;
 
     spin_unlock_irqrestore(&vhost->cmd_lock, flags);
 
     return vcmd;
 }
 
-static void vhba_free_command (struct vhba_command *vcmd)
+void vhba_free_command (struct vhba_command *vcmd)
 {
     struct vhba_host *vhost;
     unsigned long flags;
@@ -454,24 +467,25 @@ static void vhba_free_command (struct vhba_command *vcmd)
     spin_unlock_irqrestore(&vhost->cmd_lock, flags);
 }
 
-static int vhba_queuecommand_lck (struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
+int vhba_queuecommand (struct Scsi_Host *shost, struct scsi_cmnd *cmd)
 {
     struct vhba_device *vdev;
     int retval;
+    unsigned int devnum;
 
-    scmd_dbg(cmd, "queue %p\n", cmd);
+    scmd_dbg(cmd, "queue %p tag %i\n", cmd, cmd->request->tag);
 
-    vdev = vhba_lookup_device(bus_and_id_to_devnum(cmd->device->channel, cmd->device->id));
+    devnum = bus_and_id_to_devnum(cmd->device->channel, cmd->device->id);
+    vdev = vhba_lookup_device(devnum);
     if (!vdev) {
         scmd_dbg(cmd, "no such device\n");
 
         cmd->result = DID_NO_CONNECT << 16;
-        done(cmd);
+        cmd->scsi_done(cmd);
 
         return 0;
     }
 
-    cmd->scsi_done = done;
     retval = vhba_device_queue(vdev, cmd);
 
     vhba_device_put(vdev);
@@ -479,20 +493,16 @@ static int vhba_queuecommand_lck (struct scsi_cmnd *cmd, void (*done)(struct scs
     return retval;
 }
 
-#ifdef DEF_SCSI_QCMD
-DEF_SCSI_QCMD(vhba_queuecommand)
-#else
-#define vhba_queuecommand vhba_queuecommand_lck
-#endif
-
-static int vhba_abort (struct scsi_cmnd *cmd)
+int vhba_abort (struct scsi_cmnd *cmd)
 {
     struct vhba_device *vdev;
     int retval = SUCCESS;
+    unsigned int devnum;
 
     scmd_dbg(cmd, "abort %p\n", cmd);
 
-    vdev = vhba_lookup_device(bus_and_id_to_devnum(cmd->device->channel, cmd->device->id));
+    devnum = bus_and_id_to_devnum(cmd->device->channel, cmd->device->id);
+    vdev = vhba_lookup_device(devnum);
     if (vdev) {
         retval = vhba_device_dequeue(vdev, cmd);
         vhba_device_put(vdev);
@@ -509,23 +519,30 @@ static struct scsi_host_template vhba_template = {
     .proc_name = "vhba",
     .queuecommand = vhba_queuecommand,
     .eh_abort_handler = vhba_abort,
-    .can_queue = VHBA_CAN_QUEUE,
     .this_id = -1,
-    .cmd_per_lun = 1,
     .max_sectors = VHBA_MAX_SECTORS_PER_IO,
     .sg_tablesize = 256,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 19, 0)
+    .slave_alloc = vhba_slave_alloc,
+#endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 0, 0)
+    .tag_alloc_policy = BLK_TAG_ALLOC_RR,
+#endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0) && LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+    .use_blk_tags = 1,
+#endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
     .max_segment_size = VHBA_KBUF_SIZE,
 #endif
 };
 
-static ssize_t do_request (struct vhba_device *vdev, unsigned long cmd_serial_number, struct scsi_cmnd *cmd, char __user *buf, size_t buf_len)
+ssize_t do_request (struct vhba_device *vdev, unsigned long metatag, struct scsi_cmnd *cmd, char __user *buf, size_t buf_len)
 {
     struct vhba_request vreq;
     ssize_t ret;
 
     scmd_dbg(cmd, "request %lu (%p), cdb 0x%x, bufflen %d, sg count %d\n",
-        cmd_serial_number, cmd, cmd->cmnd[0], scsi_bufflen(cmd), scsi_sg_count(cmd));
+        metatag, cmd, cmd->cmnd[0], scsi_bufflen(cmd), scsi_sg_count(cmd));
 
     ret = sizeof(vreq);
     if (DATA_TO_DEVICE(cmd->sc_data_direction)) {
@@ -537,7 +554,7 @@ static ssize_t do_request (struct vhba_device *vdev, unsigned long cmd_serial_nu
         return -EIO;
     }
 
-    vreq.tag = cmd_serial_number;
+    vreq.metatag = metatag;
     vreq.lun = cmd->device->lun;
     memcpy(vreq.cdb, cmd->cmnd, MAX_COMMAND_SIZE);
     vreq.cdb_len = cmd->cmd_len;
@@ -585,27 +602,22 @@ static ssize_t do_request (struct vhba_device *vdev, unsigned long cmd_serial_nu
     return ret;
 }
 
-static ssize_t do_response (struct vhba_device *vdev, unsigned long cmd_serial_number, struct scsi_cmnd *cmd, const char __user *buf, size_t buf_len, struct vhba_response *res)
+ssize_t do_response (struct vhba_device *vdev, unsigned long metatag, struct scsi_cmnd *cmd, const char __user *buf, size_t buf_len, struct vhba_response *res)
 {
     ssize_t ret = 0;
 
     scmd_dbg(cmd, "response %lu (%p), status %x, data len %d, sg count %d\n",
-         cmd_serial_number, cmd, res->status, res->data_len, scsi_sg_count(cmd));
+         metatag, cmd, res->status, res->data_len, scsi_sg_count(cmd));
 
     if (res->status) {
-        unsigned char sense_stack[SCSI_SENSE_BUFFERSIZE];
-
         if (res->data_len > SCSI_SENSE_BUFFERSIZE) {
             scmd_dbg(cmd, "truncate sense (%d < %d)", SCSI_SENSE_BUFFERSIZE, res->data_len);
             res->data_len = SCSI_SENSE_BUFFERSIZE;
         }
 
-        /* Copy via temporary buffer on stack in order to avoid problems
-           with PAX on grsecurity-enabled kernels */
-        if (copy_from_user(sense_stack, buf, res->data_len)) {
+        if (copy_from_user(cmd->sense_buffer, buf, res->data_len)) {
             return -EFAULT;
         }
-        memcpy(cmd->sense_buffer, sense_stack, res->data_len);
 
         cmd->result = res->status;
 
@@ -666,7 +678,7 @@ static ssize_t do_response (struct vhba_device *vdev, unsigned long cmd_serial_n
     return ret;
 }
 
-static inline struct vhba_command *next_command (struct vhba_device *vdev)
+struct vhba_command *next_command (struct vhba_device *vdev)
 {
     struct vhba_command *vcmd;
 
@@ -683,12 +695,12 @@ static inline struct vhba_command *next_command (struct vhba_device *vdev)
     return vcmd;
 }
 
-static inline struct vhba_command *match_command (struct vhba_device *vdev, u32 tag)
+struct vhba_command *match_command (struct vhba_device *vdev, __u32 metatag)
 {
     struct vhba_command *vcmd;
 
     list_for_each_entry(vcmd, &vdev->cmd_list, entry) {
-        if (vcmd->serial_number == tag) {
+        if (vcmd->metatag == metatag) {
             break;
         }
     }
@@ -700,7 +712,7 @@ static inline struct vhba_command *match_command (struct vhba_device *vdev, u32 
     return vcmd;
 }
 
-static struct vhba_command *wait_command (struct vhba_device *vdev, unsigned long flags)
+struct vhba_command *wait_command (struct vhba_device *vdev, unsigned long flags)
 {
     struct vhba_command *vcmd;
     DEFINE_WAIT(wait);
@@ -727,7 +739,7 @@ static struct vhba_command *wait_command (struct vhba_device *vdev, unsigned lon
     return vcmd;
 }
 
-static ssize_t vhba_ctl_read (struct file *file, char __user *buf, size_t buf_len, loff_t *offset)
+ssize_t vhba_ctl_read (struct file *file, char __user *buf, size_t buf_len, loff_t *offset)
 {
     struct vhba_device *vdev;
     struct vhba_command *vcmd;
@@ -757,7 +769,7 @@ static ssize_t vhba_ctl_read (struct file *file, char __user *buf, size_t buf_le
         }
     }
 
-    ret = do_request(vdev, vcmd->serial_number, vcmd->cmd, buf, buf_len);
+    ret = do_request(vdev, vcmd->metatag, vcmd->cmd, buf, buf_len);
 
     spin_lock_irqsave(&vdev->cmd_lock, flags);
     if (ret >= 0) {
@@ -772,7 +784,7 @@ static ssize_t vhba_ctl_read (struct file *file, char __user *buf, size_t buf_le
     return ret;
 }
 
-static ssize_t vhba_ctl_write (struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
+ssize_t vhba_ctl_write (struct file *file, const char __user *buf, size_t buf_len, loff_t *offset)
 {
     struct vhba_device *vdev;
     struct vhba_command *vcmd;
@@ -791,16 +803,16 @@ static ssize_t vhba_ctl_write (struct file *file, const char __user *buf, size_t
     vdev = file->private_data;
 
     spin_lock_irqsave(&vdev->cmd_lock, flags);
-    vcmd = match_command(vdev, res.tag);
+    vcmd = match_command(vdev, res.metatag);
     if (!vcmd || vcmd->status != VHBA_REQ_SENT) {
         spin_unlock_irqrestore(&vdev->cmd_lock, flags);
-        DPRINTK("not expecting response\n");
+        pr_debug("ctl dev #%u not expecting response\n", vdev->num);
         return -EIO;
     }
     vcmd->status = VHBA_REQ_WRITING;
     spin_unlock_irqrestore(&vdev->cmd_lock, flags);
 
-    ret = do_response(vdev, vcmd->serial_number, vcmd->cmd, buf + sizeof(res), buf_len - sizeof(res), &res);
+    ret = do_response(vdev, vcmd->metatag, vcmd->cmd, buf + sizeof(res), buf_len - sizeof(res), &res);
 
     spin_lock_irqsave(&vdev->cmd_lock, flags);
     if (ret >= 0) {
@@ -821,41 +833,32 @@ static ssize_t vhba_ctl_write (struct file *file, const char __user *buf, size_t
     return ret;
 }
 
-static long vhba_ctl_ioctl (struct file *file, unsigned int cmd, unsigned long arg)
+long vhba_ctl_ioctl (struct file *file, unsigned int cmd, unsigned long arg)
 {
     struct vhba_device *vdev = file->private_data;
-    struct vhba_host *vhost;
-    struct scsi_device *sdev;
+    struct vhba_host *vhost = platform_get_drvdata(&vhba_platform_device);
 
     switch (cmd) {
         case 0xBEEF001: {
-            vhost = platform_get_drvdata(&vhba_platform_device);
-            sdev = scsi_device_lookup(vhost->shost, vdev->bus, vdev->id, 0);
+            unsigned int ident[4]; /* host, channel, id, lun */
 
-            if (sdev) {
-                int id[4] = {
-                    sdev->host->host_no,
-                    sdev->channel,
-                    sdev->id,
-                    sdev->lun
-                };
+            ident[0] = vhost->shost->host_no;
+            devnum_to_bus_and_id(vdev->num, &ident[1], &ident[2]);
+            ident[3] = 0; /* lun */
 
-                scsi_device_put(sdev);
-
-                if (copy_to_user((void *)arg, id, sizeof(id))) {
-                    return -EFAULT;
-                }
-
-                return 0;
-            } else {
-                return -ENODEV;
-            }
-        }
-        case 0xBEEF002: {
-            int device_number = vdev->num;
-            if (copy_to_user((void *)arg, &device_number, sizeof(device_number))) {
+            if (copy_to_user((void *) arg, ident, sizeof(ident))) {
                 return -EFAULT;
             }
+
+            return 0;
+        }
+        case 0xBEEF002: {
+            unsigned int devnum = vdev->num;
+
+            if (copy_to_user((void *) arg, &devnum, sizeof(devnum))) {
+                return -EFAULT;
+            }
+
             return 0;
         }
     }
@@ -864,14 +867,14 @@ static long vhba_ctl_ioctl (struct file *file, unsigned int cmd, unsigned long a
 }
 
 #ifdef CONFIG_COMPAT
-static long vhba_ctl_compat_ioctl (struct file *file, unsigned int cmd, unsigned long arg)
+long vhba_ctl_compat_ioctl (struct file *file, unsigned int cmd, unsigned long arg)
 {
     unsigned long compat_arg = (unsigned long)compat_ptr(arg);
     return vhba_ctl_ioctl(file, cmd, compat_arg);
 }
 #endif
 
-static unsigned int vhba_ctl_poll (struct file *file, poll_table *wait)
+unsigned int vhba_ctl_poll (struct file *file, poll_table *wait)
 {
     struct vhba_device *vdev = file->private_data;
     unsigned int mask = 0;
@@ -888,12 +891,12 @@ static unsigned int vhba_ctl_poll (struct file *file, poll_table *wait)
     return mask;
 }
 
-static int vhba_ctl_open (struct inode *inode, struct file *file)
+int vhba_ctl_open (struct inode *inode, struct file *file)
 {
     struct vhba_device *vdev;
     int retval;
 
-    DPRINTK("open\n");
+    pr_debug("ctl dev open\n");
 
     /* check if vhba is probed */
     if (!platform_get_drvdata(&vhba_platform_device)) {
@@ -906,7 +909,7 @@ static int vhba_ctl_open (struct inode *inode, struct file *file)
     }
 
     vdev->kbuf_size = VHBA_KBUF_SIZE;
-    vdev->kbuf = kmalloc(vdev->kbuf_size, GFP_KERNEL);
+    vdev->kbuf = kzalloc(vdev->kbuf_size, GFP_KERNEL);
     if (!vdev->kbuf) {
         return -ENOMEM;
     }
@@ -920,15 +923,15 @@ static int vhba_ctl_open (struct inode *inode, struct file *file)
     return retval;
 }
 
-static int vhba_ctl_release (struct inode *inode, struct file *file)
+int vhba_ctl_release (struct inode *inode, struct file *file)
 {
     struct vhba_device *vdev;
     struct vhba_command *vcmd;
     unsigned long flags;
 
-    DPRINTK("release\n");
-
     vdev = file->private_data;
+
+    pr_debug("ctl dev release\n");
 
     vhba_device_get(vdev);
     vhba_remove_device(vdev);
@@ -937,7 +940,7 @@ static int vhba_ctl_release (struct inode *inode, struct file *file)
     list_for_each_entry(vcmd, &vdev->cmd_list, entry) {
         WARN_ON(vcmd->status == VHBA_REQ_READING || vcmd->status == VHBA_REQ_WRITING);
 
-        scmd_dbg(vcmd->cmd, "device released with command %lu (%p)\n", vcmd->serial_number, vcmd->cmd);
+        scmd_dbg(vcmd->cmd, "device released with command %lu (%p)\n", vcmd->metatag, vcmd->cmd);
         vcmd->cmd->result = DID_NO_CONNECT << 16;
         vcmd->cmd->scsi_done(vcmd->cmd);
 
@@ -973,11 +976,13 @@ static struct miscdevice vhba_miscdev = {
     .fops = &vhba_ctl_fops,
 };
 
-static int vhba_probe (struct platform_device *pdev)
+int vhba_probe (struct platform_device *pdev)
 {
     struct Scsi_Host *shost;
     struct vhba_host *vhost;
     int i;
+
+    vhba_can_queue = clamp(vhba_can_queue, 1, 256);
 
     shost = scsi_host_alloc(&vhba_template, sizeof(struct vhba_host));
     if (!shost) {
@@ -989,9 +994,11 @@ static int vhba_probe (struct platform_device *pdev)
     /* we don't support lun > 0 */
     shost->max_lun = 1;
     shost->max_cmd_len = MAX_COMMAND_SIZE;
+    shost->can_queue = vhba_can_queue;
+    shost->cmd_per_lun = vhba_can_queue;
 
     vhost = (struct vhba_host *)shost->hostdata;
-    memset(vhost, 0, sizeof(*vhost));
+    memset(vhost, 0, sizeof(struct vhba_host));
 
     vhost->shost = shost;
     vhost->num_devices = 0;
@@ -999,11 +1006,21 @@ static int vhba_probe (struct platform_device *pdev)
     spin_lock_init(&vhost->cmd_lock);
     INIT_WORK(&vhost->scan_devices, vhba_scan_devices);
     vhost->cmd_next = 0;
-    for (i = 0; i < vhost->shost->can_queue; i++) {
+    vhost->commands = kzalloc(vhba_can_queue * sizeof(struct vhba_command), GFP_KERNEL);
+    if (!vhost->commands) {
+        return -ENOMEM;
+    }
+
+    for (i = 0; i < vhba_can_queue; i++) {
         vhost->commands[i].status = VHBA_REQ_FREE;
     }
 
     platform_set_drvdata(pdev, vhost);
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+    i = scsi_init_shared_tag_map(shost, vhba_can_queue);
+    if (i) return i;
+#endif
 
     if (scsi_add_host(shost, &pdev->dev)) {
         scsi_host_put(shost);
@@ -1013,7 +1030,7 @@ static int vhba_probe (struct platform_device *pdev)
     return 0;
 }
 
-static int vhba_remove (struct platform_device *pdev)
+int vhba_remove (struct platform_device *pdev)
 {
     struct vhba_host *vhost;
     struct Scsi_Host *shost;
@@ -1024,10 +1041,12 @@ static int vhba_remove (struct platform_device *pdev)
     scsi_remove_host(shost);
     scsi_host_put(shost);
 
+    kfree(vhost->commands);
+
     return 0;
 }
 
-static void vhba_release (struct device * dev)
+void vhba_release (struct device * dev)
 {
     return;
 }
@@ -1049,7 +1068,7 @@ static struct platform_driver vhba_platform_driver = {
     .remove = vhba_remove,
 };
 
-static int __init vhba_init (void)
+int __init vhba_init (void)
 {
     int ret;
 
@@ -1074,7 +1093,7 @@ static int __init vhba_init (void)
     return 0;
 }
 
-static void __exit vhba_exit(void)
+void __exit vhba_exit(void)
 {
     misc_deregister(&vhba_miscdev);
     platform_driver_unregister(&vhba_platform_driver);
