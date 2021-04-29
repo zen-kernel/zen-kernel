@@ -371,7 +371,6 @@ static inline int swim_step(struct swim __iomem *base)
 	for (wait = 0; wait < HZ; wait++) {
 
 		set_current_state(TASK_INTERRUPTIBLE);
-		schedule_timeout(1);
 		schedule_min_hrtimeout();
 
 		swim_select(base, RELAX);
