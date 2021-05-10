@@ -4938,8 +4938,7 @@ static bool get_next_interval(struct mm_walk *walk, unsigned long mask, unsigned
 		if ((next & mask) != (walk->vma->vm_start & mask))
 			return false;
 
-		if (next <= walk->vma->vm_start &&
-		    should_skip_vma(walk->vma->vm_start, walk->vma->vm_end, walk)) {
+		if (should_skip_vma(walk->vma->vm_start, walk->vma->vm_end, walk)) {
 			walk->vma = walk->vma->vm_next;
 			continue;
 		}
