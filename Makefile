@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 5
 PATCHLEVEL = 11
-SUBLEVEL = 20
+SUBLEVEL = 21
 EXTRAVERSION = -zen
 NAME = 🤗 Hugs & Kisses 😚
 
@@ -935,6 +935,7 @@ KBUILD_CFLAGS	+= -fno-strict-overflow
 
 # Make sure -fstack-check isn't enabled (like gentoo apparently did)
 KBUILD_CFLAGS  += -fno-stack-check
+
 
 
 

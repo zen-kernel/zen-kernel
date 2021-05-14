@@ -231,8 +231,6 @@ static int mt7615_add_interface(struct ieee80211_hw *hw,
 	ret = mt7615_mcu_add_dev_info(dev, vif, true);
 	if (ret)
 		goto out;
-
-	mt7615_mac_set_beacon_filter(phy, vif, true);
 out:
 	mt7615_mutex_release(dev);
 
@@ -258,7 +256,6 @@ static void mt7615_remove_interface(struct ieee80211_hw *hw,
 
 	mt7615_free_pending_tx_skbs(dev, msta);
 
-	mt7615_mac_set_beacon_filter(phy, vif, false);
 	mt7615_mcu_add_dev_info(dev, vif, false);
 
 	rcu_assign_pointer(dev->mt76.wcid[idx], NULL);
@@ -557,6 +554,9 @@ static void mt7615_bss_info_changed(struct ieee80211_hw *hw,
 	if (changed & BSS_CHANGED_ARP_FILTER)
 		mt7615_mcu_update_arp_filter(hw, vif, info);
 
+	if (changed & BSS_CHANGED_ASSOC)
+		mt7615_mac_set_beacon_filter(phy, vif, info->assoc);
+
 	mt7615_mutex_release(dev);
 }
 
@@ -827,10 +827,16 @@ mt7615_get_stats(struct ieee80211_hw *hw,
 	struct mt7615_phy *phy = mt7615_hw_phy(hw);
 	struct mib_stats *mib = &phy->mib;
 
+	mt7615_mutex_acquire(phy->dev);
+
 	stats->dot11RTSSuccessCount = mib->rts_cnt;
 	stats->dot11RTSFailureCount = mib->rts_retries_cnt;
 	stats->dot11FCSErrorCount = mib->fcs_err_cnt;
 	stats->dot11ACKFailureCount = mib->ack_fail_cnt;
+
+	memset(mib, 0, sizeof(*mib));
+
+	mt7615_mutex_release(phy->dev);
 
 	return 0;
 }
