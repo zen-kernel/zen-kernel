@@ -795,15 +795,13 @@ struct task_struct {
 #ifdef CONFIG_SCHED_ALT
 	u64				last_ran;
 	s64				time_slice;
+	int				sq_idx;
+	struct list_head		sq_node;
 #ifdef CONFIG_SCHED_BMQ
 	int				boost_prio;
-	int				bmq_idx;
-	struct list_head		bmq_node;
 #endif /* CONFIG_SCHED_BMQ */
 #ifdef CONFIG_SCHED_PDS
 	u64				deadline;
-	int				sq_idx;
-	struct list_head		sq_node;
 #endif /* CONFIG_SCHED_PDS */
 	/* sched_clock time spent running */
 	u64				sched_time;
