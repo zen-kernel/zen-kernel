@@ -802,7 +802,6 @@ struct task_struct {
 #endif /* CONFIG_SCHED_BMQ */
 #ifdef CONFIG_SCHED_PDS
 	u64				deadline;
-	u64				priodl;
 	int				sq_idx;
 	struct list_head		sq_node;
 #endif /* CONFIG_SCHED_PDS */
