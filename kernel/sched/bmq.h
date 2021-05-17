@@ -82,16 +82,6 @@ static inline void sched_queue_init(struct rq *rq)
 		INIT_LIST_HEAD(&q->heads[i]);
 }
 
-static inline void sched_queue_init_idle(struct rq *rq, struct task_struct *idle)
-{
-	struct sched_queue *q = &rq->queue;
-
-	idle->sq_idx = IDLE_TASK_SCHED_PRIO;
-	INIT_LIST_HEAD(&q->heads[idle->sq_idx]);
-	list_add(&idle->sq_node, &q->heads[idle->sq_idx]);
-	set_bit(idle->sq_idx, q->bitmap);
-}
-
 /*
  * This routine used in bmq scheduler only which assume the idle task in the bmq
  */
