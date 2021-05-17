@@ -6045,6 +6045,19 @@ void dump_cpu_task(int cpu)
 	sched_show_task(cpu_curr(cpu));
 }
 
+/*
+ * Init idle task and put into queue structure of rq
+ * IMPORTANT: may be called multiple times for a single cpu
+ */
+static inline void sched_queue_init_idle(struct sched_queue *q,
+					 struct task_struct *idle)
+{
+	idle->sq_idx = IDLE_TASK_SCHED_PRIO;
+	INIT_LIST_HEAD(&q->heads[idle->sq_idx]);
+	list_add(&idle->sq_node, &q->heads[idle->sq_idx]);
+	set_bit(idle->sq_idx, q->bitmap);
+}
+
 /**
  * init_idle - set up an idle thread for a given CPU
  * @idle: task in question
@@ -6067,7 +6080,7 @@ void init_idle(struct task_struct *idle, int cpu)
 	idle->last_ran = rq->clock_task;
 	idle->state = TASK_RUNNING;
 	idle->flags |= PF_IDLE;
-	sched_queue_init_idle(rq, idle);
+	sched_queue_init_idle(&rq->queue, idle);
 
 	scs_task_reset(idle);
 	kasan_unpoison_task_stack(idle);
