@@ -67,8 +67,6 @@ inline int task_running_nice(struct task_struct *p)
 	return (p->prio + p->boost_prio > DEFAULT_PRIO + MAX_PRIORITY_ADJ);
 }
 
-static inline void update_task_priodl(struct task_struct *p) {}
-
 static inline unsigned long sched_queue_watermark(struct rq *rq)
 {
 	return find_first_bit(rq->queue.bitmap, SCHED_BITS);
@@ -76,7 +74,7 @@ static inline unsigned long sched_queue_watermark(struct rq *rq)
 
 static inline void sched_queue_init(struct rq *rq)
 {
-	struct bmq *q = &rq->queue;
+	struct sched_queue *q = &rq->queue;
 	int i;
 
 	bitmap_zero(q->bitmap, SCHED_BITS);
@@ -86,12 +84,12 @@ static inline void sched_queue_init(struct rq *rq)
 
 static inline void sched_queue_init_idle(struct rq *rq, struct task_struct *idle)
 {
-	struct bmq *q = &rq->queue;
+	struct sched_queue *q = &rq->queue;
 
-	idle->bmq_idx = IDLE_TASK_SCHED_PRIO;
-	INIT_LIST_HEAD(&q->heads[idle->bmq_idx]);
-	list_add(&idle->bmq_node, &q->heads[idle->bmq_idx]);
-	set_bit(idle->bmq_idx, q->bitmap);
+	idle->sq_idx = IDLE_TASK_SCHED_PRIO;
+	INIT_LIST_HEAD(&q->heads[idle->sq_idx]);
+	list_add(&idle->sq_node, &q->heads[idle->sq_idx]);
+	set_bit(idle->sq_idx, q->bitmap);
 }
 
 /*
@@ -102,32 +100,32 @@ static inline struct task_struct *sched_rq_first_task(struct rq *rq)
 	unsigned long idx = find_first_bit(rq->queue.bitmap, SCHED_BITS);
 	const struct list_head *head = &rq->queue.heads[idx];
 
-	return list_first_entry(head, struct task_struct, bmq_node);
+	return list_first_entry(head, struct task_struct, sq_node);
 }
 
 static inline struct task_struct *
 sched_rq_next_task(struct task_struct *p, struct rq *rq)
 {
-	unsigned long idx = p->bmq_idx;
+	unsigned long idx = p->sq_idx;
 	struct list_head *head = &rq->queue.heads[idx];
 
-	if (list_is_last(&p->bmq_node, head)) {
+	if (list_is_last(&p->sq_node, head)) {
 		idx = find_next_bit(rq->queue.bitmap, SCHED_BITS, idx + 1);
 		head = &rq->queue.heads[idx];
 
-		return list_first_entry(head, struct task_struct, bmq_node);
+		return list_first_entry(head, struct task_struct, sq_node);
 	}
 
-	return list_next_entry(p, bmq_node);
+	return list_next_entry(p, sq_node);
 }
 
 #define __SCHED_DEQUEUE_TASK(p, rq, flags, func)	\
 	psi_dequeue(p, flags & DEQUEUE_SLEEP);		\
 	sched_info_dequeued(rq, p);			\
 							\
-	list_del(&p->bmq_node);				\
-	if (list_empty(&rq->queue.heads[p->bmq_idx])) {	\
-		clear_bit(p->bmq_idx, rq->queue.bitmap);\
+	list_del(&p->sq_node);				\
+	if (list_empty(&rq->queue.heads[p->sq_idx])) {	\
+		clear_bit(p->sq_idx, rq->queue.bitmap);\
 		func;					\
 	}
 
@@ -135,28 +133,28 @@ sched_rq_next_task(struct task_struct *p, struct rq *rq)
 	sched_info_queued(rq, p);					\
 	psi_enqueue(p, flags);						\
 									\
-	p->bmq_idx = task_sched_prio(p, rq);				\
-	list_add_tail(&p->bmq_node, &rq->queue.heads[p->bmq_idx]);	\
-	set_bit(p->bmq_idx, rq->queue.bitmap)
+	p->sq_idx = task_sched_prio(p, rq);				\
+	list_add_tail(&p->sq_node, &rq->queue.heads[p->sq_idx]);	\
+	set_bit(p->sq_idx, rq->queue.bitmap)
 
 #define __SCHED_REQUEUE_TASK(p, rq, func)				\
 {									\
 	int idx = task_sched_prio(p, rq);				\
 \
-	list_del(&p->bmq_node);						\
-	list_add_tail(&p->bmq_node, &rq->queue.heads[idx]);		\
-	if (idx != p->bmq_idx) {					\
-		if (list_empty(&rq->queue.heads[p->bmq_idx]))		\
-			clear_bit(p->bmq_idx, rq->queue.bitmap);	\
-		p->bmq_idx = idx;					\
-		set_bit(p->bmq_idx, rq->queue.bitmap);			\
+	list_del(&p->sq_node);						\
+	list_add_tail(&p->sq_node, &rq->queue.heads[idx]);		\
+	if (idx != p->sq_idx) {					\
+		if (list_empty(&rq->queue.heads[p->sq_idx]))		\
+			clear_bit(p->sq_idx, rq->queue.bitmap);	\
+		p->sq_idx = idx;					\
+		set_bit(p->sq_idx, rq->queue.bitmap);			\
 		func;							\
 	}								\
 }
 
 static inline bool sched_task_need_requeue(struct task_struct *p, struct rq *rq)
 {
-	return (task_sched_prio(p, rq) != p->bmq_idx);
+	return (task_sched_prio(p, rq) != p->sq_idx);
 }
 
 static void sched_task_fork(struct task_struct *p, struct rq *rq)
@@ -201,3 +199,5 @@ static void sched_task_deactivate(struct task_struct *p, struct rq *rq)
 	if (rq_switch_time(rq) < boost_threshold(p))
 		boost_task(p);
 }
+
+static inline void update_rq_time_edge(struct rq *rq) {}
