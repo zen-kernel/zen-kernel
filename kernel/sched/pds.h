@@ -6,4 +6,9 @@
 #define SCHED_BITS	(MAX_RT_PRIO + NICE_WIDTH / 2 + 1)
 #define IDLE_TASK_SCHED_PRIO	(SCHED_BITS - 1)
 
+struct sched_queue {
+	DECLARE_BITMAP(bitmap, SCHED_BITS);
+	struct list_head heads[SCHED_BITS];
+};
+
 #endif
