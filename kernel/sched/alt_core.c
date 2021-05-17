@@ -509,6 +509,7 @@ static inline void update_rq_clock(struct rq *rq)
 	if (unlikely(delta <= 0))
 		return;
 	rq->clock += delta;
+	update_rq_time_edge(rq);
 	update_rq_clock_task(rq, delta);
 }
 
@@ -3815,7 +3816,15 @@ void alt_sched_debug(void)
 	       sched_sg_idle_mask.bits[0]);
 }
 #else
-inline void alt_sched_debug(void) {}
+int alt_debug[20];
+
+inline void alt_sched_debug(void)
+{
+	int i;
+
+	for (i = 0; i < 3; i++)
+		printk(KERN_INFO "sched: %d\n", alt_debug[i]);
+}
 #endif
 
 #ifdef	CONFIG_SMP
