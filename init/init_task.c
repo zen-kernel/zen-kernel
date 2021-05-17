@@ -100,14 +100,13 @@ struct task_struct init_task
 		.fn = do_no_restart_syscall,
 	},
 #ifdef CONFIG_SCHED_ALT
+	.sq_node	= LIST_HEAD_INIT(init_task.sq_node),
 #ifdef CONFIG_SCHED_BMQ
 	.boost_prio	= 0,
-	.bmq_idx	= 15,
-	.bmq_node	= LIST_HEAD_INIT(init_task.bmq_node),
+	.sq_idx		= 15,
 #endif
 #ifdef CONFIG_SCHED_PDS
 	.deadline	= 0,
-	.sq_node	= LIST_HEAD_INIT(init_task.sq_node),
 #endif
 	.time_slice	= HZ,
 #else
