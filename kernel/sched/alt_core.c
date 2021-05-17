@@ -4628,7 +4628,6 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
 
 	trace_sched_pi_setprio(p, pi_task);
 	p->prio = prio;
-	update_task_priodl(p);
 
 	check_task_changed(rq, p);
 out_unlock:
@@ -4673,7 +4672,6 @@ void set_user_nice(struct task_struct *p, long nice)
 		goto out_unlock;
 
 	p->prio = effective_prio(p);
-	update_task_priodl(p);
 
 	check_task_changed(rq, p);
 out_unlock:
@@ -4823,7 +4821,6 @@ static void __setscheduler(struct rq *rq, struct task_struct *p,
 	p->prio = normal_prio(p);
 	if (keep_boost)
 		p->prio = rt_effective_prio(p, p->prio);
-	update_task_priodl(p);
 }
 
 /*
