@@ -50,11 +50,16 @@
 #include <trace/events/sched.h>
 
 #ifdef CONFIG_SCHED_BMQ
-#include "bmq.h"
+/* bits:
+ * RT(0-99), (Low prio adj range, nice width, high prio adj range) / 2, cpu idle task */
+#define SCHED_BITS	(MAX_RT_PRIO + NICE_WIDTH / 2 + MAX_PRIORITY_ADJ + 1)
 #endif
 #ifdef CONFIG_SCHED_PDS
-#include "pds.h"
+/* bits: RT(0-99), nice width / 2, cpu idle task */
+#define SCHED_BITS	(MAX_RT_PRIO + NICE_WIDTH / 2 + 1)
 #endif
+
+#define IDLE_TASK_SCHED_PRIO	(SCHED_BITS - 1)
 
 #ifdef CONFIG_SCHED_DEBUG
 # define SCHED_WARN_ON(x)	WARN_ONCE(x, #x)

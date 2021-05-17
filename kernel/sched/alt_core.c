@@ -143,10 +143,10 @@ static cpumask_t sched_sg_idle_mask ____cacheline_aligned_in_smp;
 static cpumask_t sched_rq_watermark[SCHED_BITS] ____cacheline_aligned_in_smp;
 
 #ifdef CONFIG_SCHED_BMQ
-#include "bmq_imp.h"
+#include "bmq.h"
 #endif
 #ifdef CONFIG_SCHED_PDS
-#include "pds_imp.h"
+#include "pds.h"
 #endif
 
 static inline void update_sched_rq_watermark(struct rq *rq)
