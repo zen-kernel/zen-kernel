@@ -148,21 +148,6 @@ static inline void sched_queue_init(struct rq *rq)
 		INIT_LIST_HEAD(&q->heads[i]);
 }
 
-/*
- * Init idle task and put into queue structure of rq
- * IMPORTANT: may be called multiple times for a single cpu
- */
-static inline void sched_queue_init_idle(struct rq *rq, struct task_struct *idle)
-{
-	struct sched_queue *q = &rq->queue;
-	/*printk(KERN_INFO "sched: init(%d) - %px\n", cpu_of(rq), idle);*/
-
-	idle->sq_idx = IDLE_TASK_SCHED_PRIO;
-	INIT_LIST_HEAD(&q->heads[idle->sq_idx]);
-	list_add(&idle->sq_node, &q->heads[idle->sq_idx]);
-	set_bit(idle->sq_idx, q->bitmap);
-}
-
 static inline unsigned long sched_prio2idx(unsigned long idx, struct rq *rq)
 {
 	if (IDLE_TASK_SCHED_PRIO == idx ||
