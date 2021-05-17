@@ -69,12 +69,6 @@ int task_running_nice(struct task_struct *p)
 	return task_sched_prio(p, task_rq(p)) > DEFAULT_SCHED_PRIO;
 }
 
-static inline void update_task_priodl(struct task_struct *p)
-{
-	p->priodl = (((u64) (p->prio))<<56) | ((p->deadline)>>8);
-}
-
-
 DECLARE_BITMAP(normal_mask, SCHED_BITS);
 
 static inline void sched_shift_normal_bitmap(unsigned long *mask, unsigned int shift)
@@ -131,7 +125,6 @@ static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 	if (p->prio >= MAX_RT_PRIO)
 		p->deadline = rq->clock +
 			SCHED_PRIO_SLOT * (p->static_prio - MAX_RT_PRIO + 1);
-	update_task_priodl(p);
 
 	if (SCHED_FIFO != p->policy && task_on_rq_queued(p))
 		requeue_task(p, rq);
@@ -284,7 +277,6 @@ static void sched_task_fork(struct task_struct *p, struct rq *rq)
 	if (p->prio >= MAX_RT_PRIO)
 		p->deadline = rq->clock +
 			SCHED_PRIO_SLOT * (p->static_prio - MAX_RT_PRIO + 1);
-	update_task_priodl(p);
 }
 
 /**
