@@ -131,6 +131,11 @@ static inline int task_on_rq_migrating(struct task_struct *p)
 #define WF_MIGRATED	0x04		/* internal use, task got migrated */
 #define WF_ON_CPU	0x08		/* Wakee is on_rq */
 
+struct sched_queue {
+	DECLARE_BITMAP(bitmap, SCHED_BITS);
+	struct list_head heads[SCHED_BITS];
+};
+
 /*
  * This is the main, per-CPU runqueue data structure.
  * This data should only be modified by the local cpu.
@@ -143,11 +148,8 @@ struct rq {
 	struct task_struct *idle, *stop, *skip;
 	struct mm_struct *prev_mm;
 
-#ifdef CONFIG_SCHED_BMQ
-	struct bmq queue;
-#endif
-#ifdef CONFIG_SCHED_PDS
 	struct sched_queue	queue;
+#ifdef CONFIG_SCHED_PDS
 	u64			time_edge;
 #endif
 	unsigned long watermark;
