@@ -107,8 +107,7 @@ struct task_struct init_task
 #endif
 #ifdef CONFIG_SCHED_PDS
 	.deadline	= 0,
-	.sl_level	= 0,
-	.sl_node	= SKIPLIST_NODE_INIT(init_task.sl_node),
+	.sq_node	= LIST_HEAD_INIT(init_task.sq_node),
 #endif
 	.time_slice	= HZ,
 #else

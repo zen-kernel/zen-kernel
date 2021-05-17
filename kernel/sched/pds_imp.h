@@ -11,26 +11,7 @@ static const u64 user_prio2deadline[NICE_WIDTH] = {
 /*  15 */	117870029, 129657031, 142622734, 156885007, 172573507
 };
 
-static const unsigned char dl_level_map[] = {
-/*       0               4               8              12           */
-	19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 18,
-/*      16              20              24              28           */
-	18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 17, 17, 17, 17, 17,
-/*      32              36              40              44           */
-	17, 17, 17, 17, 16, 16, 16, 16, 16, 16, 16, 16, 15, 15, 15, 15,
-/*      48              52              56              60           */
-	15, 15, 15, 14, 14, 14, 14, 14, 14, 13, 13, 13, 13, 12, 12, 12,
-/*      64              68              72              76           */
-	12, 11, 11, 11, 10, 10, 10,  9,  9,  8,  7,  6,  5,  4,  3,  2,
-/*      80              84              88              92           */
-	 1,  0
-};
-
-/* DEFAULT_SCHED_PRIO:
- * dl_level_map[(user_prio2deadline[39] - user_prio2deadline[0]) >> 21] =
- * dl_level_map[68] =
- * 10
- */
+#define SCHED_PRIO_SLOT		(4ULL << 20)
 #define DEFAULT_SCHED_PRIO (MAX_RT_PRIO + 10)
 
 static inline int normal_prio(struct task_struct *p)
@@ -41,21 +22,46 @@ static inline int normal_prio(struct task_struct *p)
 	return MAX_RT_PRIO;
 }
 
+extern int alt_debug[20];
+
+static inline int
+task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
+{
+	int delta;
+
+	delta = rq->time_edge + 20 - (p->deadline >> 23);
+	if (delta < 0) {
+		delta = 0;
+		alt_debug[0]++;
+	}
+	delta = 19 - min(delta, 19);
+
+	return delta;
+}
+
 static inline int
 task_sched_prio(const struct task_struct *p, const struct rq *rq)
 {
-	size_t delta;
-
 	if (p == rq->idle)
 		return IDLE_TASK_SCHED_PRIO;
 
 	if (p->prio < MAX_RT_PRIO)
 		return p->prio;
 
-	delta = (rq->clock + user_prio2deadline[39] - p->deadline) >> 21;
-	delta = min((size_t)delta, ARRAY_SIZE(dl_level_map) - 1);
+	return MAX_RT_PRIO + task_sched_prio_normal(p, rq);
+}
 
-	return MAX_RT_PRIO + dl_level_map[delta];
+static inline int
+task_sched_prio_idx(const struct task_struct *p, const struct rq *rq)
+{
+	if (p == rq->idle)
+		return IDLE_TASK_SCHED_PRIO;
+
+	if (p->prio < MAX_RT_PRIO)
+		return p->prio;
+
+	return MAX_RT_PRIO +
+		(task_sched_prio_normal(p, rq) + rq->time_edge) % 20;
 }
 
 int task_running_nice(struct task_struct *p)
@@ -68,6 +74,53 @@ static inline void update_task_priodl(struct task_struct *p)
 	p->priodl = (((u64) (p->prio))<<56) | ((p->deadline)>>8);
 }
 
+
+DECLARE_BITMAP(normal_mask, SCHED_BITS);
+
+static inline void sched_shift_normal_bitmap(unsigned long *mask, unsigned int shift)
+{
+	DECLARE_BITMAP(normal, SCHED_BITS);
+
+	bitmap_and(normal, mask, normal_mask, SCHED_BITS);
+	bitmap_shift_right(normal, normal, shift, SCHED_BITS);
+	bitmap_and(normal, normal, normal_mask, SCHED_BITS);
+
+	bitmap_andnot(mask, mask, normal_mask, SCHED_BITS);
+	bitmap_or(mask, mask, normal, SCHED_BITS);
+}
+
+static inline void update_rq_time_edge(struct rq *rq)
+{
+	struct list_head head;
+	u64 old = rq->time_edge;
+	u64 now = rq->clock >> 23;
+	u64 prio, delta = min(20ULL, now - old);
+
+	if (now == old)
+		return;
+
+	INIT_LIST_HEAD(&head);
+
+	prio = MAX_RT_PRIO;
+	for_each_set_bit_from(prio, rq->queue.bitmap, MAX_RT_PRIO + delta) {
+		u64 idx;
+
+		idx = MAX_RT_PRIO + ((prio - MAX_RT_PRIO) + rq->time_edge) % 20;
+		list_splice_tail_init(rq->queue.heads + idx, &head);
+	}
+	sched_shift_normal_bitmap(rq->queue.bitmap, delta);
+	rq->time_edge = now;
+	if (!list_empty(&head)) {
+		struct task_struct *p;
+
+		list_for_each_entry(p, &head, sq_node)
+			p->sq_idx = MAX_RT_PRIO + now % 20;
+
+		list_splice(&head, rq->queue.heads + MAX_RT_PRIO + now % 20);
+		set_bit(MAX_RT_PRIO, rq->queue.bitmap);
+	}
+}
+
 static inline void requeue_task(struct task_struct *p, struct rq *rq);
 
 static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
@@ -77,7 +130,7 @@ static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 
 	if (p->prio >= MAX_RT_PRIO)
 		p->deadline = rq->clock +
-			user_prio2deadline[p->static_prio - MAX_RT_PRIO];
+			SCHED_PRIO_SLOT * (p->static_prio - MAX_RT_PRIO + 1);
 	update_task_priodl(p);
 
 	if (SCHED_FIFO != p->policy && task_on_rq_queued(p))
@@ -85,32 +138,17 @@ static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 }
 
 /*
- * pds_skiplist_task_search -- search function used in PDS run queue skip list
- * node insert operation.
- * @it: iterator pointer to the node in the skip list
- * @node: pointer to the skiplist_node to be inserted
- *
- * Returns true if key of @it is less or equal to key value of @node, otherwise
- * false.
- */
-static inline bool
-pds_skiplist_task_search(struct skiplist_node *it, struct skiplist_node *node)
-{
-	return (skiplist_entry(it, struct task_struct, sl_node)->priodl <=
-		skiplist_entry(node, struct task_struct, sl_node)->priodl);
-}
-
-/*
- * Define the skip list insert function for PDS
- */
-DEFINE_SKIPLIST_INSERT_FUNC(pds_skiplist_insert, pds_skiplist_task_search);
-
-/*
  * Init the queue structure in rq
  */
 static inline void sched_queue_init(struct rq *rq)
 {
-	INIT_SKIPLIST_NODE(&rq->sl_header);
+	struct sched_queue *q = &rq->queue;
+	int i;
+
+	bitmap_set(normal_mask, MAX_RT_PRIO, 20);
+	bitmap_zero(q->bitmap, SCHED_BITS);
+	for(i = 0; i < SCHED_BITS; i++)
+		INIT_LIST_HEAD(&q->heads[i]);
 }
 
 /*
@@ -119,19 +157,33 @@ static inline void sched_queue_init(struct rq *rq)
  */
 static inline void sched_queue_init_idle(struct rq *rq, struct task_struct *idle)
 {
+	struct sched_queue *q = &rq->queue;
 	/*printk(KERN_INFO "sched: init(%d) - %px\n", cpu_of(rq), idle);*/
-	int default_prio = idle->prio;
 
-	idle->prio = MAX_PRIO;
-	idle->deadline = 0ULL;
-	update_task_priodl(idle);
+	idle->sq_idx = IDLE_TASK_SCHED_PRIO;
+	INIT_LIST_HEAD(&q->heads[idle->sq_idx]);
+	list_add(&idle->sq_node, &q->heads[idle->sq_idx]);
+	set_bit(idle->sq_idx, q->bitmap);
+}
 
-	INIT_SKIPLIST_NODE(&rq->sl_header);
+static inline unsigned long sched_prio2idx(unsigned long idx, struct rq *rq)
+{
+	if (IDLE_TASK_SCHED_PRIO == idx ||
+	    idx < MAX_RT_PRIO)
+		return idx;
 
-	idle->sl_node.level = idle->sl_level;
-	pds_skiplist_insert(&rq->sl_header, &idle->sl_node);
+	return MAX_RT_PRIO +
+		((idx - MAX_RT_PRIO) + rq->time_edge) % 20;
+}
 
-	idle->prio = default_prio;
+static inline unsigned long sched_idx2prio(unsigned long idx, struct rq *rq)
+{
+	if (IDLE_TASK_SCHED_PRIO == idx ||
+	    idx < MAX_RT_PRIO)
+		return idx;
+
+	return MAX_RT_PRIO +
+		((idx - MAX_RT_PRIO) + 20 -  rq->time_edge % 20) % 20;
 }
 
 /*
@@ -139,107 +191,99 @@ static inline void sched_queue_init_idle(struct rq *rq, struct task_struct *idle
  */
 static inline struct task_struct *sched_rq_first_task(struct rq *rq)
 {
-	struct skiplist_node *node = rq->sl_header.next[0];
+	unsigned long idx = find_first_bit(rq->queue.bitmap, SCHED_BITS);
+	const struct list_head *head = &rq->queue.heads[sched_prio2idx(idx, rq)];
 
-	BUG_ON(node == &rq->sl_header);
-	return skiplist_entry(node, struct task_struct, sl_node);
+	/*
+	if (list_empty(head)) {
+		pr_err("BUG: cpu%d(time_edge%llu) prio%lu idx%lu mismatched\n",
+		       rq->cpu, rq->time_edge, idx, sched_prio2idx(idx, rq));
+		BUG();
+	}*/
+	return list_first_entry(head, struct task_struct, sq_node);
 }
 
 static inline struct task_struct *
 sched_rq_next_task(struct task_struct *p, struct rq *rq)
 {
-	struct skiplist_node *next = p->sl_node.next[0];
+	unsigned long idx = p->sq_idx;
+	struct list_head *head = &rq->queue.heads[idx];
 
-	BUG_ON(next == &rq->sl_header);
-	return skiplist_entry(next, struct task_struct, sl_node);
+	if (list_is_last(&p->sq_node, head)) {
+		idx = find_next_bit(rq->queue.bitmap, SCHED_BITS,
+				    sched_idx2prio(idx, rq) + 1);
+		head = &rq->queue.heads[sched_prio2idx(idx, rq)];
+
+		return list_first_entry(head, struct task_struct, sq_node);
+	}
+
+	return list_next_entry(p, sq_node);
 }
 
 static inline unsigned long sched_queue_watermark(struct rq *rq)
 {
-	return task_sched_prio(sched_rq_first_task(rq), rq);
+	return find_first_bit(rq->queue.bitmap, SCHED_BITS);
 }
 
 #define __SCHED_DEQUEUE_TASK(p, rq, flags, func)		\
 	psi_dequeue(p, flags & DEQUEUE_SLEEP);			\
 	sched_info_dequeued(rq, p);				\
 								\
-	if (skiplist_del_init(&rq->sl_header, &p->sl_node)) {	\
+	list_del(&p->sq_node);					\
+	if (list_empty(&rq->queue.heads[p->sq_idx])) {		\
+		clear_bit(sched_idx2prio(p->sq_idx, rq),	\
+			  rq->queue.bitmap);			\
 		func;						\
-	}
+	}							\
+	/*\
+	pr_info("-->: cpu%d(time_edge%llu) prio%lu idx%u\n",	\
+		rq->cpu, rq->time_edge, sched_idx2prio(p->sq_idx, rq), p->sq_idx);	\
+	*/
 
 #define __SCHED_ENQUEUE_TASK(p, rq, flags)				\
 	sched_info_queued(rq, p);					\
 	psi_enqueue(p, flags);						\
 									\
-	p->sl_node.level = p->sl_level;					\
-	pds_skiplist_insert(&rq->sl_header, &p->sl_node)
+	p->sq_idx = task_sched_prio_idx(p, rq);				\
+	list_add_tail(&p->sq_node, &rq->queue.heads[p->sq_idx]);	\
+	set_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);				\
+	/*\
+	pr_info("<--: cpu%d(time_edge%llu) prio%lu idx%u\n",	\
+		rq->cpu, rq->time_edge, sched_idx2prio(p->sq_idx, rq), p->sq_idx);	\
+	*/
 
 /*
  * Requeue a task @p to @rq
  */
 #define __SCHED_REQUEUE_TASK(p, rq, func)					\
 {\
-	bool b_first = skiplist_del_init(&rq->sl_header, &p->sl_node);		\
+	int idx = task_sched_prio_idx(p, rq);					\
 \
-	p->sl_node.level = p->sl_level;						\
-	if (pds_skiplist_insert(&rq->sl_header, &p->sl_node) || b_first) {	\
+	list_del(&p->sq_node);							\
+	list_add_tail(&p->sq_node, &rq->queue.heads[idx]);			\
+	if (idx != p->sq_idx) {						\
+		if (list_empty(&rq->queue.heads[p->sq_idx]))			\
+			clear_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);		\
+		p->sq_idx = idx;						\
+		set_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);				\
 		func;								\
+		/*\
+		pr_info("<->: cpu%d(time_edge%llu) prio%lu idx%u\n",	\
+			rq->cpu, rq->time_edge, sched_idx2prio(p->sq_idx, rq), p->sq_idx);	\
+		*/\
 	}									\
 }
 
 static inline bool sched_task_need_requeue(struct task_struct *p, struct rq *rq)
 {
-	struct skiplist_node *node;
-
-	node = p->sl_node.prev[0];
-	if (node != &rq->sl_header &&
-	    skiplist_entry(node, struct task_struct, sl_node)->priodl > p->priodl)
-		return true;
-
-	node = p->sl_node.next[0];
-	if (node != &rq->sl_header &&
-	    skiplist_entry(node, struct task_struct, sl_node)->priodl < p->priodl)
-		return true;
-
-	return false;
-}
-
-/*
- * pds_skiplist_random_level -- Returns a pseudo-random level number for skip
- * list node which is used in PDS run queue.
- *
- * __ffs() is used to satisfy p = 0.5 between each levels, and there should be
- * platform instruction(known as ctz/clz) for acceleration.
- *
- * The skiplist level for a task is populated when task is created and doesn't
- * change in task's life time. When task is being inserted into run queue, this
- * skiplist level is set to task's sl_node->level, the skiplist insert function
- * may change it based on current level of the skip lsit.
- */
-static inline int pds_skiplist_random_level(const struct task_struct *p)
-{
-	/*
-	 * 1. Some architectures don't have better than microsecond resolution
-	 * so mask out ~microseconds as a factor of the random seed for skiplist
-	 * insertion.
-	 * 2. Use address of task structure pointer as another factor of the
-	 * random seed for task burst forking scenario.
-	 */
-	unsigned long randseed = (task_rq(p)->clock ^ (unsigned long)p) >> 10;
-
-	randseed &= __GENMASK(NUM_SKIPLIST_LEVEL - 1, 0);
-	if (randseed)
-		return __ffs(randseed);
-
-	return (NUM_SKIPLIST_LEVEL - 1);
+	return (task_sched_prio_idx(p, rq) != p->sq_idx);
 }
 
 static void sched_task_fork(struct task_struct *p, struct rq *rq)
 {
-	p->sl_level = pds_skiplist_random_level(p);
 	if (p->prio >= MAX_RT_PRIO)
 		p->deadline = rq->clock +
-			user_prio2deadline[p->static_prio - MAX_RT_PRIO];
+			SCHED_PRIO_SLOT * (p->static_prio - MAX_RT_PRIO + 1);
 	update_task_priodl(p);
 }
 
@@ -261,9 +305,10 @@ int task_prio(const struct task_struct *p)
 	if (p->prio < MAX_RT_PRIO)
 		return (p->prio - MAX_RT_PRIO);
 
-	preempt_disable();
-	ret = task_sched_prio(p, this_rq()) - MAX_RT_PRIO;
-	preempt_enable();
+	/*preempt_disable();
+	ret = task_sched_prio(p, task_rq(p)) - MAX_RT_PRIO;*/
+	ret = p->static_prio - MAX_RT_PRIO;
+	/*preempt_enable();*/
 
 	return ret;
 }
