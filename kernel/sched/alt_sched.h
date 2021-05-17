@@ -147,7 +147,8 @@ struct rq {
 	struct bmq queue;
 #endif
 #ifdef CONFIG_SCHED_PDS
-	struct skiplist_node sl_header;
+	struct sched_queue	queue;
+	u64			time_edge;
 #endif
 	unsigned long watermark;
 
