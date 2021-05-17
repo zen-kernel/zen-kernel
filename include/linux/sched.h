@@ -37,7 +37,6 @@
 #include <linux/kcsan.h>
 #include <linux/rv.h>
 #include <linux/livepatch_sched.h>
-#include <linux/skip_list.h>
 #include <asm/kmap_size.h>
 
 /* task_struct member predeclarations (sorted alphabetically): */
@@ -804,10 +803,8 @@ struct task_struct {
 #ifdef CONFIG_SCHED_PDS
 	u64				deadline;
 	u64				priodl;
-	/* skip list level */
-	int				sl_level;
-	/* skip list node */
-	struct skiplist_node		sl_node;
+	int				sq_idx;
+	struct list_head		sq_node;
 #endif /* CONFIG_SCHED_PDS */
 	/* sched_clock time spent running */
 	u64				sched_time;
