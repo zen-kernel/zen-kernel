@@ -88,11 +88,12 @@ static inline void update_rq_time_edge(struct rq *rq)
 	struct list_head head;
 	u64 old = rq->time_edge;
 	u64 now = rq->clock >> 23;
-	u64 prio, delta = min(20ULL, now - old);
+	u64 prio, delta;
 
 	if (now == old)
 		return;
 
+	delta = min(20ULL, now - old);
 	INIT_LIST_HEAD(&head);
 
 	prio = MAX_RT_PRIO;
@@ -115,17 +116,20 @@ static inline void update_rq_time_edge(struct rq *rq)
 	}
 }
 
+static inline void sched_renew_deadline(struct task_struct *p, const struct rq *rq)
+{
+	if (p->prio >= MAX_RT_PRIO)
+		p->deadline = rq->clock +
+			SCHED_PRIO_SLOT * (p->static_prio - MAX_RT_PRIO + 1);
+}
+
 static inline void requeue_task(struct task_struct *p, struct rq *rq);
 
 static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 {
 	/*printk(KERN_INFO "sched: time_slice_expired(%d) - %px\n", cpu_of(rq), p);*/
 	p->time_slice = sched_timeslice_ns;
-
-	if (p->prio >= MAX_RT_PRIO)
-		p->deadline = rq->clock +
-			SCHED_PRIO_SLOT * (p->static_prio - MAX_RT_PRIO + 1);
-
+	sched_renew_deadline(p, rq);
 	if (SCHED_FIFO != p->policy && task_on_rq_queued(p))
 		requeue_task(p, rq);
 }
@@ -187,12 +191,6 @@ static inline struct task_struct *sched_rq_first_task(struct rq *rq)
 	unsigned long idx = find_first_bit(rq->queue.bitmap, SCHED_BITS);
 	const struct list_head *head = &rq->queue.heads[sched_prio2idx(idx, rq)];
 
-	/*
-	if (list_empty(head)) {
-		pr_err("BUG: cpu%d(time_edge%llu) prio%lu idx%lu mismatched\n",
-		       rq->cpu, rq->time_edge, idx, sched_prio2idx(idx, rq));
-		BUG();
-	}*/
 	return list_first_entry(head, struct task_struct, sq_node);
 }
 
@@ -227,11 +225,7 @@ static inline unsigned long sched_queue_watermark(struct rq *rq)
 		clear_bit(sched_idx2prio(p->sq_idx, rq),	\
 			  rq->queue.bitmap);			\
 		func;						\
-	}							\
-	/*\
-	pr_info("-->: cpu%d(time_edge%llu) prio%lu idx%u\n",	\
-		rq->cpu, rq->time_edge, sched_idx2prio(p->sq_idx, rq), p->sq_idx);	\
-	*/
+	}
 
 #define __SCHED_ENQUEUE_TASK(p, rq, flags)				\
 	sched_info_queued(rq, p);					\
@@ -239,11 +233,7 @@ static inline unsigned long sched_queue_watermark(struct rq *rq)
 									\
 	p->sq_idx = task_sched_prio_idx(p, rq);				\
 	list_add_tail(&p->sq_node, &rq->queue.heads[p->sq_idx]);	\
-	set_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);				\
-	/*\
-	pr_info("<--: cpu%d(time_edge%llu) prio%lu idx%u\n",	\
-		rq->cpu, rq->time_edge, sched_idx2prio(p->sq_idx, rq), p->sq_idx);	\
-	*/
+	set_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);
 
 /*
  * Requeue a task @p to @rq
@@ -260,10 +250,6 @@ static inline unsigned long sched_queue_watermark(struct rq *rq)
 		p->sq_idx = idx;						\
 		set_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);				\
 		func;								\
-		/*\
-		pr_info("<->: cpu%d(time_edge%llu) prio%lu idx%u\n",	\
-			rq->cpu, rq->time_edge, sched_idx2prio(p->sq_idx, rq), p->sq_idx);	\
-		*/\
 	}									\
 }
 
@@ -274,9 +260,7 @@ static inline bool sched_task_need_requeue(struct task_struct *p, struct rq *rq)
 
 static void sched_task_fork(struct task_struct *p, struct rq *rq)
 {
-	if (p->prio >= MAX_RT_PRIO)
-		p->deadline = rq->clock +
-			SCHED_PRIO_SLOT * (p->static_prio - MAX_RT_PRIO + 1);
+	sched_renew_deadline(p, rq);
 }
 
 /**
