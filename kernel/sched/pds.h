@@ -14,13 +14,7 @@ static const u64 user_prio2deadline[NICE_WIDTH] = {
 #define SCHED_PRIO_SLOT		(4ULL << 20)
 #define DEFAULT_SCHED_PRIO (MAX_RT_PRIO + 10)
 
-static inline int normal_prio(struct task_struct *p)
-{
-	if (task_has_rt_policy(p))
-		return MAX_RT_PRIO - 1 - p->rt_priority;
-
-	return MAX_RT_PRIO;
-}
+DECLARE_BITMAP(normal_mask, SCHED_BITS);
 
 extern int alt_debug[20];
 
@@ -64,12 +58,48 @@ task_sched_prio_idx(const struct task_struct *p, const struct rq *rq)
 		(task_sched_prio_normal(p, rq) + rq->time_edge) % 20;
 }
 
+static inline unsigned long sched_prio2idx(unsigned long idx, struct rq *rq)
+{
+	if (IDLE_TASK_SCHED_PRIO == idx ||
+	    idx < MAX_RT_PRIO)
+		return idx;
+
+	return MAX_RT_PRIO +
+		((idx - MAX_RT_PRIO) + rq->time_edge) % 20;
+}
+
+static inline unsigned long sched_idx2prio(unsigned long idx, struct rq *rq)
+{
+	if (IDLE_TASK_SCHED_PRIO == idx ||
+	    idx < MAX_RT_PRIO)
+		return idx;
+
+	return MAX_RT_PRIO +
+		((idx - MAX_RT_PRIO) + 20 -  rq->time_edge % 20) % 20;
+}
+
+static inline void sched_renew_deadline(struct task_struct *p, const struct rq *rq)
+{
+	if (p->prio >= MAX_RT_PRIO)
+		p->deadline = rq->clock +
+			SCHED_PRIO_SLOT * (p->static_prio - MAX_RT_PRIO + 1);
+}
+
+/*
+ * Common interfaces
+ */
+static inline int normal_prio(struct task_struct *p)
+{
+	if (task_has_rt_policy(p))
+		return MAX_RT_PRIO - 1 - p->rt_priority;
+
+	return MAX_RT_PRIO;
+}
+
 int task_running_nice(struct task_struct *p)
 {
 	return task_sched_prio(p, task_rq(p)) > DEFAULT_SCHED_PRIO;
 }
-
-DECLARE_BITMAP(normal_mask, SCHED_BITS);
 
 static inline void sched_shift_normal_bitmap(unsigned long *mask, unsigned int shift)
 {
@@ -116,13 +146,6 @@ static inline void update_rq_time_edge(struct rq *rq)
 	}
 }
 
-static inline void sched_renew_deadline(struct task_struct *p, const struct rq *rq)
-{
-	if (p->prio >= MAX_RT_PRIO)
-		p->deadline = rq->clock +
-			SCHED_PRIO_SLOT * (p->static_prio - MAX_RT_PRIO + 1);
-}
-
 static inline void requeue_task(struct task_struct *p, struct rq *rq);
 
 static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
@@ -134,38 +157,9 @@ static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 		requeue_task(p, rq);
 }
 
-/*
- * Init the queue structure in rq
- */
-static inline void sched_queue_init(struct rq *rq)
+static inline void sched_imp_init(void)
 {
-	struct sched_queue *q = &rq->queue;
-	int i;
-
 	bitmap_set(normal_mask, MAX_RT_PRIO, 20);
-	bitmap_zero(q->bitmap, SCHED_BITS);
-	for(i = 0; i < SCHED_BITS; i++)
-		INIT_LIST_HEAD(&q->heads[i]);
-}
-
-static inline unsigned long sched_prio2idx(unsigned long idx, struct rq *rq)
-{
-	if (IDLE_TASK_SCHED_PRIO == idx ||
-	    idx < MAX_RT_PRIO)
-		return idx;
-
-	return MAX_RT_PRIO +
-		((idx - MAX_RT_PRIO) + rq->time_edge) % 20;
-}
-
-static inline unsigned long sched_idx2prio(unsigned long idx, struct rq *rq)
-{
-	if (IDLE_TASK_SCHED_PRIO == idx ||
-	    idx < MAX_RT_PRIO)
-		return idx;
-
-	return MAX_RT_PRIO +
-		((idx - MAX_RT_PRIO) + 20 -  rq->time_edge % 20) % 20;
 }
 
 /*
@@ -194,11 +188,6 @@ sched_rq_next_task(struct task_struct *p, struct rq *rq)
 	}
 
 	return list_next_entry(p, sq_node);
-}
-
-static inline unsigned long sched_queue_watermark(struct rq *rq)
-{
-	return find_first_bit(rq->queue.bitmap, SCHED_BITS);
 }
 
 #define __SCHED_DEQUEUE_TASK(p, rq, flags, func)		\
