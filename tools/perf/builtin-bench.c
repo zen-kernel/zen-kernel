@@ -12,11 +12,10 @@
  *
  *  sched ... scheduler and IPC performance
  *  syscall ... System call performance
- *  mem    ... memory access performance
- *  numa   ... NUMA scheduling and MM performance
- *  futex  ... Futex performance
- *  futex2 ... Futex2 performance
- *  epoll  ... Event poll performance
+ *  mem   ... memory access performance
+ *  numa  ... NUMA scheduling and MM performance
+ *  futex ... Futex performance
+ *  epoll ... Event poll performance
  */
 #include <subcmd/parse-options.h>
 #include "builtin.h"
@@ -76,14 +75,6 @@ static struct bench futex_benchmarks[] = {
 	{ NULL,		NULL,						NULL			}
 };
 
-static struct bench futex2_benchmarks[] = {
-	{ "hash",	   "Benchmark for futex2 hash table",            bench_futex2_hash	},
-	{ "wake",	   "Benchmark for futex2 wake calls",            bench_futex2_wake	},
-	{ "wake-parallel", "Benchmark for parallel futex2 wake calls",   bench_futex2_wake_parallel },
-	{ "requeue",	   "Benchmark for futex2 requeue calls",         bench_futex2_requeue	},
-	{ NULL,		NULL,						NULL			}
-};
-
 #ifdef HAVE_EVENTFD_SUPPORT
 static struct bench epoll_benchmarks[] = {
 	{ "wait",	"Benchmark epoll concurrent epoll_waits",       bench_epoll_wait	},
@@ -114,7 +105,6 @@ static struct collection collections[] = {
 	{ "numa",	"NUMA scheduling and MM benchmarks",		numa_benchmarks		},
 #endif
 	{"futex",       "Futex stressing benchmarks",                   futex_benchmarks        },
-	{"futex2",      "Futex2 stressing benchmarks",                  futex2_benchmarks        },
 #ifdef HAVE_EVENTFD_SUPPORT
 	{"epoll",       "Epoll stressing benchmarks",                   epoll_benchmarks        },
 #endif
