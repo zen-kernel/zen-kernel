@@ -62,24 +62,11 @@ static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 	}
 }
 
+static inline void sched_imp_init(void) {}
+
 inline int task_running_nice(struct task_struct *p)
 {
 	return (p->prio + p->boost_prio > DEFAULT_PRIO + MAX_PRIORITY_ADJ);
-}
-
-static inline unsigned long sched_queue_watermark(struct rq *rq)
-{
-	return find_first_bit(rq->queue.bitmap, SCHED_BITS);
-}
-
-static inline void sched_queue_init(struct rq *rq)
-{
-	struct sched_queue *q = &rq->queue;
-	int i;
-
-	bitmap_zero(q->bitmap, SCHED_BITS);
-	for(i = 0; i < SCHED_BITS; i++)
-		INIT_LIST_HEAD(&q->heads[i]);
 }
 
 /*
