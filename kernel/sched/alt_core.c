@@ -149,9 +149,34 @@ static cpumask_t sched_rq_watermark[SCHED_BITS] ____cacheline_aligned_in_smp;
 #include "pds.h"
 #endif
 
+/* sched_queue related functions */
+static inline void sched_queue_init(struct sched_queue *q)
+{
+	int i;
+
+	bitmap_zero(q->bitmap, SCHED_BITS);
+	for(i = 0; i < SCHED_BITS; i++)
+		INIT_LIST_HEAD(&q->heads[i]);
+}
+
+/*
+ * Init idle task and put into queue structure of rq
+ * IMPORTANT: may be called multiple times for a single cpu
+ */
+static inline void sched_queue_init_idle(struct sched_queue *q,
+					 struct task_struct *idle)
+{
+	idle->sq_idx = IDLE_TASK_SCHED_PRIO;
+	INIT_LIST_HEAD(&q->heads[idle->sq_idx]);
+	list_add(&idle->sq_node, &q->heads[idle->sq_idx]);
+	set_bit(idle->sq_idx, q->bitmap);
+}
+
+
+/* water mark related functions*/
 static inline void update_sched_rq_watermark(struct rq *rq)
 {
-	unsigned long watermark = sched_queue_watermark(rq);
+	unsigned long watermark = find_first_bit(rq->queue.bitmap, SCHED_BITS);
 	unsigned long last_wm = rq->watermark;
 	unsigned long i;
 	int cpu;
@@ -6045,19 +6070,6 @@ void dump_cpu_task(int cpu)
 	sched_show_task(cpu_curr(cpu));
 }
 
-/*
- * Init idle task and put into queue structure of rq
- * IMPORTANT: may be called multiple times for a single cpu
- */
-static inline void sched_queue_init_idle(struct sched_queue *q,
-					 struct task_struct *idle)
-{
-	idle->sq_idx = IDLE_TASK_SCHED_PRIO;
-	INIT_LIST_HEAD(&q->heads[idle->sq_idx]);
-	list_add(&idle->sq_node, &q->heads[idle->sq_idx]);
-	set_bit(idle->sq_idx, q->bitmap);
-}
-
 /**
  * init_idle - set up an idle thread for a given CPU
  * @idle: task in question
@@ -6677,6 +6689,7 @@ void __init sched_init(void)
 	struct rq *rq;
 
 	printk(KERN_INFO ALT_SCHED_VERSION_MSG);
+	sched_imp_init();
 
 	wait_bit_init();
 
@@ -6695,7 +6708,7 @@ void __init sched_init(void)
 	for_each_possible_cpu(i) {
 		rq = cpu_rq(i);
 
-		sched_queue_init(rq);
+		sched_queue_init(&rq->queue);
 		rq->watermark = IDLE_WM;
 		rq->skip = NULL;
 
