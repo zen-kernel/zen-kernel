@@ -36,26 +36,20 @@ task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 static inline int
 task_sched_prio(const struct task_struct *p, const struct rq *rq)
 {
-	if (p == rq->idle)
-		return IDLE_TASK_SCHED_PRIO;
+	if (p->prio >= MAX_RT_PRIO)
+		return MAX_RT_PRIO + task_sched_prio_normal(p, rq);
 
-	if (p->prio < MAX_RT_PRIO)
-		return p->prio;
-
-	return MAX_RT_PRIO + task_sched_prio_normal(p, rq);
+	return p->prio;
 }
 
 static inline int
 task_sched_prio_idx(const struct task_struct *p, const struct rq *rq)
 {
-	if (p == rq->idle)
-		return IDLE_TASK_SCHED_PRIO;
+	if (p->prio >= MAX_RT_PRIO)
+		return MAX_RT_PRIO +
+			(task_sched_prio_normal(p, rq) + rq->time_edge) % 20;
 
-	if (p->prio < MAX_RT_PRIO)
-		return p->prio;
-
-	return MAX_RT_PRIO +
-		(task_sched_prio_normal(p, rq) + rq->time_edge) % 20;
+	return p->prio;
 }
 
 static inline unsigned long sched_prio2idx(unsigned long idx, struct rq *rq)
