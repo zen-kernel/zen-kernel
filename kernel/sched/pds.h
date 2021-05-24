@@ -21,23 +21,22 @@ extern int alt_debug[20];
 static inline int
 task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 {
-	int delta;
+	int delta = (p->deadline >> 23) - rq->time_edge  - 1;
 
-	delta = rq->time_edge + 20 - (p->deadline >> 23);
-	if (delta < 0) {
-		delta = 0;
-		alt_debug[0]++;
+	if (unlikely(delta > 19)) {
+		pr_info("pds: task_sched_prio_normal delta %d, deadline %llu(%llu), time_edge %llu\n",
+			delta, p->deadline, p->deadline >> 23, rq->time_edge);
+		delta = 19;
 	}
-	delta = 19 - min(delta, 19);
 
-	return delta;
+	return (delta < 0)? 0:delta;
 }
 
 static inline int
-task_sched_prio(const struct task_struct *p, const struct rq *rq)
+task_sched_prio(const struct task_struct *p)
 {
 	if (p->prio >= MAX_RT_PRIO)
-		return MAX_RT_PRIO + task_sched_prio_normal(p, rq);
+		return MAX_RT_PRIO + task_sched_prio_normal(p, task_rq(p));
 
 	return p->prio;
 }
@@ -92,7 +91,7 @@ static inline int normal_prio(struct task_struct *p)
 
 int task_running_nice(struct task_struct *p)
 {
-	return task_sched_prio(p, task_rq(p)) > DEFAULT_SCHED_PRIO;
+	return task_sched_prio(p) > DEFAULT_SCHED_PRIO;
 }
 
 static inline void sched_shift_normal_bitmap(unsigned long *mask, unsigned int shift)
@@ -117,7 +116,7 @@ static inline void update_rq_time_edge(struct rq *rq)
 	if (now == old)
 		return;
 
-	delta = min(20ULL, now - old);
+	delta = min_t(u64, 20, now - old);
 	INIT_LIST_HEAD(&head);
 
 	prio = MAX_RT_PRIO;
@@ -149,6 +148,12 @@ static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 	sched_renew_deadline(p, rq);
 	if (SCHED_FIFO != p->policy && task_on_rq_queued(p))
 		requeue_task(p, rq);
+}
+
+static inline void sched_task_sanity_check(struct task_struct *p, struct rq *rq)
+{
+	if (unlikely(p->deadline > rq->clock + 40 * SCHED_PRIO_SLOT))
+		p->deadline = rq->clock + 40 * SCHED_PRIO_SLOT;
 }
 
 static inline void sched_imp_init(void)
@@ -212,11 +217,12 @@ sched_rq_next_task(struct task_struct *p, struct rq *rq)
 \
 	list_del(&p->sq_node);							\
 	list_add_tail(&p->sq_node, &rq->queue.heads[idx]);			\
-	if (idx != p->sq_idx) {						\
+	if (idx != p->sq_idx) {							\
 		if (list_empty(&rq->queue.heads[p->sq_idx]))			\
-			clear_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);		\
+			clear_bit(sched_idx2prio(p->sq_idx, rq),		\
+				  rq->queue.bitmap);				\
 		p->sq_idx = idx;						\
-		set_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);				\
+		set_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);	\
 		func;								\
 	}									\
 }
@@ -249,10 +255,7 @@ int task_prio(const struct task_struct *p)
 	if (p->prio < MAX_RT_PRIO)
 		return (p->prio - MAX_RT_PRIO);
 
-	/*preempt_disable();
-	ret = task_sched_prio(p, task_rq(p)) - MAX_RT_PRIO;*/
-	ret = p->static_prio - MAX_RT_PRIO;
-	/*preempt_enable();*/
+	ret = task_sched_prio(p) - MAX_RT_PRIO;
 
 	return ret;
 }
