@@ -1328,6 +1328,7 @@ static struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int
 
 	raw_spin_lock(&rq->lock);
 	BUG_ON(task_cpu(p) != new_cpu);
+	sched_task_sanity_check(p, rq);
 	enqueue_task(p, rq, 0);
 	p->on_rq = TASK_ON_RQ_QUEUED;
 	check_preempt_curr(rq);
@@ -1656,7 +1657,7 @@ out:
 	return dest_cpu;
 }
 
-static inline int select_task_rq(struct task_struct *p, struct rq *rq)
+static inline int select_task_rq(struct task_struct *p)
 {
 	cpumask_t chk_mask, tmp;
 
@@ -1669,7 +1670,7 @@ static inline int select_task_rq(struct task_struct *p, struct rq *rq)
 #endif
 	    cpumask_and(&tmp, &chk_mask, &sched_rq_watermark[IDLE_WM]) ||
 	    cpumask_and(&tmp, &chk_mask,
-			&sched_rq_watermark[task_sched_prio(p, rq) + 1]))
+			&sched_rq_watermark[task_sched_prio(p) + 1]))
 		return best_mask_cpu(task_cpu(p), &tmp);
 
 	return best_mask_cpu(task_cpu(p), &chk_mask);
@@ -1823,7 +1824,7 @@ EXPORT_SYMBOL_GPL(set_cpus_allowed_ptr);
 
 #else /* CONFIG_SMP */
 
-static inline int select_task_rq(struct task_struct *p, struct rq *rq)
+static inline int select_task_rq(struct task_struct *p)
 {
 	return 0;
 }
@@ -2360,7 +2361,7 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 
 	sched_task_ttwu(p);
 
-	cpu = select_task_rq(p, this_rq());
+	cpu = select_task_rq(p);
 
 	if (cpu != task_cpu(p)) {
 		if (p->in_iowait) {
@@ -2662,7 +2663,7 @@ void wake_up_new_task(struct task_struct *p)
 
 	p->state = TASK_RUNNING;
 
-	rq = cpu_rq(select_task_rq(p, this_rq()));
+	rq = cpu_rq(select_task_rq(p));
 #ifdef CONFIG_SMP
 	rseq_migrate(p);
 	/*
@@ -3265,7 +3266,7 @@ void sched_exec(void)
 	if (rq != task_rq(p) || rq->nr_running < 2)
 		goto unlock;
 
-	dest_cpu = select_task_rq(p, task_rq(p));
+	dest_cpu = select_task_rq(p);
 	if (dest_cpu == smp_processor_id())
 		goto unlock;
 
@@ -3847,7 +3848,7 @@ inline void alt_sched_debug(void)
 {
 	int i;
 
-	for (i = 0; i < 3; i++)
+	for (i = 0; i < 6; i++)
 		printk(KERN_INFO "sched: %d\n", alt_debug[i]);
 }
 #endif
@@ -4562,7 +4563,7 @@ int default_wake_function(wait_queue_entry_t *curr, unsigned mode, int wake_flag
 }
 EXPORT_SYMBOL(default_wake_function);
 
-static inline void check_task_changed(struct rq *rq, struct task_struct *p)
+static inline void check_task_changed(struct task_struct *p, struct rq *rq)
 {
 	/* Trigger resched if task sched_prio has been modified. */
 	if (task_on_rq_queued(p) && sched_task_need_requeue(p, rq)) {
@@ -4654,7 +4655,7 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
 	trace_sched_pi_setprio(p, pi_task);
 	p->prio = prio;
 
-	check_task_changed(rq, p);
+	check_task_changed(p, rq);
 out_unlock:
 	/* Avoid rq from going away on us: */
 	preempt_disable();
@@ -4698,7 +4699,7 @@ void set_user_nice(struct task_struct *p, long nice)
 
 	p->prio = effective_prio(p);
 
-	check_task_changed(rq, p);
+	check_task_changed(p, rq);
 out_unlock:
 	__task_access_unlock(p, lock);
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
@@ -5027,7 +5028,7 @@ change:
 
 	__setscheduler(rq, p, attr, pi);
 
-	check_task_changed(rq, p);
+	check_task_changed(p, rq);
 
 	/* Avoid rq from going away on us: */
 	preempt_disable();
