@@ -44,7 +44,7 @@ static inline int normal_prio(struct task_struct *p)
 	return p->static_prio + MAX_PRIORITY_ADJ;
 }
 
-static inline int task_sched_prio(struct task_struct *p, struct rq *rq)
+static inline int task_sched_prio(struct task_struct *p)
 {
 	return (p->prio < MAX_RT_PRIO)? p->prio : MAX_RT_PRIO / 2 + (p->prio + p->boost_prio) / 2;
 }
@@ -61,6 +61,8 @@ static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 		requeue_task(p, rq);
 	}
 }
+
+static inline void sched_task_sanity_check(struct task_struct *p, struct rq *rq) {}
 
 static inline void sched_imp_init(void) {}
 
@@ -110,13 +112,13 @@ sched_rq_next_task(struct task_struct *p, struct rq *rq)
 	sched_info_queued(rq, p);					\
 	psi_enqueue(p, flags);						\
 									\
-	p->sq_idx = task_sched_prio(p, rq);				\
+	p->sq_idx = task_sched_prio(p);					\
 	list_add_tail(&p->sq_node, &rq->queue.heads[p->sq_idx]);	\
 	set_bit(p->sq_idx, rq->queue.bitmap)
 
 #define __SCHED_REQUEUE_TASK(p, rq, func)				\
 {									\
-	int idx = task_sched_prio(p, rq);				\
+	int idx = task_sched_prio(p);					\
 \
 	list_del(&p->sq_node);						\
 	list_add_tail(&p->sq_node, &rq->queue.heads[idx]);		\
@@ -131,7 +133,7 @@ sched_rq_next_task(struct task_struct *p, struct rq *rq)
 
 static inline bool sched_task_need_requeue(struct task_struct *p, struct rq *rq)
 {
-	return (task_sched_prio(p, rq) != p->sq_idx);
+	return (task_sched_prio(p) != p->sq_idx);
 }
 
 static void sched_task_fork(struct task_struct *p, struct rq *rq)
