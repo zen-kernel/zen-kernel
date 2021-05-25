@@ -136,8 +136,10 @@ static inline int task_on_rq_migrating(struct task_struct *p)
 #define WF_MIGRATED	0x04		/* internal use, task got migrated */
 #define WF_ON_CPU	0x08		/* Wakee is on_rq */
 
+#define SCHED_QUEUE_BITS	(SCHED_BITS - 1)
+
 struct sched_queue {
-	DECLARE_BITMAP(bitmap, SCHED_BITS);
+	DECLARE_BITMAP(bitmap, SCHED_QUEUE_BITS);
 	struct list_head heads[SCHED_BITS];
 };
 
