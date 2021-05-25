@@ -21,12 +21,12 @@ extern int alt_debug[20];
 static inline int
 task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 {
-	int delta = (p->deadline >> 23) - rq->time_edge  - 1;
+	s64 delta = (p->deadline >> 23) - rq->time_edge  - 1;
 
-	if (unlikely(delta > 19)) {
-		pr_info("pds: task_sched_prio_normal delta %d, deadline %llu(%llu), time_edge %llu\n",
+	if (unlikely(delta > SCHED_NORMAL_PRIO_NUM - 1)) {
+		pr_info("pds: task_sched_prio_normal delta %lld, deadline %llu(%llu), time_edge %llu\n",
 			delta, p->deadline, p->deadline >> 23, rq->time_edge);
-		delta = 19;
+		delta = SCHED_NORMAL_PRIO_NUM - 1ULL;
 	}
 
 	return (delta < 0)? 0:delta;
@@ -43,19 +43,23 @@ static inline int
 task_sched_prio_idx(const struct task_struct *p, const struct rq *rq)
 {
 	return (p->prio < MAX_RT_PRIO) ? p->prio : MAX_RT_PRIO +
-		(task_sched_prio_normal(p, rq) + rq->time_edge) % 20;
+		(task_sched_prio_normal(p, rq) + rq->time_edge) %
+		SCHED_NORMAL_PRIO_NUM;
 }
 
 static inline unsigned long sched_prio2idx(unsigned long idx, struct rq *rq)
 {
 	return (IDLE_TASK_SCHED_PRIO == idx || idx < MAX_RT_PRIO) ? idx :
-		MAX_RT_PRIO + ((idx - MAX_RT_PRIO) + rq->time_edge) % 20;
+		MAX_RT_PRIO + ((idx - MAX_RT_PRIO) + rq->time_edge) %
+		SCHED_NORMAL_PRIO_NUM;
 }
 
 static inline unsigned long sched_idx2prio(unsigned long idx, struct rq *rq)
 {
 	return (idx < MAX_RT_PRIO) ? idx : MAX_RT_PRIO +
-		((idx - MAX_RT_PRIO) + 20 -  rq->time_edge % 20) % 20;
+		((idx - MAX_RT_PRIO) + SCHED_NORMAL_PRIO_NUM -
+		 rq->time_edge % SCHED_NORMAL_PRIO_NUM) %
+		SCHED_NORMAL_PRIO_NUM;
 }
 
 static inline void sched_renew_deadline(struct task_struct *p, const struct rq *rq)
@@ -103,25 +107,27 @@ static inline void update_rq_time_edge(struct rq *rq)
 	if (now == old)
 		return;
 
-	delta = min_t(u64, 20, now - old);
+	delta = min_t(u64, SCHED_NORMAL_PRIO_NUM, now - old);
 	INIT_LIST_HEAD(&head);
 
 	prio = MAX_RT_PRIO;
 	for_each_set_bit_from(prio, rq->queue.bitmap, MAX_RT_PRIO + delta) {
 		u64 idx;
 
-		idx = MAX_RT_PRIO + ((prio - MAX_RT_PRIO) + rq->time_edge) % 20;
+		idx = MAX_RT_PRIO + ((prio - MAX_RT_PRIO) + rq->time_edge) %
+			SCHED_NORMAL_PRIO_NUM;
 		list_splice_tail_init(rq->queue.heads + idx, &head);
 	}
 	sched_shift_normal_bitmap(rq->queue.bitmap, delta);
 	rq->time_edge = now;
 	if (!list_empty(&head)) {
 		struct task_struct *p;
+		u64 new_idx = MAX_RT_PRIO + now % SCHED_NORMAL_PRIO_NUM;
 
 		list_for_each_entry(p, &head, sq_node)
-			p->sq_idx = MAX_RT_PRIO + now % 20;
+			p->sq_idx = new_idx;
 
-		list_splice(&head, rq->queue.heads + MAX_RT_PRIO + now % 20);
+		list_splice(&head, rq->queue.heads + new_idx);
 		set_bit(MAX_RT_PRIO, rq->queue.bitmap);
 	}
 }
@@ -145,7 +151,7 @@ static inline void sched_task_sanity_check(struct task_struct *p, struct rq *rq)
 
 static inline void sched_imp_init(void)
 {
-	bitmap_set(normal_mask, MAX_RT_PRIO, 20);
+	bitmap_set(normal_mask, MAX_RT_PRIO, SCHED_NORMAL_PRIO_NUM);
 }
 
 /*
