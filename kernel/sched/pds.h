@@ -153,7 +153,7 @@ static inline void sched_imp_init(void)
  */
 static inline struct task_struct *sched_rq_first_task(struct rq *rq)
 {
-	unsigned long idx = find_first_bit(rq->queue.bitmap, SCHED_BITS);
+	unsigned long idx = find_first_bit(rq->queue.bitmap, SCHED_QUEUE_BITS);
 	const struct list_head *head = &rq->queue.heads[sched_prio2idx(idx, rq)];
 
 	return list_first_entry(head, struct task_struct, sq_node);
@@ -166,7 +166,7 @@ sched_rq_next_task(struct task_struct *p, struct rq *rq)
 	struct list_head *head = &rq->queue.heads[idx];
 
 	if (list_is_last(&p->sq_node, head)) {
-		idx = find_next_bit(rq->queue.bitmap, SCHED_BITS,
+		idx = find_next_bit(rq->queue.bitmap, SCHED_QUEUE_BITS,
 				    sched_idx2prio(idx, rq) + 1);
 		head = &rq->queue.heads[sched_prio2idx(idx, rq)];
 
