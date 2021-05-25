@@ -12,7 +12,7 @@ static const u64 user_prio2deadline[NICE_WIDTH] = {
 };
 
 #define SCHED_PRIO_SLOT		(4ULL << 20)
-#define DEFAULT_SCHED_PRIO (MAX_RT_PRIO + 10)
+#define DEFAULT_SCHED_PRIO (MAX_RT_PRIO + SCHED_NORMAL_PRIO_NUM / 2)
 
 DECLARE_BITMAP(normal_mask, SCHED_BITS);
 
@@ -21,11 +21,11 @@ extern int alt_debug[20];
 static inline int
 task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 {
-	s64 delta = (p->deadline >> 23) - rq->time_edge  - 1;
+	s64 delta = (p->deadline >> 22) - rq->time_edge  - 1;
 
 	if (unlikely(delta > SCHED_NORMAL_PRIO_NUM - 1)) {
 		pr_info("pds: task_sched_prio_normal delta %lld, deadline %llu(%llu), time_edge %llu\n",
-			delta, p->deadline, p->deadline >> 23, rq->time_edge);
+			delta, p->deadline, p->deadline >> 22, rq->time_edge);
 		delta = SCHED_NORMAL_PRIO_NUM - 1ULL;
 	}
 
@@ -101,7 +101,7 @@ static inline void update_rq_time_edge(struct rq *rq)
 {
 	struct list_head head;
 	u64 old = rq->time_edge;
-	u64 now = rq->clock >> 23;
+	u64 now = rq->clock >> 22;
 	u64 prio, delta;
 
 	if (now == old)
