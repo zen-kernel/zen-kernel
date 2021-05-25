@@ -76,7 +76,7 @@ inline int task_running_nice(struct task_struct *p)
  */
 static inline struct task_struct *sched_rq_first_task(struct rq *rq)
 {
-	unsigned long idx = find_first_bit(rq->queue.bitmap, SCHED_BITS);
+	unsigned long idx = find_first_bit(rq->queue.bitmap, SCHED_QUEUE_BITS);
 	const struct list_head *head = &rq->queue.heads[idx];
 
 	return list_first_entry(head, struct task_struct, sq_node);
@@ -89,7 +89,7 @@ sched_rq_next_task(struct task_struct *p, struct rq *rq)
 	struct list_head *head = &rq->queue.heads[idx];
 
 	if (list_is_last(&p->sq_node, head)) {
-		idx = find_next_bit(rq->queue.bitmap, SCHED_BITS, idx + 1);
+		idx = find_next_bit(rq->queue.bitmap, SCHED_QUEUE_BITS, idx + 1);
 		head = &rq->queue.heads[idx];
 
 		return list_first_entry(head, struct task_struct, sq_node);
@@ -104,7 +104,7 @@ sched_rq_next_task(struct task_struct *p, struct rq *rq)
 							\
 	list_del(&p->sq_node);				\
 	if (list_empty(&rq->queue.heads[p->sq_idx])) {	\
-		clear_bit(p->sq_idx, rq->queue.bitmap);\
+		clear_bit(p->sq_idx, rq->queue.bitmap);	\
 		func;					\
 	}
 
@@ -122,9 +122,9 @@ sched_rq_next_task(struct task_struct *p, struct rq *rq)
 \
 	list_del(&p->sq_node);						\
 	list_add_tail(&p->sq_node, &rq->queue.heads[idx]);		\
-	if (idx != p->sq_idx) {					\
+	if (idx != p->sq_idx) {						\
 		if (list_empty(&rq->queue.heads[p->sq_idx]))		\
-			clear_bit(p->sq_idx, rq->queue.bitmap);	\
+			clear_bit(p->sq_idx, rq->queue.bitmap);		\
 		p->sq_idx = idx;					\
 		set_bit(p->sq_idx, rq->queue.bitmap);			\
 		func;							\

@@ -169,14 +169,13 @@ static inline void sched_queue_init_idle(struct sched_queue *q,
 	idle->sq_idx = IDLE_TASK_SCHED_PRIO;
 	INIT_LIST_HEAD(&q->heads[idle->sq_idx]);
 	list_add(&idle->sq_node, &q->heads[idle->sq_idx]);
-	set_bit(idle->sq_idx, q->bitmap);
 }
 
 
 /* water mark related functions*/
 static inline void update_sched_rq_watermark(struct rq *rq)
 {
-	unsigned long watermark = find_first_bit(rq->queue.bitmap, SCHED_BITS);
+	unsigned long watermark = find_first_bit(rq->queue.bitmap, SCHED_QUEUE_BITS);
 	unsigned long last_wm = rq->watermark;
 	unsigned long i;
 	int cpu;
