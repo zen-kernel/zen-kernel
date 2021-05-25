@@ -55,8 +55,9 @@
 #define SCHED_BITS	(MAX_RT_PRIO + NICE_WIDTH / 2 + MAX_PRIORITY_ADJ + 1)
 #endif
 #ifdef CONFIG_SCHED_PDS
+#define SCHED_NORMAL_PRIO_NUM	(NICE_WIDTH / 2)
 /* bits: RT(0-99), nice width / 2, cpu idle task */
-#define SCHED_BITS	(MAX_RT_PRIO + NICE_WIDTH / 2 + 1)
+#define SCHED_BITS	(MAX_RT_PRIO + SCHED_NORMAL_PRIO_NUM + 1)
 #endif
 
 #define IDLE_TASK_SCHED_PRIO	(SCHED_BITS - 1)
