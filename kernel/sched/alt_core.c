@@ -6689,7 +6689,6 @@ void __init sched_init(void)
 	struct rq *rq;
 
 	printk(KERN_INFO ALT_SCHED_VERSION_MSG);
-	sched_imp_init();
 
 	wait_bit_init();
 
