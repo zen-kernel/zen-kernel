@@ -14,8 +14,6 @@ static const u64 user_prio2deadline[NICE_WIDTH] = {
 #define SCHED_PRIO_SLOT		(4ULL << 20)
 #define DEFAULT_SCHED_PRIO (MIN_NORMAL_PRIO + SCHED_NORMAL_PRIO_NUM / 2)
 
-DECLARE_BITMAP(normal_mask, SCHED_BITS);
-
 extern int alt_debug[20];
 
 static inline int
@@ -66,8 +64,7 @@ static inline unsigned long sched_idx2prio(unsigned long idx, struct rq *rq)
 static inline void sched_renew_deadline(struct task_struct *p, const struct rq *rq)
 {
 	if (p->prio >= MAX_RT_PRIO)
-		p->deadline = rq->clock +
-			SCHED_PRIO_SLOT *
+		p->deadline = rq->clock + SCHED_PRIO_SLOT *
 			(p->static_prio - MIN_NORMAL_PRIO + 1);
 }
 
@@ -87,18 +84,6 @@ int task_running_nice(struct task_struct *p)
 	return task_sched_prio(p) > DEFAULT_SCHED_PRIO;
 }
 
-static inline void sched_shift_normal_bitmap(unsigned long *mask, unsigned int shift)
-{
-	DECLARE_BITMAP(normal, SCHED_BITS);
-
-	bitmap_and(normal, mask, normal_mask, SCHED_BITS);
-	bitmap_shift_right(normal, normal, shift, SCHED_BITS);
-	bitmap_and(normal, normal, normal_mask, SCHED_BITS);
-
-	bitmap_andnot(mask, mask, normal_mask, SCHED_BITS);
-	bitmap_or(mask, mask, normal, SCHED_BITS);
-}
-
 static inline void update_rq_time_edge(struct rq *rq)
 {
 	struct list_head head;
@@ -112,26 +97,24 @@ static inline void update_rq_time_edge(struct rq *rq)
 	delta = min_t(u64, SCHED_NORMAL_PRIO_NUM, now - old);
 	INIT_LIST_HEAD(&head);
 
-	prio = MIN_NORMAL_PRIO;
-	for_each_set_bit_from(prio, rq->queue.bitmap, MIN_NORMAL_PRIO + delta) {
+	for_each_set_bit(prio, &rq->queue.bitmap[2], delta) {
 		u64 idx;
 
 		idx = MIN_NORMAL_PRIO +
-			((prio - MIN_NORMAL_PRIO) + rq->time_edge) %
-			SCHED_NORMAL_PRIO_NUM;
+			(prio + rq->time_edge) % SCHED_NORMAL_PRIO_NUM;
 		list_splice_tail_init(rq->queue.heads + idx, &head);
 	}
-	sched_shift_normal_bitmap(rq->queue.bitmap, delta);
+	rq->queue.bitmap[2] >>= delta;
 	rq->time_edge = now;
 	if (!list_empty(&head)) {
-		struct task_struct *p;
 		u64 new_idx = MIN_NORMAL_PRIO + now % SCHED_NORMAL_PRIO_NUM;
+		struct task_struct *p;
 
 		list_for_each_entry(p, &head, sq_node)
 			p->sq_idx = new_idx;
 
 		list_splice(&head, rq->queue.heads + new_idx);
-		set_bit(MIN_NORMAL_PRIO, rq->queue.bitmap);
+		rq->queue.bitmap[2] |= 1UL;
 	}
 }
 
@@ -150,11 +133,6 @@ static inline void sched_task_sanity_check(struct task_struct *p, struct rq *rq)
 {
 	if (unlikely(p->deadline > rq->clock + 40 * SCHED_PRIO_SLOT))
 		p->deadline = rq->clock + 40 * SCHED_PRIO_SLOT;
-}
-
-static inline void sched_imp_init(void)
-{
-	bitmap_set(normal_mask, MIN_NORMAL_PRIO, SCHED_NORMAL_PRIO_NUM);
 }
 
 /*
