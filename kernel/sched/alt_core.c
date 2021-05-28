@@ -77,7 +77,7 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 #define STOP_PRIO		(MAX_RT_PRIO - 1)
 
 /* Default time slice is 4 in ms, can be set via kernel parameter "sched_timeslice" */
-u64 sched_timeslice_ns __read_mostly = (4 << 20);
+u64 sched_timeslice_ns __read_mostly = (2 << 20);
 
 static int __init sched_timeslice(char *str)
 {
@@ -6689,6 +6689,7 @@ void __init sched_init(void)
 	struct rq *rq;
 
 	printk(KERN_INFO ALT_SCHED_VERSION_MSG);
+	sched_imp_init();
 
 	wait_bit_init();
 
