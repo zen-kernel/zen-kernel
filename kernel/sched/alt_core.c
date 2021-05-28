@@ -77,7 +77,7 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 #define STOP_PRIO		(MAX_RT_PRIO - 1)
 
 /* Default time slice is 4 in ms, can be set via kernel parameter "sched_timeslice" */
-u64 sched_timeslice_ns __read_mostly = (4 * 1000 * 1000);
+u64 sched_timeslice_ns __read_mostly = (4 << 20);
 
 static int __init sched_timeslice(char *str)
 {
@@ -85,14 +85,14 @@ static int __init sched_timeslice(char *str)
 
 	get_option(&str, &timeslice_us);
 	if (timeslice_us >= 1000)
-		sched_timeslice_ns = timeslice_us * 1000;
+		sched_timeslice_ns = (timeslice_us / 1000) << 20;
 
 	return 0;
 }
 early_param("sched_timeslice", sched_timeslice);
 
 /* Reschedule if less than this many μs left */
-#define RESCHED_NS		(100 * 1000)
+#define RESCHED_NS		(100 << 10)
 
 /**
  * sched_yield_type - Choose what sort of yield sched_yield will perform.
