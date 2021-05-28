@@ -36,6 +36,8 @@ static inline void deboost_task(struct task_struct *p)
 /*
  * Common interfaces
  */
+static inline void sched_imp_init(void) {}
+
 static inline int normal_prio(struct task_struct *p)
 {
 	if (task_has_rt_policy(p))
