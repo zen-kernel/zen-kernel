@@ -2,8 +2,6 @@
 
 static u64 user_prio2deadline[NICE_WIDTH];
 
-#define DEFAULT_SCHED_PRIO (MIN_NORMAL_PRIO + SCHED_NORMAL_PRIO_NUM / 2)
-
 extern int alt_debug[20];
 
 static inline int
@@ -14,10 +12,10 @@ task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 	if (unlikely(delta > SCHED_NORMAL_PRIO_NUM - 1)) {
 		pr_info("pds: task_sched_prio_normal delta %lld, deadline %llu(%llu), time_edge %llu\n",
 			delta, p->deadline, p->deadline >> 21, rq->time_edge);
-		delta = SCHED_NORMAL_PRIO_NUM - 1ULL;
+		return SCHED_NORMAL_PRIO_NUM - 1ULL;
 	}
 
-	return (delta < 0)? 0:delta;
+	return (delta < 0) ? 0 : delta;
 }
 
 static inline int
@@ -72,15 +70,13 @@ static inline void sched_imp_init(void)
 
 static inline int normal_prio(struct task_struct *p)
 {
-	if (task_has_rt_policy(p))
-		return MAX_RT_PRIO - 1 - p->rt_priority;
-
-	return MAX_RT_PRIO;
+	return task_has_rt_policy(p) ? (MAX_RT_PRIO - 1 - p->rt_priority) :
+		MAX_RT_PRIO;
 }
 
 int task_running_nice(struct task_struct *p)
 {
-	return task_sched_prio(p) > DEFAULT_SCHED_PRIO;
+	return task_sched_prio(p) > DEFAULT_PRIO;
 }
 
 static inline void update_rq_time_edge(struct rq *rq)
