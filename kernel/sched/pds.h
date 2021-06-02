@@ -7,7 +7,8 @@ extern int alt_debug[20];
 static inline int
 task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 {
-	s64 delta = (p->deadline >> 21) - rq->time_edge  - 1;
+	s64 delta = (p->deadline >> 21) - rq->time_edge +
+		SCHED_NORMAL_PRIO_NUM - NICE_WIDTH - 1;
 
 	if (unlikely(delta > SCHED_NORMAL_PRIO_NUM - 1)) {
 		pr_info("pds: task_sched_prio_normal delta %lld, deadline %llu(%llu), time_edge %llu\n",
@@ -51,8 +52,8 @@ static inline unsigned long sched_idx2prio(unsigned long idx, struct rq *rq)
 static inline void sched_renew_deadline(struct task_struct *p, const struct rq *rq)
 {
 	if (p->prio >= MAX_RT_PRIO)
-		p->deadline = rq->clock +
-			user_prio2deadline[p->static_prio - MIN_NORMAL_PRIO];
+		p->deadline = rq->clock + user_prio2deadline[p->static_prio -
+			(MAX_PRIO - NICE_WIDTH)];
 }
 
 /*
@@ -95,8 +96,7 @@ static inline void update_rq_time_edge(struct rq *rq)
 	for_each_set_bit(prio, &rq->queue.bitmap[2], delta) {
 		u64 idx;
 
-		idx = MIN_NORMAL_PRIO +
-			(prio + rq->time_edge) % SCHED_NORMAL_PRIO_NUM;
+		idx = MIN_NORMAL_PRIO + (prio + old) % SCHED_NORMAL_PRIO_NUM;
 		list_splice_tail_init(rq->queue.heads + idx, &head);
 	}
 	rq->queue.bitmap[2] >>= delta;
@@ -220,7 +220,7 @@ static void sched_task_fork(struct task_struct *p, struct rq *rq)
 int task_prio(const struct task_struct *p)
 {
 	return (p->prio < MAX_RT_PRIO) ? p->prio - MAX_RT_PRIO :
-		task_sched_prio(p) - MIN_NORMAL_PRIO;
+		task_sched_prio_normal(p, task_rq(p));
 }
 
 static void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
