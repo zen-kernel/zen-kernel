@@ -26,7 +26,7 @@
 
 /* +/- priority levels from the base priority */
 #ifdef CONFIG_SCHED_BMQ
-#define MAX_PRIORITY_ADJ	7
+#define MAX_PRIORITY_ADJ	(7)
 
 #define MIN_NORMAL_PRIO		(MAX_RT_PRIO)
 #define MAX_PRIO		(MIN_NORMAL_PRIO + NICE_WIDTH)
@@ -34,11 +34,12 @@
 #endif
 
 #ifdef CONFIG_SCHED_PDS
-#define MAX_PRIORITY_ADJ	0
+#define MAX_PRIORITY_ADJ	(0)
 
 #define MIN_NORMAL_PRIO		(128)
-#define MAX_PRIO		(MIN_NORMAL_PRIO + NICE_WIDTH)
-#define DEFAULT_PRIO		(MIN_NORMAL_PRIO + NICE_WIDTH / 2)
+#define NORMAL_PRIO_NUM		(64)
+#define MAX_PRIO		(MIN_NORMAL_PRIO + NORMAL_PRIO_NUM)
+#define DEFAULT_PRIO		(MAX_PRIO - NICE_WIDTH / 2)
 #endif
 
 #endif /* CONFIG_SCHED_ALT */
