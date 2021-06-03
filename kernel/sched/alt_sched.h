@@ -56,9 +56,8 @@
 #endif
 
 #ifdef CONFIG_SCHED_PDS
-#define SCHED_NORMAL_PRIO_NUM	(NORMAL_PRIO_NUM)
-/* bits: RT(0-99), reserved(100-127), SCHED_NORMAL_PRIO_NUM, cpu idle task */
-#define SCHED_BITS	(MIN_NORMAL_PRIO + SCHED_NORMAL_PRIO_NUM + 1)
+/* bits: RT(0-99), reserved(100-127), NORMAL_PRIO_NUM, cpu idle task */
+#define SCHED_BITS	(MIN_NORMAL_PRIO + NORMAL_PRIO_NUM + 1)
 #endif /* CONFIG_SCHED_PDS */
 
 #define IDLE_TASK_SCHED_PRIO	(SCHED_BITS - 1)
