@@ -21,8 +21,7 @@ task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 	return (delta < 0) ? 0 : delta;
 }
 
-static inline int
-task_sched_prio(const struct task_struct *p)
+static inline int task_sched_prio(const struct task_struct *p)
 {
 	return (p->prio < MAX_RT_PRIO) ? p->prio :
 		MIN_NORMAL_PRIO + task_sched_prio_normal(p, task_rq(p));
@@ -93,23 +92,21 @@ static inline void update_rq_time_edge(struct rq *rq)
 	delta = min_t(u64, NORMAL_PRIO_NUM, now - old);
 	INIT_LIST_HEAD(&head);
 
-	for_each_set_bit(prio, &rq->queue.bitmap[2], delta) {
-		u64 idx;
+	for_each_set_bit(prio, &rq->queue.bitmap[2], delta)
+		list_splice_tail_init(rq->queue.heads + MIN_NORMAL_PRIO +
+				      NORMAL_PRIO_MOD(prio + old), &head);
 
-		idx = MIN_NORMAL_PRIO + NORMAL_PRIO_MOD(prio + old);
-		list_splice_tail_init(rq->queue.heads + idx, &head);
-	}
 	rq->queue.bitmap[2] = (NORMAL_PRIO_NUM == delta) ? 0UL :
 		rq->queue.bitmap[2] >> delta;
 	rq->time_edge = now;
 	if (!list_empty(&head)) {
-		u64 new_idx = MIN_NORMAL_PRIO + NORMAL_PRIO_MOD(now);
+		u64 idx = MIN_NORMAL_PRIO + NORMAL_PRIO_MOD(now);
 		struct task_struct *p;
 
 		list_for_each_entry(p, &head, sq_node)
-			p->sq_idx = new_idx;
+			p->sq_idx = idx;
 
-		list_splice(&head, rq->queue.heads + new_idx);
+		list_splice(&head, rq->queue.heads + idx);
 		rq->queue.bitmap[2] |= 1UL;
 	}
 }
@@ -118,7 +115,6 @@ static inline void requeue_task(struct task_struct *p, struct rq *rq);
 
 static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 {
-	/*printk(KERN_INFO "sched: time_slice_expired(%d) - %px\n", cpu_of(rq), p);*/
 	p->time_slice = sched_timeslice_ns;
 	sched_renew_deadline(p, rq);
 	if (SCHED_FIFO != p->policy && task_on_rq_queued(p))
