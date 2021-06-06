@@ -6,6 +6,9 @@ extern int alt_debug[20];
 
 #define NORMAL_PRIO_MOD(x)	((x) & (NORMAL_PRIO_NUM - 1))
 
+/*
+ * Common interfaces
+ */
 static inline int
 task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 {
@@ -55,9 +58,6 @@ static inline void sched_renew_deadline(struct task_struct *p, const struct rq *
 			(MAX_PRIO - NICE_WIDTH)];
 }
 
-/*
- * Common interfaces
- */
 static inline void sched_imp_init(void)
 {
 	int i;
@@ -111,8 +111,6 @@ static inline void update_rq_time_edge(struct rq *rq)
 	}
 }
 
-static inline void requeue_task(struct task_struct *p, struct rq *rq);
-
 static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 {
 	p->time_slice = sched_timeslice_ns;
@@ -127,97 +125,9 @@ static inline void sched_task_sanity_check(struct task_struct *p, struct rq *rq)
 		p->deadline = rq->clock + user_prio2deadline[NICE_WIDTH - 1];
 }
 
-/*
- * This routine assume that the idle task always in queue
- */
-static inline struct task_struct *sched_rq_first_task(struct rq *rq)
-{
-	unsigned long idx = find_first_bit(rq->queue.bitmap, SCHED_QUEUE_BITS);
-	const struct list_head *head = &rq->queue.heads[sched_prio2idx(idx, rq)];
-
-	return list_first_entry(head, struct task_struct, sq_node);
-}
-
-static inline struct task_struct *
-sched_rq_next_task(struct task_struct *p, struct rq *rq)
-{
-	unsigned long idx = p->sq_idx;
-	struct list_head *head = &rq->queue.heads[idx];
-
-	if (list_is_last(&p->sq_node, head)) {
-		idx = find_next_bit(rq->queue.bitmap, SCHED_QUEUE_BITS,
-				    sched_idx2prio(idx, rq) + 1);
-		head = &rq->queue.heads[sched_prio2idx(idx, rq)];
-
-		return list_first_entry(head, struct task_struct, sq_node);
-	}
-
-	return list_next_entry(p, sq_node);
-}
-
-#define __SCHED_DEQUEUE_TASK(p, rq, flags, func)		\
-	psi_dequeue(p, flags & DEQUEUE_SLEEP);			\
-	sched_info_dequeued(rq, p);				\
-								\
-	list_del(&p->sq_node);					\
-	if (list_empty(&rq->queue.heads[p->sq_idx])) {		\
-		clear_bit(sched_idx2prio(p->sq_idx, rq),	\
-			  rq->queue.bitmap);			\
-		func;						\
-	}
-
-#define __SCHED_ENQUEUE_TASK(p, rq, flags)				\
-	sched_info_queued(rq, p);					\
-	psi_enqueue(p, flags);						\
-									\
-	p->sq_idx = task_sched_prio_idx(p, rq);				\
-	list_add_tail(&p->sq_node, &rq->queue.heads[p->sq_idx]);	\
-	set_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);
-
-/*
- * Requeue a task @p to @rq
- */
-#define __SCHED_REQUEUE_TASK(p, rq, func)					\
-{\
-	int idx = task_sched_prio_idx(p, rq);					\
-\
-	list_del(&p->sq_node);							\
-	list_add_tail(&p->sq_node, &rq->queue.heads[idx]);			\
-	if (idx != p->sq_idx) {							\
-		if (list_empty(&rq->queue.heads[p->sq_idx]))			\
-			clear_bit(sched_idx2prio(p->sq_idx, rq),		\
-				  rq->queue.bitmap);				\
-		p->sq_idx = idx;						\
-		set_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);	\
-		func;								\
-	}									\
-}
-
-static inline bool sched_task_need_requeue(struct task_struct *p, struct rq *rq)
-{
-	return (task_sched_prio_idx(p, rq) != p->sq_idx);
-}
-
 static void sched_task_fork(struct task_struct *p, struct rq *rq)
 {
 	sched_renew_deadline(p, rq);
-}
-
-/**
- * task_prio - return the priority value of a given task.
- * @p: the task in question.
- *
- * Return: The priority value as seen by users in /proc.
- *
- * sched policy         return value   kernel prio    user prio/nice
- *
- * normal, batch, idle     [0 ... 39]            100          0/[-20 ... 19]
- * fifo, rr             [-1 ... -100]     [99 ... 0]  [0 ... 99]
- */
-int task_prio(const struct task_struct *p)
-{
-	return (p->prio < MAX_RT_PRIO) ? p->prio - MAX_RT_PRIO :
-		task_sched_prio_normal(p, task_rq(p));
 }
 
 static void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
