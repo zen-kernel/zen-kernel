@@ -36,6 +36,33 @@ static inline void deboost_task(struct task_struct *p)
 /*
  * Common interfaces
  */
+static inline int
+task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
+{
+	return p->prio + p->boost_prio - MAX_RT_PRIO;
+}
+
+static inline int task_sched_prio(const struct task_struct *p)
+{
+	return (p->prio < MAX_RT_PRIO)? p->prio : MAX_RT_PRIO / 2 + (p->prio + p->boost_prio) / 2;
+}
+
+static inline int
+task_sched_prio_idx(const struct task_struct *p, const struct rq *rq)
+{
+	return task_sched_prio(p);
+}
+
+static inline unsigned long sched_prio2idx(unsigned long prio, struct rq *rq)
+{
+	return prio;
+}
+
+static inline unsigned long sched_idx2prio(unsigned long idx, struct rq *rq)
+{
+	return idx;
+}
+
 static inline void sched_imp_init(void) {}
 
 static inline int normal_prio(struct task_struct *p)
@@ -45,13 +72,6 @@ static inline int normal_prio(struct task_struct *p)
 
 	return p->static_prio + MAX_PRIORITY_ADJ;
 }
-
-static inline int task_sched_prio(struct task_struct *p)
-{
-	return (p->prio < MAX_RT_PRIO)? p->prio : MAX_RT_PRIO / 2 + (p->prio + p->boost_prio) / 2;
-}
-
-static inline void requeue_task(struct task_struct *p, struct rq *rq);
 
 static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 {
@@ -71,93 +91,10 @@ inline int task_running_nice(struct task_struct *p)
 	return (p->prio + p->boost_prio > DEFAULT_PRIO + MAX_PRIORITY_ADJ);
 }
 
-/*
- * This routine used in bmq scheduler only which assume the idle task in the bmq
- */
-static inline struct task_struct *sched_rq_first_task(struct rq *rq)
-{
-	unsigned long idx = find_first_bit(rq->queue.bitmap, SCHED_QUEUE_BITS);
-	const struct list_head *head = &rq->queue.heads[idx];
-
-	return list_first_entry(head, struct task_struct, sq_node);
-}
-
-static inline struct task_struct *
-sched_rq_next_task(struct task_struct *p, struct rq *rq)
-{
-	unsigned long idx = p->sq_idx;
-	struct list_head *head = &rq->queue.heads[idx];
-
-	if (list_is_last(&p->sq_node, head)) {
-		idx = find_next_bit(rq->queue.bitmap, SCHED_QUEUE_BITS, idx + 1);
-		head = &rq->queue.heads[idx];
-
-		return list_first_entry(head, struct task_struct, sq_node);
-	}
-
-	return list_next_entry(p, sq_node);
-}
-
-#define __SCHED_DEQUEUE_TASK(p, rq, flags, func)	\
-	psi_dequeue(p, flags & DEQUEUE_SLEEP);		\
-	sched_info_dequeued(rq, p);			\
-							\
-	list_del(&p->sq_node);				\
-	if (list_empty(&rq->queue.heads[p->sq_idx])) {	\
-		clear_bit(p->sq_idx, rq->queue.bitmap);	\
-		func;					\
-	}
-
-#define __SCHED_ENQUEUE_TASK(p, rq, flags)				\
-	sched_info_queued(rq, p);					\
-	psi_enqueue(p, flags);						\
-									\
-	p->sq_idx = task_sched_prio(p);					\
-	list_add_tail(&p->sq_node, &rq->queue.heads[p->sq_idx]);	\
-	set_bit(p->sq_idx, rq->queue.bitmap)
-
-#define __SCHED_REQUEUE_TASK(p, rq, func)				\
-{									\
-	int idx = task_sched_prio(p);					\
-\
-	list_del(&p->sq_node);						\
-	list_add_tail(&p->sq_node, &rq->queue.heads[idx]);		\
-	if (idx != p->sq_idx) {						\
-		if (list_empty(&rq->queue.heads[p->sq_idx]))		\
-			clear_bit(p->sq_idx, rq->queue.bitmap);		\
-		p->sq_idx = idx;					\
-		set_bit(p->sq_idx, rq->queue.bitmap);			\
-		func;							\
-	}								\
-}
-
-static inline bool sched_task_need_requeue(struct task_struct *p, struct rq *rq)
-{
-	return (task_sched_prio(p) != p->sq_idx);
-}
-
 static void sched_task_fork(struct task_struct *p, struct rq *rq)
 {
 	p->boost_prio = (p->boost_prio < 0) ?
 		p->boost_prio + MAX_PRIORITY_ADJ : MAX_PRIORITY_ADJ;
-}
-
-/**
- * task_prio - return the priority value of a given task.
- * @p: the task in question.
- *
- * Return: The priority value as seen by users in /proc.
- *
- * sched policy         return value   kernel prio    user prio/nice/boost
- *
- * normal, batch, idle     [0 ... 53]  [100 ... 139]          0/[-20 ... 19]/[-7 ... 7]
- * fifo, rr             [-1 ... -100]     [99 ... 0]  [0 ... 99]
- */
-int task_prio(const struct task_struct *p)
-{
-	if (p->prio < MAX_RT_PRIO)
-		return (p->prio - MAX_RT_PRIO);
-	return (p->prio - MAX_RT_PRIO + p->boost_prio);
 }
 
 static void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
