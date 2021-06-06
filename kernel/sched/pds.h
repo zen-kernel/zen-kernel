@@ -1,6 +1,7 @@
 #define ALT_SCHED_VERSION_MSG "sched/pds: PDS CPU Scheduler "ALT_SCHED_VERSION" by Alfred Chen.\n"
 
 static u64 user_prio2deadline[NICE_WIDTH];
+static int sched_timeslice_shift = 22;
 
 extern int alt_debug[20];
 
@@ -9,15 +10,21 @@ extern int alt_debug[20];
 /*
  * Common interfaces
  */
+static inline void sched_timeslice_imp(const int timeslice_ms)
+{
+	if (2 == timeslice_ms)
+		sched_timeslice_shift = 21;
+}
+
 static inline int
 task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 {
-	s64 delta = (p->deadline >> 21) - rq->time_edge +
+	s64 delta = (p->deadline >> sched_timeslice_shift) - rq->time_edge +
 		NORMAL_PRIO_NUM - NICE_WIDTH - 1;
 
 	if (unlikely(delta > NORMAL_PRIO_NUM - 1)) {
 		pr_info("pds: task_sched_prio_normal delta %lld, deadline %llu(%llu), time_edge %llu\n",
-			delta, p->deadline, p->deadline >> 21, rq->time_edge);
+			delta, p->deadline, p->deadline >> sched_timeslice_shift, rq->time_edge);
 		return NORMAL_PRIO_NUM - 1;
 	}
 
@@ -83,7 +90,7 @@ static inline void update_rq_time_edge(struct rq *rq)
 {
 	struct list_head head;
 	u64 old = rq->time_edge;
-	u64 now = rq->clock >> 21;
+	u64 now = rq->clock >> sched_timeslice_shift;
 	u64 prio, delta;
 
 	if (now == old)

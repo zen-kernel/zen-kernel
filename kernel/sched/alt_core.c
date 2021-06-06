@@ -79,13 +79,24 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 /* Default time slice is 4 in ms, can be set via kernel parameter "sched_timeslice" */
 u64 sched_timeslice_ns __read_mostly = (2 << 20);
 
+static inline void requeue_task(struct task_struct *p, struct rq *rq);
+
+#ifdef CONFIG_SCHED_BMQ
+#include "bmq.h"
+#endif
+#ifdef CONFIG_SCHED_PDS
+#include "pds.h"
+#endif
+
 static int __init sched_timeslice(char *str)
 {
-	int timeslice_us;
+	int timeslice_ms;
 
-	get_option(&str, &timeslice_us);
-	if (timeslice_us >= 1000)
-		sched_timeslice_ns = (timeslice_us / 1000) << 20;
+	get_option(&str, &timeslice_ms);
+	if (2 != timeslice_ms)
+		timeslice_ms = 4;
+	sched_timeslice_ns = timeslice_ms << 20;
+	sched_timeslice_imp(timeslice_ms);
 
 	return 0;
 }
@@ -141,15 +152,6 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 static cpumask_t sched_sg_idle_mask ____cacheline_aligned_in_smp;
 #endif
 static cpumask_t sched_rq_watermark[SCHED_BITS] ____cacheline_aligned_in_smp;
-
-static inline void requeue_task(struct task_struct *p, struct rq *rq);
-
-#ifdef CONFIG_SCHED_BMQ
-#include "bmq.h"
-#endif
-#ifdef CONFIG_SCHED_PDS
-#include "pds.h"
-#endif
 
 /* sched_queue related functions */
 static inline void sched_queue_init(struct sched_queue *q)
