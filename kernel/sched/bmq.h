@@ -36,6 +36,8 @@ static inline void deboost_task(struct task_struct *p)
 /*
  * Common interfaces
  */
+static inline void sched_timeslice_imp(const int timeslice_ms) {}
+
 static inline int
 task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 {
