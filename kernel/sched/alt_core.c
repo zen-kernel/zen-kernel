@@ -3902,15 +3902,7 @@ void alt_sched_debug(void)
 	       sched_sg_idle_mask.bits[0]);
 }
 #else
-int alt_debug[20];
-
-inline void alt_sched_debug(void)
-{
-	int i;
-
-	for (i = 0; i < 6; i++)
-		printk(KERN_INFO "sched: %d\n", alt_debug[i]);
-}
+inline void alt_sched_debug(void) {}
 #endif
 
 #ifdef	CONFIG_SMP
@@ -6768,7 +6760,6 @@ void __init sched_init(void)
 	struct rq *rq;
 
 	printk(KERN_INFO ALT_SCHED_VERSION_MSG);
-	sched_imp_init();
 
 	wait_bit_init();
 
