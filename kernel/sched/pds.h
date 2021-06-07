@@ -1,9 +1,6 @@
 #define ALT_SCHED_VERSION_MSG "sched/pds: PDS CPU Scheduler "ALT_SCHED_VERSION" by Alfred Chen.\n"
 
-static u64 user_prio2deadline[NICE_WIDTH];
 static int sched_timeslice_shift = 22;
-
-extern int alt_debug[20];
 
 #define NORMAL_PRIO_MOD(x)	((x) & (NORMAL_PRIO_NUM - 1))
 
@@ -19,12 +16,11 @@ static inline void sched_timeslice_imp(const int timeslice_ms)
 static inline int
 task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 {
-	s64 delta = (p->deadline >> sched_timeslice_shift) - rq->time_edge +
-		NORMAL_PRIO_NUM - NICE_WIDTH - 1;
+	s64 delta = p->deadline - rq->time_edge + NORMAL_PRIO_NUM - NICE_WIDTH;
 
 	if (unlikely(delta > NORMAL_PRIO_NUM - 1)) {
-		pr_info("pds: task_sched_prio_normal delta %lld, deadline %llu(%llu), time_edge %llu\n",
-			delta, p->deadline, p->deadline >> sched_timeslice_shift, rq->time_edge);
+		pr_info("pds: task_sched_prio_normal delta %lld, deadline %llu, time_edge %llu\n",
+			delta, p->deadline, rq->time_edge);
 		return NORMAL_PRIO_NUM - 1;
 	}
 
@@ -61,18 +57,8 @@ static inline unsigned long sched_idx2prio(unsigned long idx, struct rq *rq)
 static inline void sched_renew_deadline(struct task_struct *p, const struct rq *rq)
 {
 	if (p->prio >= MAX_RT_PRIO)
-		p->deadline = rq->clock + user_prio2deadline[p->static_prio -
-			(MAX_PRIO - NICE_WIDTH)];
-}
-
-static inline void sched_imp_init(void)
-{
-	int i;
-
-	user_prio2deadline[0] = sched_timeslice_ns;
-	for (i = 1; i < NICE_WIDTH; i++)
-		user_prio2deadline[i] =
-			user_prio2deadline[i - 1] + sched_timeslice_ns;
+		p->deadline = (rq->clock >> sched_timeslice_shift) +
+			p->static_prio - (MAX_PRIO - NICE_WIDTH);
 }
 
 static inline int normal_prio(struct task_struct *p)
@@ -128,8 +114,9 @@ static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 
 static inline void sched_task_sanity_check(struct task_struct *p, struct rq *rq)
 {
-	if (unlikely(p->deadline > rq->clock + user_prio2deadline[NICE_WIDTH - 1]))
-		p->deadline = rq->clock + user_prio2deadline[NICE_WIDTH - 1];
+	u64 max_dl = rq->time_edge + NICE_WIDTH - 1;
+	if (unlikely(p->deadline > max_dl))
+		p->deadline = max_dl;
 }
 
 static void sched_task_fork(struct task_struct *p, struct rq *rq)
