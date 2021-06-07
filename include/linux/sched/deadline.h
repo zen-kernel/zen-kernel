@@ -12,7 +12,7 @@ static inline int dl_task(struct task_struct *p)
 #endif
 
 #ifdef CONFIG_SCHED_PDS
-#define __tsk_deadline(p)	((((u64) ((p)->prio))<<56) | (((p)->deadline)>>8))
+#define __tsk_deadline(p)	((((u64) ((p)->prio))<<56) | (p)->deadline)
 #endif
 
 #else
