@@ -3342,7 +3342,6 @@ void scheduler_tick(void)
 
 	scheduler_task_tick(rq);
 	calc_global_load_tick(rq);
-	psi_task_tick(rq);
 
 	rq->last_tick = rq->clock;
 	raw_spin_unlock(&rq->lock);
