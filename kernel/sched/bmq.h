@@ -65,8 +65,6 @@ static inline unsigned long sched_idx2prio(unsigned long idx, struct rq *rq)
 	return idx;
 }
 
-static inline void sched_imp_init(void) {}
-
 static inline int normal_prio(struct task_struct *p)
 {
 	if (task_has_rt_policy(p))
