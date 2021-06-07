@@ -683,4 +683,5 @@ static inline int sched_numa_find_closest(const struct cpumask *cpus, int cpu)
 void swake_up_all_locked(struct swait_queue_head *q);
 void __prepare_to_swait(struct swait_queue_head *q, struct swait_queue *wait);
 
+static inline void nohz_run_idle_balance(int cpu) { }
 #endif /* ALT_SCHED_H */
