@@ -175,7 +175,6 @@ struct rq {
 	struct cpu_stop_work	active_balance_work;
 #endif
 	struct callback_head	*balance_callback;
-	unsigned char		balance_push;
 #ifdef CONFIG_HOTPLUG_CPU
 	struct rcuwait		hotplug_wait;
 #endif
