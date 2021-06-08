@@ -1247,7 +1247,7 @@ static inline bool is_cpu_allowed(struct task_struct *p, int cpu)
 		return cpu_online(cpu);
 
 	/* Regular kernel threads don't get to stay during offline. */
-	if (cpu_rq(cpu)->balance_push)
+	if (cpu_dying(cpu))
 		return false;
 
 	/* But are allowed during online. */
@@ -6172,7 +6172,8 @@ static int __balance_push_cpu_stop(void *arg)
 static DEFINE_PER_CPU(struct cpu_stop_work, push_work);
 
 /*
- * Ensure we only run per-cpu kthreads once the CPU goes !active.
+ * This is enabled below SCHED_AP_ACTIVE; when !cpu_active(), but only
+ * effective when the hotplug motion is down.
  */
 static void balance_push(struct rq *rq)
 {
@@ -6180,10 +6181,17 @@ static void balance_push(struct rq *rq)
 
 	lockdep_assert_held(&rq->lock);
 	SCHED_WARN_ON(rq->cpu != smp_processor_id());
+
 	/*
 	 * Ensure the thing is persistent until balance_push_set(.on = false);
 	 */
 	rq->balance_callback = &balance_push_callback;
+
+	/*
+	 * Only active while going offline.
+	 */
+	if (!cpu_dying(rq->cpu))
+		return;
 
 	/*
 	 * Both the cpu-hotplug and stop task are in this case and are
@@ -6238,7 +6246,6 @@ static void balance_push_set(int cpu, bool on)
 	struct rq_flags rf;
 
 	rq_lock_irqsave(rq, &rf);
-	rq->balance_push = on;
 	if (on) {
 		WARN_ON_ONCE(rq->balance_callback);
 		rq->balance_callback = &balance_push_callback;
@@ -6343,8 +6350,8 @@ int sched_cpu_activate(unsigned int cpu)
 	unsigned long flags;
 
 	/*
-	 * Make sure that when the hotplug state machine does a roll-back
-	 * we clear balance_push. Ideally that would happen earlier...
+	 * Clear the balance_push callback and prepare to schedule
+	 * regular tasks.
 	 */
 	balance_push_set(cpu, false);
 
@@ -6517,12 +6524,6 @@ int sched_cpu_dying(unsigned int cpu)
 	}
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
 
-	/*
-	 * Now that the CPU is offline, make sure we're welcome
-	 * to new tasks once we come back up.
-	 */
-	balance_push_set(cpu, false);
-
 	calc_load_migrate(rq);
 	hrtick_clear(rq);
 	return 0;
@@ -6691,7 +6692,7 @@ void __init sched_init(void)
 #ifdef CONFIG_NO_HZ_COMMON
 		INIT_CSD(&rq->nohz_csd, nohz_csd_func, rq);
 #endif
-		rq->balance_callback = NULL;
+		rq->balance_callback = &balance_push_callback;
 #ifdef CONFIG_HOTPLUG_CPU
 		rcuwait_init(&rq->hotplug_wait);
 #endif
@@ -6723,6 +6724,7 @@ void __init sched_init(void)
 
 #ifdef CONFIG_SMP
 	idle_thread_set_boot_cpu();
+	balance_push_set(smp_processor_id(), false);
 
 	sched_init_topology_cpumask_early();
 #endif /* SMP */
