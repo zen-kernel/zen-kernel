@@ -27,14 +27,15 @@ CFLAGS_core.o := $(PROFILING) -fno-omit-frame-pointer
 endif
 
 ifdef CONFIG_SCHED_ALT
-obj-y += alt_core.o alt_debug.o
+obj-y += alt_core.o
+obj-$(CONFIG_SCHED_DEBUG) += alt_debug.o
 else
 obj-y += core.o
 obj-y += fair.o rt.o deadline.o
 obj-$(CONFIG_SMP) += cpudeadline.o stop_task.o
 obj-$(CONFIG_SCHED_AUTOGROUP) += autogroup.o
-obj-$(CONFIG_SCHED_DEBUG) += debug.o
 endif
+obj-$(CONFIG_SCHED_DEBUG) += debug.o
 obj-y += loadavg.o clock.o cputime.o
 obj-y += idle.o
 obj-y += wait.o wait_bit.o swait.o completion.o
