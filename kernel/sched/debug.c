@@ -7,6 +7,7 @@
  * Copyright(C) 2007, Red Hat, Inc., Ingo Molnar
  */
 
+#ifndef CONFIG_SCHED_ALT
 /*
  * This allows printing both to /sys/kernel/debug/sched/debug and
  * to the console
@@ -215,6 +216,7 @@ static const struct file_operations sched_scaling_fops = {
 };
 
 #endif /* SMP */
+#endif /* !CONFIG_SCHED_ALT */
 
 #ifdef CONFIG_PREEMPT_DYNAMIC
 
@@ -278,6 +280,7 @@ static const struct file_operations sched_dynamic_fops = {
 
 #endif /* CONFIG_PREEMPT_DYNAMIC */
 
+#ifndef CONFIG_SCHED_ALT
 __read_mostly bool sched_debug_verbose;
 
 #ifdef CONFIG_SMP
@@ -332,6 +335,7 @@ static const struct file_operations sched_debug_fops = {
 	.llseek		= seq_lseek,
 	.release	= seq_release,
 };
+#endif /* !CONFIG_SCHED_ALT */
 
 static struct dentry *debugfs_sched;
 
@@ -341,8 +345,11 @@ static __init int sched_init_debug(void)
 
 	debugfs_sched = debugfs_create_dir("sched", NULL);
 
+#ifndef CONFIG_SCHED_ALT
 	debugfs_create_file("features", 0644, debugfs_sched, NULL, &sched_feat_fops);
 	debugfs_create_file_unsafe("verbose", 0644, debugfs_sched, &sched_debug_verbose, &sched_verbose_fops);
+	debugfs_create_bool("verbose", 0644, debugfs_sched, &sched_debug_verbose);
+#endif /* !CONFIG_SCHED_ALT */
 #ifdef CONFIG_PREEMPT_DYNAMIC
 	debugfs_create_file("preempt", 0644, debugfs_sched, NULL, &sched_dynamic_fops);
 #endif
@@ -374,11 +381,13 @@ static __init int sched_init_debug(void)
 #endif
 
 	debugfs_create_file("debug", 0444, debugfs_sched, NULL, &sched_debug_fops);
+#endif /* !CONFIG_SCHED_ALT */
 
 	return 0;
 }
 late_initcall(sched_init_debug);
 
+#ifndef CONFIG_SCHED_ALT
 #ifdef CONFIG_SMP
 
 static cpumask_var_t		sd_sysctl_cpus;
@@ -1122,3 +1131,4 @@ void resched_latency_warn(int cpu, u64 latency)
 	     "without schedule\n",
 	     cpu, latency, cpu_rq(cpu)->ticks_without_resched);
 }
+#endif /* !CONFIG_SCHED_ALT */
