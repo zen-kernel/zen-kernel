@@ -60,6 +60,7 @@
 # define SCHED_WARN_ON(x)	WARN_ONCE(x, #x)
 #else
 # define SCHED_WARN_ON(x)	({ (void)(x), 0; })
+static inline void resched_latency_warn(int cpu, u64 latency) {}
 #endif
 
 /*
@@ -679,8 +680,14 @@ static inline int sched_numa_find_closest(const struct cpumask *cpus, int cpu)
 }
 #endif
 
-void swake_up_all_locked(struct swait_queue_head *q);
-void __prepare_to_swait(struct swait_queue_head *q, struct swait_queue *wait);
+extern void swake_up_all_locked(struct swait_queue_head *q);
+extern void __prepare_to_swait(struct swait_queue_head *q, struct swait_queue *wait);
+
+#ifdef CONFIG_PREEMPT_DYNAMIC
+extern int preempt_dynamic_mode;
+extern int sched_dynamic_mode(const char *str);
+extern void sched_dynamic_update(int mode);
+#endif
 
 static inline void nohz_run_idle_balance(int cpu) { }
 #endif /* ALT_SCHED_H */
