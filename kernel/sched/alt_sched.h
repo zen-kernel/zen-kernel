@@ -58,6 +58,7 @@
 
 #ifdef CONFIG_SCHED_DEBUG
 # define SCHED_WARN_ON(x)	WARN_ONCE(x, #x)
+extern void resched_latency_warn(int cpu, u64 latency);
 #else
 # define SCHED_WARN_ON(x)	({ (void)(x), 0; })
 static inline void resched_latency_warn(int cpu, u64 latency) {}
@@ -154,6 +155,11 @@ struct rq {
 	u64 nr_switches;
 
 	atomic_t nr_iowait;
+
+#ifdef CONFIG_SCHED_DEBUG
+	u64 last_seen_need_resched_ns;
+	int ticks_without_resched;
+#endif
 
 #ifdef CONFIG_MEMBARRIER
 	int membarrier_state;
