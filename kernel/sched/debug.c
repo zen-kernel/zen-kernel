@@ -1282,6 +1282,7 @@ void proc_sched_set_task(struct task_struct *p)
 	memset(&p->stats, 0, sizeof(p->stats));
 #endif
 }
+#endif /* !CONFIG_SCHED_ALT */
 
 void resched_latency_warn(int cpu, u64 latency)
 {
@@ -1294,4 +1295,3 @@ void resched_latency_warn(int cpu, u64 latency)
 	       cpu, latency, cpu_rq(cpu)->ticks_without_resched);
 	dump_stack();
 }
-#endif /* !CONFIG_SCHED_ALT */
