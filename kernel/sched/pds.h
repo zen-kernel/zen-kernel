@@ -40,14 +40,14 @@ task_sched_prio_idx(const struct task_struct *p, const struct rq *rq)
 		NORMAL_PRIO_MOD(task_sched_prio_normal(p, rq) + rq->time_edge);
 }
 
-static inline unsigned long sched_prio2idx(unsigned long prio, struct rq *rq)
+static inline int sched_prio2idx(int prio, struct rq *rq)
 {
 	return (IDLE_TASK_SCHED_PRIO == prio || prio < MAX_RT_PRIO) ? prio :
 		MIN_NORMAL_PRIO + NORMAL_PRIO_MOD((prio - MIN_NORMAL_PRIO) +
 						  rq->time_edge);
 }
 
-static inline unsigned long sched_idx2prio(unsigned long idx, struct rq *rq)
+static inline int sched_idx2prio(int idx, struct rq *rq)
 {
 	return (idx < MAX_RT_PRIO) ? idx : MIN_NORMAL_PRIO +
 		NORMAL_PRIO_MOD((idx - MIN_NORMAL_PRIO) + NORMAL_PRIO_NUM -
