@@ -55,12 +55,12 @@ task_sched_prio_idx(const struct task_struct *p, const struct rq *rq)
 	return task_sched_prio(p);
 }
 
-static inline unsigned long sched_prio2idx(unsigned long prio, struct rq *rq)
+static inline int sched_prio2idx(int prio, struct rq *rq)
 {
 	return prio;
 }
 
-static inline unsigned long sched_idx2prio(unsigned long idx, struct rq *rq)
+static inline int sched_idx2prio(int idx, struct rq *rq)
 {
 	return idx;
 }
