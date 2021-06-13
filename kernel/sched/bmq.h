@@ -65,14 +65,6 @@ static inline int sched_idx2prio(int idx, struct rq *rq)
 	return idx;
 }
 
-static inline int normal_prio(struct task_struct *p)
-{
-	if (task_has_rt_policy(p))
-		return MAX_RT_PRIO - 1 - p->rt_priority;
-
-	return p->static_prio + MAX_PRIORITY_ADJ;
-}
-
 static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 {
 	p->time_slice = sched_timeslice_ns;
