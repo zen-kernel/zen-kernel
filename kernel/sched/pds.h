@@ -61,12 +61,6 @@ static inline void sched_renew_deadline(struct task_struct *p, const struct rq *
 			p->static_prio - (MAX_PRIO - NICE_WIDTH);
 }
 
-static inline int normal_prio(struct task_struct *p)
-{
-	return task_has_rt_policy(p) ? (MAX_RT_PRIO - 1 - p->rt_priority) :
-		MAX_RT_PRIO;
-}
-
 int task_running_nice(struct task_struct *p)
 {
 	return task_sched_prio(p) > DEFAULT_PRIO;
