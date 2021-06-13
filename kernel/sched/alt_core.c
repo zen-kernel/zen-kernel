@@ -1122,6 +1122,19 @@ static inline void hrtick_rq_init(struct rq *rq)
 #endif	/* CONFIG_SCHED_HRTICK */
 
 /*
+ * Calculate the expected normal priority: i.e. priority
+ * without taking RT-inheritance into account. Might be
+ * boosted by interactivity modifiers. Changes upon fork,
+ * setprio syscalls, and whenever the interactivity
+ * estimator recalculates.
+ */
+static inline int normal_prio(struct task_struct *p)
+{
+	return task_has_rt_policy(p) ? (MAX_RT_PRIO - 1 - p->rt_priority) :
+		p->static_prio + MAX_PRIORITY_ADJ;
+}
+
+/*
  * Calculate the current priority, i.e. the priority
  * taken into account by the scheduler. This value might
  * be boosted by RT tasks as it will be RT if the task got
