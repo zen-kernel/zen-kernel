@@ -75,15 +75,10 @@ struct task_struct init_task
 	.stack		= init_stack,
 	.usage		= REFCOUNT_INIT(2),
 	.flags		= PF_KTHREAD,
-#ifdef CONFIG_SCHED_BMQ
+#ifdef CONFIG_SCHED_ALT
 	.prio		= DEFAULT_PRIO + MAX_PRIORITY_ADJ,
 	.static_prio	= DEFAULT_PRIO,
 	.normal_prio	= DEFAULT_PRIO + MAX_PRIORITY_ADJ,
-#endif
-#ifdef CONFIG_SCHED_PDS
-	.prio		= MAX_RT_PRIO,
-	.static_prio	= DEFAULT_PRIO,
-	.normal_prio	= MAX_RT_PRIO,
 #else
 	.prio		= MAX_PRIO - 20,
 	.static_prio	= MAX_PRIO - 20,
