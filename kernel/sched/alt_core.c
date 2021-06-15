@@ -1344,12 +1344,13 @@ static int migration_cpu_stop(void *data)
 	struct migration_arg *arg = data;
 	struct task_struct *p = arg->task;
 	struct rq *rq = this_rq();
+	unsigned long flags;
 
 	/*
 	 * The original target CPU might have gone down and we might
 	 * be on another CPU but it doesn't matter.
 	 */
-	local_irq_disable();
+	local_irq_save(flags);
 	/*
 	 * We need to explicitly wake pending tasks before running
 	 * __migrate_task() such that we will not miss enforcing cpus_ptr
@@ -1367,9 +1368,8 @@ static int migration_cpu_stop(void *data)
 	if (task_rq(p) == rq && task_on_rq_queued(p))
 		rq = __migrate_task(rq, p, arg->dest_cpu);
 	raw_spin_unlock(&rq->lock);
-	raw_spin_unlock(&p->pi_lock);
+	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 
-	local_irq_enable();
 	return 0;
 }
 
