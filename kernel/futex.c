@@ -2568,6 +2568,188 @@ static void futex_wait_queue_me(struct futex_hash_bucket *hb, struct futex_q *q,
 }
 
 /**
+ * unqueue_multiple() - Remove various futexes from their futex_hash_bucket
+ * @v:	   The list of futexes to unqueue
+ * @count: Number of futexes in the list
+ *
+ * Helper to unqueue a list of futexes. This can't fail.
+ *
+ * Return:
+ *  - >=0 - Index of the last futex that was awoken;
+ *  - -1  - No futex was awoken
+ */
+static int unqueue_multiple(struct futex_vector *v, int count)
+{
+	int ret = -1, i;
+
+	for (i = 0; i < count; i++) {
+		if (!unqueue_me(&v[i].q))
+			ret = i;
+	}
+
+	return ret;
+}
+
+/**
+ * futex_wait_multiple_setup() - Prepare to wait and enqueue multiple futexes
+ * @vs:		The corresponding futex list
+ * @count:	The size of the list
+ * @awaken:	Index of the last awoken futex (return parameter)
+ *
+ * Prepare multiple futexes in a single step and enqueue them. This may fail if
+ * the futex list is invalid or if any futex was already awoken. On success the
+ * task is ready to interruptible sleep.
+ *
+ * Return:
+ *  -  1 - One of the futexes was awaken by another thread
+ *  -  0 - Success
+ *  - <0 - -EFAULT, -EWOULDBLOCK or -EINVAL
+ */
+static int futex_wait_multiple_setup(struct futex_vector *vs, int count, int *awaken)
+{
+	struct futex_hash_bucket *hb;
+	int ret, i;
+	u32 uval;
+
+	/*
+	 * Enqueuing multiple futexes is tricky, because we need to
+	 * enqueue each futex in the list before dealing with the next
+	 * one to avoid deadlocking on the hash bucket.  But, before
+	 * enqueuing, we need to make sure that current->state is
+	 * TASK_INTERRUPTIBLE, so we don't absorb any awake events, which
+	 * cannot be done before the get_futex_key of the next key,
+	 * because it calls get_user_pages, which can sleep.  Thus, we
+	 * fetch the list of futexes keys in two steps, by first pinning
+	 * all the memory keys in the futex key, and only then we read
+	 * each key and queue the corresponding futex.
+	 */
+retry:
+	for (i = 0; i < count; i++) {
+		ret = get_futex_key(vs[i].w.uaddr,
+				    vs[i].w.flags & FUTEX_SHARED_FLAG,
+				    &vs[i].q.key, FUTEX_READ);
+		if (unlikely(ret))
+			return ret;
+	}
+
+	set_current_state(TASK_INTERRUPTIBLE);
+
+	for (i = 0; i < count; i++) {
+		struct futex_q *q = &vs[i].q;
+		struct futex_waitv *waitv = &vs[i].w;
+
+		hb = queue_lock(q);
+		ret = get_futex_value_locked(&uval, waitv->uaddr);
+		if (ret) {
+			/*
+			 * We need to try to handle the fault, which
+			 * cannot be done without sleep, so we need to
+			 * undo all the work already done, to make sure
+			 * we don't miss any wake ups.  Therefore, clean
+			 * up, handle the fault and retry from the
+			 * beginning.
+			 */
+			queue_unlock(hb);
+			__set_current_state(TASK_RUNNING);
+
+			*awaken = unqueue_multiple(vs, i);
+			if (*awaken >= 0)
+				return 1;
+
+			if (get_user(uval, (u32 __user *)waitv->uaddr))
+				return -EINVAL;
+
+			goto retry;
+		}
+
+		if (uval != waitv->val) {
+			queue_unlock(hb);
+			__set_current_state(TASK_RUNNING);
+
+			/*
+			 * If something was already awaken, we can
+			 * safely ignore the error and succeed.
+			 */
+			*awaken = unqueue_multiple(vs, i);
+			if (*awaken >= 0)
+				return 1;
+
+			return -EWOULDBLOCK;
+		}
+
+		/*
+		 * The bucket lock can't be held while dealing with the
+		 * next futex. Queue each futex at this moment so hb can
+		 * be unlocked.
+		 */
+		queue_me(&vs[i].q, hb);
+	}
+	return 0;
+}
+
+/**
+ * futex_wait_multiple() - Prepare to wait on and enqueue several futexes
+ * @vs:		The list of futexes to wait on
+ * @count:	The number of objects
+ * @to:		Timeout before giving up and returning to userspace
+ *
+ * Entry point for the FUTEX_WAIT_MULTIPLE futex operation, this function
+ * sleeps on a group of futexes and returns on the first futex that
+ * triggered, or after the timeout has elapsed.
+ *
+ * Return:
+ *  - >=0 - Hint to the futex that was awoken
+ *  - <0  - On error
+ */
+int futex_wait_multiple(struct futex_vector *vs, unsigned int count,
+			struct hrtimer_sleeper *to)
+{
+	int ret, hint = 0;
+	unsigned int i;
+
+	while (1) {
+		ret = futex_wait_multiple_setup(vs, count, &hint);
+		if (ret) {
+			if (ret > 0) {
+				/* A futex was awaken during setup */
+				ret = hint;
+			}
+			return ret;
+		}
+
+		if (to)
+			hrtimer_start_expires(&to->timer, HRTIMER_MODE_ABS);
+
+		/*
+		 * Avoid sleeping if another thread already tried to
+		 * wake us.
+		 */
+		for (i = 0; i < count; i++) {
+			if (plist_node_empty(&vs[i].q.list))
+				break;
+		}
+
+		if (i == count && (!to || to->task))
+			freezable_schedule();
+
+		__set_current_state(TASK_RUNNING);
+
+		ret = unqueue_multiple(vs, count);
+		if (ret >= 0)
+			return ret;
+
+		if (to && !to->task)
+			return -ETIMEDOUT;
+		else if (signal_pending(current))
+			return -ERESTARTSYS;
+		/*
+		 * The final case is a spurious wakeup, for
+		 * which just retry.
+		 */
+	}
+}
+
+/**
  * futex_wait_setup() - Prepare to wait on a futex
  * @uaddr:	the futex userspace address
  * @val:	the expected value

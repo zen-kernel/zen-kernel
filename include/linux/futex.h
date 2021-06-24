@@ -100,6 +100,18 @@ struct futex_q {
 	u32 bitset;
 } __randomize_layout;
 
+/**
+ * struct futex_vector - Auxiliary struct for futex_waitv()
+ * @w: Userspace provided data
+ * @q: Kernel side data
+ *
+ * Struct used to build an array with all data need for futex_waitv()
+ */
+struct futex_vector {
+	struct futex_waitv w;
+	struct futex_q q;
+};
+
 #define FUTEX_KEY_INIT (union futex_key) { .both = { .ptr = 0ULL } }
 
 static const struct futex_q futex_q_init = {
@@ -111,6 +123,9 @@ static const struct futex_q futex_q_init = {
 inline struct hrtimer_sleeper *
 futex_setup_timer(ktime_t *time, struct hrtimer_sleeper *timeout,
 		  int flags, u64 range_ns);
+
+int futex_wait_multiple(struct futex_vector *vs, unsigned int count,
+			struct hrtimer_sleeper *to);
 
 #ifdef CONFIG_FUTEX
 enum {
