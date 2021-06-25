@@ -77,7 +77,7 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 #define STOP_PRIO		(MAX_RT_PRIO - 1)
 
 /* Default time slice is 4 in ms, can be set via kernel parameter "sched_timeslice" */
-u64 sched_timeslice_ns __read_mostly = (2 << 20);
+u64 sched_timeslice_ns __read_mostly = (4 << 20);
 
 static inline void requeue_task(struct task_struct *p, struct rq *rq);
 
@@ -193,9 +193,8 @@ static inline void update_sched_rq_watermark(struct rq *rq)
 			cpumask_andnot(&sched_rq_watermark[i],
 				       &sched_rq_watermark[i], cpumask_of(cpu));
 #ifdef CONFIG_SCHED_SMT
-		if (!static_branch_likely(&sched_smt_present))
-			return;
-		if (IDLE_WM == last_wm)
+		if (static_branch_likely(&sched_smt_present) &&
+		    IDLE_WM == last_wm)
 			cpumask_andnot(&sched_sg_idle_mask,
 				       &sched_sg_idle_mask, cpu_smt_mask(cpu));
 #endif
@@ -205,10 +204,9 @@ static inline void update_sched_rq_watermark(struct rq *rq)
 	for (i = last_wm + 1; i <= watermark; i++)
 		cpumask_set_cpu(cpu, &sched_rq_watermark[i]);
 #ifdef CONFIG_SCHED_SMT
-	if (!static_branch_likely(&sched_smt_present))
-		return;
-	if (IDLE_WM == watermark) {
+	if (static_branch_likely(&sched_smt_present) && IDLE_WM == watermark) {
 		cpumask_t tmp;
+
 		cpumask_and(&tmp, cpu_smt_mask(cpu), &sched_rq_watermark[IDLE_WM]);
 		if (cpumask_equal(&tmp, cpu_smt_mask(cpu)))
 			cpumask_or(&sched_sg_idle_mask, cpu_smt_mask(cpu),
@@ -1003,13 +1001,10 @@ static void hrtick_clear(struct rq *rq)
 static enum hrtimer_restart hrtick(struct hrtimer *timer)
 {
 	struct rq *rq = container_of(timer, struct rq, hrtick_timer);
-	struct task_struct *p;
 
 	WARN_ON_ONCE(cpu_of(rq) != smp_processor_id());
 
 	raw_spin_lock(&rq->lock);
-	p = rq->curr;
-	p->time_slice = 0;
 	resched_curr(rq);
 	raw_spin_unlock(&rq->lock);
 
@@ -2733,9 +2728,7 @@ void wake_up_new_task(struct task_struct *p)
 	struct rq *rq;
 
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
-
 	p->state = TASK_RUNNING;
-
 	rq = cpu_rq(select_task_rq(p));
 #ifdef CONFIG_SMP
 	rseq_migrate(p);
@@ -2743,6 +2736,7 @@ void wake_up_new_task(struct task_struct *p)
 	 * Fork balancing, do it here and not earlier because:
 	 * - cpus_ptr can change in the fork path
 	 * - any previously selected CPU might disappear through hotplug
+	 *
 	 * Use __set_task_cpu() to avoid calling sched_class::migrate_task_rq,
 	 * as we're not fully set-up yet.
 	 */
@@ -2750,8 +2744,8 @@ void wake_up_new_task(struct task_struct *p)
 #endif
 
 	raw_spin_lock(&rq->lock);
-
 	update_rq_clock(rq);
+
 	activate_task(p, rq);
 	trace_sched_wakeup_new(p);
 	check_preempt_curr(rq);
