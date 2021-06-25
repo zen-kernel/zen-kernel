@@ -63,7 +63,7 @@ static inline void sched_renew_deadline(struct task_struct *p, const struct rq *
 
 int task_running_nice(struct task_struct *p)
 {
-	return task_sched_prio(p) > DEFAULT_PRIO;
+	return (p->prio > DEFAULT_PRIO);
 }
 
 static inline void update_rq_time_edge(struct rq *rq)
