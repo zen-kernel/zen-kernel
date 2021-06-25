@@ -369,8 +369,8 @@ struct compat_robust_list_head {
 };
 
 struct compat_futex_waitv {
-	compat_u64 val;
 	compat_uptr_t uaddr;
+	compat_uint_t val;
 	compat_uint_t flags;
 };
 
