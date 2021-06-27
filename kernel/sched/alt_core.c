@@ -189,9 +189,10 @@ static inline void update_sched_rq_watermark(struct rq *rq)
 	rq->watermark = watermark;
 	cpu = cpu_of(rq);
 	if (watermark < last_wm) {
-		for (i = watermark + 1; i <= last_wm; i++)
-			cpumask_andnot(&sched_rq_watermark[i],
-				       &sched_rq_watermark[i], cpumask_of(cpu));
+		for (i = last_wm; i > watermark; i--)
+			cpumask_andnot(&sched_rq_watermark[SCHED_BITS - 1 - i],
+				       &sched_rq_watermark[SCHED_BITS - 1 - i],
+				       cpumask_of(cpu));
 #ifdef CONFIG_SCHED_SMT
 		if (static_branch_likely(&sched_smt_present) &&
 		    IDLE_WM == last_wm)
@@ -201,13 +202,13 @@ static inline void update_sched_rq_watermark(struct rq *rq)
 		return;
 	}
 	/* last_wm < watermark */
-	for (i = last_wm + 1; i <= watermark; i++)
-		cpumask_set_cpu(cpu, &sched_rq_watermark[i]);
+	for (i = watermark; i > last_wm; i--)
+		cpumask_set_cpu(cpu, &sched_rq_watermark[SCHED_BITS - 1 - i]);
 #ifdef CONFIG_SCHED_SMT
 	if (static_branch_likely(&sched_smt_present) && IDLE_WM == watermark) {
 		cpumask_t tmp;
 
-		cpumask_and(&tmp, cpu_smt_mask(cpu), &sched_rq_watermark[IDLE_WM]);
+		cpumask_and(&tmp, cpu_smt_mask(cpu), &sched_rq_watermark[0]);
 		if (cpumask_equal(&tmp, cpu_smt_mask(cpu)))
 			cpumask_or(&sched_sg_idle_mask, cpu_smt_mask(cpu),
 				   &sched_sg_idle_mask);
@@ -1736,9 +1737,9 @@ static inline int select_task_rq(struct task_struct *p)
 #ifdef CONFIG_SCHED_SMT
 	    cpumask_and(&tmp, &chk_mask, &sched_sg_idle_mask) ||
 #endif
-	    cpumask_and(&tmp, &chk_mask, &sched_rq_watermark[IDLE_WM]) ||
+	    cpumask_and(&tmp, &chk_mask, &sched_rq_watermark[0]) ||
 	    cpumask_and(&tmp, &chk_mask,
-			&sched_rq_watermark[task_sched_prio(p) + 1]))
+			&sched_rq_watermark[SCHED_BITS - task_sched_prio(p)]))
 		return best_mask_cpu(task_cpu(p), &tmp);
 
 	return best_mask_cpu(task_cpu(p), &chk_mask);
@@ -3592,7 +3593,7 @@ static inline void sg_balance_check(struct rq *rq)
 	 */
 	if (cpumask_test_cpu(cpu, &sched_sg_idle_mask) &&
 	    cpumask_andnot(&chk, cpu_online_mask, &sched_rq_pending_mask) &&
-	    cpumask_andnot(&chk, &chk, &sched_rq_watermark[IDLE_WM])) {
+	    cpumask_andnot(&chk, &chk, &sched_rq_watermark[0])) {
 		int i, tried = 0;
 
 		for_each_cpu_wrap(i, &chk, cpu) {
@@ -3905,7 +3906,7 @@ void alt_sched_debug(void)
 {
 	printk(KERN_INFO "sched: pending: 0x%04lx, idle: 0x%04lx, sg_idle: 0x%04lx\n",
 	       sched_rq_pending_mask.bits[0],
-	       sched_rq_watermark[IDLE_WM].bits[0],
+	       sched_rq_watermark[0].bits[0],
 	       sched_sg_idle_mask.bits[0]);
 }
 #else
