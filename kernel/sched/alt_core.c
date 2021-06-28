@@ -146,8 +146,6 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 # define finish_arch_post_lock_switch()	do { } while (0)
 #endif
 
-#define IDLE_WM	(IDLE_TASK_SCHED_PRIO)
-
 #ifdef CONFIG_SCHED_SMT
 static cpumask_t sched_sg_idle_mask ____cacheline_aligned_in_smp;
 #endif
@@ -190,12 +188,10 @@ static inline void update_sched_rq_watermark(struct rq *rq)
 	cpu = cpu_of(rq);
 	if (watermark < last_wm) {
 		for (i = last_wm; i > watermark; i--)
-			cpumask_andnot(&sched_rq_watermark[SCHED_BITS - 1 - i],
-				       &sched_rq_watermark[SCHED_BITS - 1 - i],
-				       cpumask_of(cpu));
+			cpumask_clear_cpu(cpu, sched_rq_watermark + SCHED_BITS - 1 - i);
 #ifdef CONFIG_SCHED_SMT
 		if (static_branch_likely(&sched_smt_present) &&
-		    IDLE_WM == last_wm)
+		    IDLE_TASK_SCHED_PRIO == last_wm)
 			cpumask_andnot(&sched_sg_idle_mask,
 				       &sched_sg_idle_mask, cpu_smt_mask(cpu));
 #endif
@@ -203,12 +199,13 @@ static inline void update_sched_rq_watermark(struct rq *rq)
 	}
 	/* last_wm < watermark */
 	for (i = watermark; i > last_wm; i--)
-		cpumask_set_cpu(cpu, &sched_rq_watermark[SCHED_BITS - 1 - i]);
+		cpumask_set_cpu(cpu, sched_rq_watermark + SCHED_BITS - 1 - i);
 #ifdef CONFIG_SCHED_SMT
-	if (static_branch_likely(&sched_smt_present) && IDLE_WM == watermark) {
+	if (static_branch_likely(&sched_smt_present) &&
+	    IDLE_TASK_SCHED_PRIO == watermark) {
 		cpumask_t tmp;
 
-		cpumask_and(&tmp, cpu_smt_mask(cpu), &sched_rq_watermark[0]);
+		cpumask_and(&tmp, cpu_smt_mask(cpu), sched_rq_watermark);
 		if (cpumask_equal(&tmp, cpu_smt_mask(cpu)))
 			cpumask_or(&sched_sg_idle_mask, cpu_smt_mask(cpu),
 				   &sched_sg_idle_mask);
@@ -1737,9 +1734,9 @@ static inline int select_task_rq(struct task_struct *p)
 #ifdef CONFIG_SCHED_SMT
 	    cpumask_and(&tmp, &chk_mask, &sched_sg_idle_mask) ||
 #endif
-	    cpumask_and(&tmp, &chk_mask, &sched_rq_watermark[0]) ||
+	    cpumask_and(&tmp, &chk_mask, sched_rq_watermark) ||
 	    cpumask_and(&tmp, &chk_mask,
-			&sched_rq_watermark[SCHED_BITS - task_sched_prio(p)]))
+			sched_rq_watermark + SCHED_BITS - task_sched_prio(p)))
 		return best_mask_cpu(task_cpu(p), &tmp);
 
 	return best_mask_cpu(task_cpu(p), &chk_mask);
@@ -3593,7 +3590,7 @@ static inline void sg_balance_check(struct rq *rq)
 	 */
 	if (cpumask_test_cpu(cpu, &sched_sg_idle_mask) &&
 	    cpumask_andnot(&chk, cpu_online_mask, &sched_rq_pending_mask) &&
-	    cpumask_andnot(&chk, &chk, &sched_rq_watermark[0])) {
+	    cpumask_andnot(&chk, &chk, sched_rq_watermark)) {
 		int i, tried = 0;
 
 		for_each_cpu_wrap(i, &chk, cpu) {
@@ -6773,7 +6770,7 @@ void __init sched_init(void)
 
 #ifdef CONFIG_SMP
 	for (i = 0; i < SCHED_BITS; i++)
-		cpumask_copy(&sched_rq_watermark[i], cpu_present_mask);
+		cpumask_copy(sched_rq_watermark + i, cpu_present_mask);
 #endif
 
 #ifdef CONFIG_CGROUP_SCHED
@@ -6787,7 +6784,7 @@ void __init sched_init(void)
 		rq = cpu_rq(i);
 
 		sched_queue_init(&rq->queue);
-		rq->watermark = IDLE_WM;
+		rq->watermark = IDLE_TASK_SCHED_PRIO;
 		rq->skip = NULL;
 
 		raw_spin_lock_init(&rq->lock);
