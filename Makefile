@@ -2,8 +2,8 @@
 VERSION = 5
 PATCHLEVEL = 14
 SUBLEVEL = 8
-EXTRAVERSION = -arch1
-NAME = Opossums on Parade
+EXTRAVERSION = -zen
+NAME = The City on the Edge of Forever
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
