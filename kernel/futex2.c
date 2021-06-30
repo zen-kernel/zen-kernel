@@ -308,7 +308,7 @@ again:
 		}
 
 		key->pointer = futex_get_inode_uuid(inode);
-		key->index = (unsigned long)basepage_index(tail);
+		key->index = (unsigned long)page_to_pgoff(tail);
 		key->offset |= FUT_OFF_INODE;
 
 		rcu_read_unlock();
