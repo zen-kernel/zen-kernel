@@ -18,11 +18,9 @@ task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 {
 	s64 delta = p->deadline - rq->time_edge + NORMAL_PRIO_NUM - NICE_WIDTH;
 
-	if (unlikely(delta > NORMAL_PRIO_NUM - 1)) {
-		pr_info("pds: task_sched_prio_normal delta %lld, deadline %llu, time_edge %llu\n",
-			delta, p->deadline, rq->time_edge);
+	if (WARN_ONCE(delta > NORMAL_PRIO_NUM - 1,
+		      "pds: task_sched_prio_normal() delta %lld\n", delta))
 		return NORMAL_PRIO_NUM - 1;
-	}
 
 	return (delta < 0) ? 0 : delta;
 }
@@ -118,12 +116,12 @@ static void sched_task_fork(struct task_struct *p, struct rq *rq)
 	sched_renew_deadline(p, rq);
 }
 
-static void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
+static inline void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
 {
 	time_slice_expired(p, rq);
 }
 
 #ifdef CONFIG_SMP
-static void sched_task_ttwu(struct task_struct *p) {}
+static inline void sched_task_ttwu(struct task_struct *p) {}
 #endif
-static void sched_task_deactivate(struct task_struct *p, struct rq *rq) {}
+static inline void sched_task_deactivate(struct task_struct *p, struct rq *rq) {}
