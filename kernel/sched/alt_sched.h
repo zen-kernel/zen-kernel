@@ -302,68 +302,20 @@ enum {
 DECLARE_PER_CPU(cpumask_t [NR_CPU_AFFINITY_LEVELS], sched_cpu_topo_masks);
 DECLARE_PER_CPU(cpumask_t *, sched_cpu_llc_mask);
 
-static inline int __best_mask_cpu(int cpu, const cpumask_t *cpumask,
-				  const cpumask_t *mask)
+static inline int
+__best_mask_cpu(const cpumask_t *cpumask, const cpumask_t *mask)
 {
-#if NR_CPUS <= 64
-	unsigned long t;
+	int cpu;
 
-	while ((t = cpumask->bits[0] & mask->bits[0]) == 0UL)
-		mask++;
-
-	return __ffs(t);
-#else
 	while ((cpu = cpumask_any_and(cpumask, mask)) >= nr_cpu_ids)
 		mask++;
+
 	return cpu;
-#endif
 }
 
 static inline int best_mask_cpu(int cpu, const cpumask_t *mask)
 {
-#if NR_CPUS <= 64
-	unsigned long llc_match;
-	cpumask_t *chk = per_cpu(sched_cpu_llc_mask, cpu);
-
-	if ((llc_match = mask->bits[0] & chk->bits[0])) {
-		unsigned long match;
-
-		chk = per_cpu(sched_cpu_topo_masks, cpu);
-		if (mask->bits[0] & chk->bits[0])
-			return cpu;
-
-#ifdef CONFIG_SCHED_SMT
-		chk++;
-		if ((match = mask->bits[0] & chk->bits[0]))
-			return __ffs(match);
-#endif
-
-		return __ffs(llc_match);
-	}
-
-	return __best_mask_cpu(cpu, mask, chk + 1);
-#else
-	cpumask_t llc_match;
-	cpumask_t *chk = per_cpu(sched_cpu_llc_mask, cpu);
-
-	if (cpumask_and(&llc_match, mask, chk)) {
-		cpumask_t tmp;
-
-		chk = per_cpu(sched_cpu_topo_masks, cpu);
-		if (cpumask_test_cpu(cpu, mask))
-			return cpu;
-
-#ifdef CONFIG_SCHED_SMT
-		chk++;
-		if (cpumask_and(&tmp, mask, chk))
-			return cpumask_any(&tmp);
-#endif
-
-		return cpumask_any(&llc_match);
-	}
-
-	return __best_mask_cpu(cpu, mask, chk + 1);
-#endif
+	return __best_mask_cpu(mask, per_cpu(sched_cpu_topo_masks, cpu));
 }
 
 extern void flush_smp_call_function_from_idle(void);
