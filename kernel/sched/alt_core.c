@@ -116,11 +116,9 @@ int sched_yield_type __read_mostly = 1;
 #ifdef CONFIG_SMP
 static cpumask_t sched_rq_pending_mask ____cacheline_aligned_in_smp;
 
-DEFINE_PER_CPU(cpumask_t [NR_CPU_AFFINITY_LEVELS], sched_cpu_affinity_masks);
-DEFINE_PER_CPU(cpumask_t *, sched_cpu_affinity_end_mask);
-
 DEFINE_PER_CPU(cpumask_t [NR_CPU_AFFINITY_LEVELS], sched_cpu_topo_masks);
 DEFINE_PER_CPU(cpumask_t *, sched_cpu_llc_mask);
+DEFINE_PER_CPU(cpumask_t *, sched_cpu_topo_end_mask);
 
 #ifdef CONFIG_SCHED_SMT
 DEFINE_STATIC_KEY_FALSE(sched_smt_present);
@@ -891,8 +889,8 @@ int get_nohz_timer_target(void)
 		default_cpu = cpu;
 	}
 
-	for (mask = per_cpu(sched_cpu_affinity_masks, cpu) + 1;
-	     mask < per_cpu(sched_cpu_affinity_end_mask, cpu); mask++)
+	for (mask = per_cpu(sched_cpu_topo_masks, cpu) + 1;
+	     mask < per_cpu(sched_cpu_topo_end_mask, cpu); mask++)
 		for_each_cpu_and(i, mask, housekeeping_cpumask(HK_FLAG_TIMER))
 			if (!idle_cpu(i))
 				return i;
@@ -3932,7 +3930,7 @@ migrate_pending_tasks(struct rq *rq, struct rq *dest_rq, const int dest_cpu)
 
 static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 {
-	struct cpumask *affinity_mask, *end_mask;
+	struct cpumask *topo_mask, *end_mask;
 
 	if (unlikely(!rq->online))
 		return 0;
@@ -3940,11 +3938,11 @@ static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 	if (cpumask_empty(&sched_rq_pending_mask))
 		return 0;
 
-	affinity_mask = per_cpu(sched_cpu_affinity_masks, cpu) + 1;
-	end_mask = per_cpu(sched_cpu_affinity_end_mask, cpu);
+	topo_mask = per_cpu(sched_cpu_topo_masks, cpu) + 1;
+	end_mask = per_cpu(sched_cpu_topo_end_mask, cpu);
 	do {
 		int i;
-		for_each_cpu_and(i, &sched_rq_pending_mask, affinity_mask) {
+		for_each_cpu_and(i, &sched_rq_pending_mask, topo_mask) {
 			int nr_migrated;
 			struct rq *src_rq;
 
@@ -3975,7 +3973,7 @@ static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 			spin_release(&src_rq->lock.dep_map, _RET_IP_);
 			do_raw_spin_unlock(&src_rq->lock);
 		}
-	} while (++affinity_mask < end_mask);
+	} while (++topo_mask < end_mask);
 
 	return 0;
 }
@@ -6637,14 +6635,6 @@ static void sched_init_topology_cpumask_early(void)
 	cpumask_t *tmp;
 
 	for_each_possible_cpu(cpu) {
-		/* init affinity masks */
-		tmp = per_cpu(sched_cpu_affinity_masks, cpu);
-
-		cpumask_copy(tmp, cpumask_of(cpu));
-		tmp++;
-		cpumask_copy(tmp, cpu_possible_mask);
-		cpumask_clear_cpu(cpu, tmp);
-		per_cpu(sched_cpu_affinity_end_mask, cpu) = ++tmp;
 		/* init topo masks */
 		tmp = per_cpu(sched_cpu_topo_masks, cpu);
 
@@ -6652,32 +6642,32 @@ static void sched_init_topology_cpumask_early(void)
 		tmp++;
 		cpumask_copy(tmp, cpu_possible_mask);
 		per_cpu(sched_cpu_llc_mask, cpu) = tmp;
+		per_cpu(sched_cpu_topo_end_mask, cpu) = ++tmp;
 		/*per_cpu(sd_llc_id, cpu) = cpu;*/
 	}
 }
 
-#define TOPOLOGY_CPUMASK(name, mask, last) \
-	if (cpumask_and(chk, chk, mask)) {					\
+#define TOPOLOGY_CPUMASK(name, mask, last)\
+	if (cpumask_and(topo, topo, mask)) {					\
 		cpumask_copy(topo, mask);					\
-		printk(KERN_INFO "sched: cpu#%02d affinity: 0x%08lx topo: 0x%08lx - "#name,\
-		       cpu, (chk++)->bits[0], (topo++)->bits[0]);		\
+		printk(KERN_INFO "sched: cpu#%02d topo: 0x%08lx - "#name,	\
+		       cpu, (topo++)->bits[0]);					\
 	}									\
 	if (!last)								\
-		cpumask_complement(chk, mask)
+		cpumask_complement(topo, mask)
 
 static void sched_init_topology_cpumask(void)
 {
 	int cpu;
-	cpumask_t *chk, *topo;
+	cpumask_t *topo;
 
 	for_each_online_cpu(cpu) {
 		/* take chance to reset time slice for idle tasks */
 		cpu_rq(cpu)->idle->time_slice = sched_timeslice_ns;
 
-		chk = per_cpu(sched_cpu_affinity_masks, cpu) + 1;
 		topo = per_cpu(sched_cpu_topo_masks, cpu) + 1;
 
-		cpumask_complement(chk, cpumask_of(cpu));
+		cpumask_complement(topo, cpumask_of(cpu));
 #ifdef CONFIG_SCHED_SMT
 		TOPOLOGY_CPUMASK(smt, topology_sibling_cpumask(cpu), false);
 #endif
@@ -6689,7 +6679,7 @@ static void sched_init_topology_cpumask(void)
 
 		TOPOLOGY_CPUMASK(others, cpu_online_mask, true);
 
-		per_cpu(sched_cpu_affinity_end_mask, cpu) = chk;
+		per_cpu(sched_cpu_topo_end_mask, cpu) = topo;
 		printk(KERN_INFO "sched: cpu#%02d llc_id = %d, llc_mask idx = %d\n",
 		       cpu, per_cpu(sd_llc_id, cpu),
 		       (int) (per_cpu(sched_cpu_llc_mask, cpu) -
