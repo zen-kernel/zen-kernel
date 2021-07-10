@@ -207,8 +207,8 @@ static inline void update_sched_rq_watermark(struct rq *rq)
 
 		cpumask_and(&tmp, cpu_smt_mask(cpu), sched_rq_watermark);
 		if (cpumask_equal(&tmp, cpu_smt_mask(cpu)))
-			cpumask_or(&sched_sg_idle_mask, cpu_smt_mask(cpu),
-				   &sched_sg_idle_mask);
+			cpumask_or(&sched_sg_idle_mask,
+				   &sched_sg_idle_mask, cpu_smt_mask(cpu));
 	}
 #endif
 }
@@ -3528,8 +3528,7 @@ static inline int active_load_balance_cpu_stop(void *data)
 	    cpumask_and(&tmp, p->cpus_ptr, &sched_sg_idle_mask) &&
 	    !is_migration_disabled(p)) {
 		int cpu = cpu_of(rq);
-		int dcpu = __best_mask_cpu(cpu, &tmp,
-					   per_cpu(sched_cpu_llc_mask, cpu));
+		int dcpu = __best_mask_cpu(&tmp, per_cpu(sched_cpu_llc_mask, cpu));
 		rq = move_queued_task(rq, p, dcpu);
 	}
 
@@ -3573,34 +3572,25 @@ static inline int sg_balance_trigger(const int cpu)
 static inline void sg_balance_check(struct rq *rq)
 {
 	cpumask_t chk;
-	int cpu;
-
-	/* exit when no sg in idle */
-	if (cpumask_empty(&sched_sg_idle_mask))
-		return;
+	int cpu = cpu_of(rq);
 
 	/* exit when cpu is offline */
 	if (unlikely(!rq->online))
 		return;
 
-	cpu = cpu_of(rq);
 	/*
 	 * Only cpu in slibing idle group will do the checking and then
 	 * find potential cpus which can migrate the current running task
 	 */
 	if (cpumask_test_cpu(cpu, &sched_sg_idle_mask) &&
-	    cpumask_andnot(&chk, cpu_online_mask, &sched_rq_pending_mask) &&
-	    cpumask_andnot(&chk, &chk, sched_rq_watermark)) {
-		int i, tried = 0;
+	    cpumask_andnot(&chk, cpu_online_mask, sched_rq_watermark) &&
+	    cpumask_andnot(&chk, &chk, &sched_rq_pending_mask)) {
+		int i;
 
 		for_each_cpu_wrap(i, &chk, cpu) {
-			if (cpumask_subset(cpu_smt_mask(i), &chk)) {
-				if (sg_balance_trigger(i))
-					return;
-				if (tried)
-					return;
-				tried++;
-			}
+			if (cpumask_subset(cpu_smt_mask(i), &chk) &&
+			    sg_balance_trigger(i))
+				return;
 		}
 	}
 }
