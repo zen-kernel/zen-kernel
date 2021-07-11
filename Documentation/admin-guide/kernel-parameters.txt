@@ -4721,8 +4721,9 @@
 			Format: <string>
 			smt -- Share SMT (hyperthread) sibling runqueues
 			mc -- Share MC (multicore) sibling runqueues
+			llc -- Share MC (multicore) sibling runqueues with adjacent LLC
 			smp -- Share SMP runqueues
-			none -- So not share any runqueues
+			none -- Do not share any runqueues
 			Default value is mc
 
 	rw		[KNL] Mount root device read-write on boot
