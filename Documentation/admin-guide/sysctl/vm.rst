@@ -26,6 +26,8 @@ Currently, these files are in /proc/sys/vm:
 
 - admin_reserve_kbytes
 - block_dump
+- clean_low_kbytes
+- clean_min_kbytes
 - compact_memory
 - compaction_proactiveness
 - compact_unevictable_allowed
@@ -104,6 +106,41 @@ and add the sum of their RSS.
 On x86_64 this is about 128MB.
 
 Changing this takes effect whenever an application requests memory.
+
+
+clean_low_kbytes
+================
+
+This knob provides *best-effort* protection of clean file pages. The clean file
+pages on the current node won't be reclaimed under memory pressure when their
+amount is below vm.clean_low_kbytes *unless* we threaten to OOM or have no
+free swap space or vm.swappiness=0.
+
+Protection of clean file pages may be used to prevent thrashing and
+reducing I/O under low-memory conditions.
+
+Setting it to a high value may result in a early eviction of anonymous pages
+into the swap space by attempting to hold the protected amount of clean file
+pages in memory.
+
+The default value is defined by CONFIG_CLEAN_LOW_KBYTES.
+
+
+clean_min_kbytes
+================
+
+This knob provides *hard* protection of clean file pages. The clean file pages
+on the current node won't be reclaimed under memory pressure when their amount
+is below vm.clean_min_kbytes.
+
+Hard protection of clean file pages may be used to avoid high latency and
+prevent livelock in near-OOM conditions.
+
+Setting it to a high value may result in a early out-of-memory condition due to
+the inability to reclaim the protected amount of clean file pages when other
+types of pages cannot be reclaimed.
+
+The default value is defined by CONFIG_CLEAN_MIN_KBYTES.
 
 
 block_dump
@@ -800,12 +837,14 @@ allocated in any single per_cpu_pagelist.  This entry only changes the value
 of hot per cpu pagelists.  User can specify a number like 100 to allocate
 1/100th of each zone to each per cpu page list.
 
+
 The batch value of each per cpu pagelist is also updated as a result.  It is
 set to pcp->high/4.  The upper limit of batch is (PAGE_SHIFT * 8)
 
 The initial value is zero.  Kernel does not use this value at boot time to set
 the high water marks for each per cpu page list.  If the user writes '0' to this
 sysctl, it will revert to this default behavior.
+
 
 
 stat_interval
