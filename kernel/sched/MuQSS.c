@@ -1116,78 +1116,54 @@ static void resched_curr(struct rq *rq)
  * Other node, other CPU, idle cache, idle threads.
  * Other node, other CPU, busy cache, idle threads.
  * Other node, other CPU, busy threads.
-*/
+ */
 static int best_mask_cpu(int best_cpu, struct rq *rq, cpumask_t *tmpmask)
 {
 	int best_ranking = CPUIDLE_DIFF_NODE | CPUIDLE_THREAD_BUSY |
 		CPUIDLE_DIFF_CPU | CPUIDLE_CACHE_BUSY | CPUIDLE_DIFF_CORE |
 		CPUIDLE_DIFF_CORE_LLC | CPUIDLE_DIFF_THREAD;
-	int cpu_tmp, best_poss_ranking;
-	struct rq *tmp_rq;
+	int cpu_tmp;
 
-	tmp_rq = cpu_rq(best_cpu);
-	if (!(cpumask_test_cpu(best_cpu, tmpmask)
-#ifdef CONFIG_SCHED_SMT
-		&& tmp_rq->siblings_idle(tmp_rq)
-#endif
-	)) {
-#ifdef CONFIG_SCHED_SMT
-		best_poss_ranking = CPUIDLE_DIFF_THREAD;
-#elif CONFIG_SCHED_MC
-		best_poss_ranking = CPUIDLE_DIFF_CORE_LLC;
-#else
-		best_poss_ranking = CPUIDLE_DIFF_CPU;
-#endif
-		for_each_cpu(cpu_tmp, tmpmask) {
-			int ranking, locality;
+	if (cpumask_test_cpu(best_cpu, tmpmask))
+		goto out;
 
-			ranking = 0;
-			tmp_rq = cpu_rq(cpu_tmp);
-			locality = rq->cpu_locality[cpu_tmp];
+	for_each_cpu(cpu_tmp, tmpmask) {
+		int ranking, locality;
+		struct rq *tmp_rq;
+
+		ranking = 0;
+		tmp_rq = cpu_rq(cpu_tmp);
+
+		locality = rq->cpu_locality[cpu_tmp];
 #ifdef CONFIG_NUMA
-			if (locality > LOCALITY_SMP)
-				ranking |= CPUIDLE_DIFF_NODE;
-			else
+		if (locality > LOCALITY_SMP)
+			ranking |= CPUIDLE_DIFF_NODE;
+		else
 #endif
-				if (locality > LOCALITY_MC)
-					ranking |= CPUIDLE_DIFF_CPU;
+			if (locality > LOCALITY_MC)
+				ranking |= CPUIDLE_DIFF_CPU;
 #ifdef CONFIG_SCHED_MC
-				else if (locality == LOCALITY_MC_LLC)
-					ranking |= CPUIDLE_DIFF_CORE_LLC;
-				else if (locality == LOCALITY_MC)
-					ranking |= CPUIDLE_DIFF_CORE;
+			else if (locality == LOCALITY_MC_LLC)
+				ranking |= CPUIDLE_DIFF_CORE_LLC;
+			else if (locality == LOCALITY_MC)
+				ranking |= CPUIDLE_DIFF_CORE;
+		if (!(tmp_rq->cache_idle(tmp_rq)))
+			ranking |= CPUIDLE_CACHE_BUSY;
 #endif
 #ifdef CONFIG_SCHED_SMT
-				else if (locality == LOCALITY_SMT)
-					ranking |= CPUIDLE_DIFF_THREAD;
+		if (locality == LOCALITY_SMT)
+			ranking |= CPUIDLE_DIFF_THREAD;
 #endif
-#ifdef CONFIG_SCHED_MC
-			if (ranking < best_ranking) {
-				if (!(tmp_rq->cache_idle(tmp_rq)))
-					ranking |= CPUIDLE_CACHE_BUSY;
-#endif
+		if (ranking < best_ranking
 #ifdef CONFIG_SCHED_SMT
-				if (ranking < best_ranking) {
-					if (!(tmp_rq->siblings_idle(tmp_rq))) {
-						ranking |= CPUIDLE_THREAD_BUSY;
-						if (locality == LOCALITY_SMT)
-							best_poss_ranking = CPUIDLE_DIFF_CORE_LLC;
-					}
+			|| (ranking == best_ranking && (tmp_rq->siblings_idle(tmp_rq)))
 #endif
-					if (ranking < best_ranking) {
-						best_cpu = cpu_tmp;
-						best_ranking = ranking;
-					}
-#ifdef CONFIG_SCHED_SMT
-				}
-#endif
-#ifdef CONFIG_SCHED_MC
-			}
-#endif
-			if (best_ranking <= best_poss_ranking)
-				break;
+		) {
+			best_cpu = cpu_tmp;
+			best_ranking = ranking;
 		}
 	}
+out:
 	return best_cpu;
 }
 
