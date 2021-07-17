@@ -125,7 +125,7 @@ config SPARSEMEM_VMEMMAP
 config CLEAN_LOW_KBYTES
 	int "Default value for vm.clean_low_kbytes"
 	depends on SYSCTL
-	default "0"
+	default "262144"
 	help
 	  The vm.clean_low_kbytes sysctl knob provides *best-effort*
 	  protection of clean file pages. The clean file pages on the current
@@ -143,7 +143,7 @@ config CLEAN_LOW_KBYTES
 config CLEAN_MIN_KBYTES
 	int "Default value for vm.clean_min_kbytes"
 	depends on SYSCTL
-	default "0"
+	default "65536"
 	help
 	  The vm.clean_min_kbytes sysctl knob provides *hard* protection
 	  of clean file pages. The clean file pages on the current node won't be
