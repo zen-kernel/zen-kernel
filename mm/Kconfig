@@ -143,7 +143,7 @@ config CLEAN_LOW_KBYTES
 config CLEAN_MIN_KBYTES
 	int "Default value for vm.clean_min_kbytes"
 	depends on SYSCTL
-	default "65536"
+	default "0"
 	help
 	  The vm.clean_min_kbytes sysctl knob provides *hard* protection
 	  of clean file pages. The clean file pages on the current node won't be
