@@ -122,6 +122,41 @@ config SPARSEMEM_VMEMMAP
 	  pfn_to_page and page_to_pfn operations.  This is the most
 	  efficient option when sufficient kernel resources are available.
 
+config CLEAN_LOW_KBYTES
+	int "Default value for vm.clean_low_kbytes"
+	depends on SYSCTL
+	default "262144"
+	help
+	  The vm.clean_low_kbytes sysctl knob provides *best-effort*
+	  protection of clean file pages. The clean file pages on the current
+	  node won't be reclaimed under memory pressure when their amount is
+	  below vm.clean_low_kbytes *unless* we threaten to OOM or have
+	  no free swap space or vm.swappiness=0.
+
+	  Protection of clean file pages may be used to prevent thrashing and
+	  reducing I/O under low-memory conditions.
+
+	  Setting it to a high value may result in a early eviction of anonymous
+	  pages into the swap space by attempting to hold the protected amount of
+	  clean file pages in memory.
+
+config CLEAN_MIN_KBYTES
+	int "Default value for vm.clean_min_kbytes"
+	depends on SYSCTL
+	default "65536"
+	help
+	  The vm.clean_min_kbytes sysctl knob provides *hard* protection
+	  of clean file pages. The clean file pages on the current node won't be
+	  reclaimed under memory pressure when their amount is below
+	  vm.clean_min_kbytes.
+
+	  Hard protection of clean file pages may be used to avoid high latency and
+	  prevent livelock in near-OOM conditions.
+
+	  Setting it to a high value may result in a early out-of-memory condition
+	  due to the inability to reclaim the protected amount of clean file pages
+	  when other types of pages cannot be reclaimed.
+
 config HAVE_MEMBLOCK_PHYS_MAP
 	bool
 
