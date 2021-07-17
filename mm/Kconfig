@@ -111,7 +111,7 @@ config CLEAN_LOW_KBYTES
 	int "Default value for vm.clean_low_kbytes"
 	depends on SYSCTL
 	range 0 4294967295
-	default 0
+	default "262144"
 	help
 	  This option sets the default value for vm.clean_low_kbytes sysctl knob.
 
