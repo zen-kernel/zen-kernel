@@ -52,6 +52,17 @@ struct iommu_dma_cookie {
 };
 
 static DEFINE_STATIC_KEY_FALSE(iommu_deferred_attach_enabled);
+bool iommu_dma_forcedac __read_mostly;
+
+static int __init iommu_dma_forcedac_setup(char *str)
+{
+	int ret = kstrtobool(str, &iommu_dma_forcedac);
+
+	if (!ret && iommu_dma_forcedac)
+		pr_info("Forcing DAC for PCI devices\n");
+	return ret;
+}
+early_param("iommu.forcedac", iommu_dma_forcedac_setup);
 
 void iommu_dma_free_cpu_cached_iovas(unsigned int cpu,
 		struct iommu_domain *domain)
@@ -241,9 +252,11 @@ resv_iova:
 			lo = iova_pfn(iovad, start);
 			hi = iova_pfn(iovad, end);
 			reserve_iova(iovad, lo, hi);
-		} else {
+		} else if (end < start) {
 			/* dma_ranges list should be sorted */
-			dev_err(&dev->dev, "Failed to reserve IOVA\n");
+			dev_err(&dev->dev,
+				"Failed to reserve IOVA [%pa-%pa]\n",
+				&start, &end);
 			return -EINVAL;
 		}
 
@@ -444,7 +457,7 @@ static dma_addr_t iommu_dma_alloc_iova(struct iommu_domain *domain,
 		dma_limit = min(dma_limit, (u64)domain->geometry.aperture_end);
 
 	/* Try to get PCI devices a SAC address */
-	if (dma_limit > DMA_BIT_MASK(32) && dev_is_pci(dev))
+	if (dma_limit > DMA_BIT_MASK(32) && !iommu_dma_forcedac && dev_is_pci(dev))
 		iova = alloc_iova_fast(iovad, iova_len,
 				       DMA_BIT_MASK(32) >> shift, false);
 

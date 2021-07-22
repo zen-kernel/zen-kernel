@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017-2020 Broadcom. All Rights Reserved. The term *
+ * Copyright (C) 2017-2021 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.     *
  * Copyright (C) 2004-2016 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -1175,6 +1175,15 @@ stop_rr_fcf_flogi:
 			phba->fcf.fcf_redisc_attempted = 0; /* reset */
 			goto out;
 		}
+	} else if (vport->port_state > LPFC_FLOGI &&
+		   vport->fc_flag & FC_PT2PT) {
+		/*
+		 * In a p2p topology, it is possible that discovery has
+		 * already progressed, and this completion can be ignored.
+		 * Recheck the indicated topology.
+		 */
+		if (!sp->cmn.fPort)
+			goto out;
 	}
 
 flogifail:
@@ -1600,7 +1609,7 @@ lpfc_plogi_confirm_nport(struct lpfc_hba *phba, uint32_t *prsp,
 	struct lpfc_nodelist *new_ndlp;
 	struct serv_parm *sp;
 	uint8_t  name[sizeof(struct lpfc_name)];
-	uint32_t rc, keepDID = 0, keep_nlp_flag = 0;
+	uint32_t keepDID = 0, keep_nlp_flag = 0;
 	uint32_t keep_new_nlp_flag = 0;
 	uint16_t keep_nlp_state;
 	u32 keep_nlp_fc4_type = 0;
@@ -1622,7 +1631,7 @@ lpfc_plogi_confirm_nport(struct lpfc_hba *phba, uint32_t *prsp,
 	new_ndlp = lpfc_findnode_wwpn(vport, &sp->portName);
 
 	/* return immediately if the WWPN matches ndlp */
-	if (new_ndlp == ndlp)
+	if (!new_ndlp || (new_ndlp == ndlp))
 		return ndlp;
 
 	if (phba->sli_rev == LPFC_SLI_REV4) {
@@ -1641,30 +1650,11 @@ lpfc_plogi_confirm_nport(struct lpfc_hba *phba, uint32_t *prsp,
 			 (new_ndlp ? new_ndlp->nlp_flag : 0),
 			 (new_ndlp ? new_ndlp->nlp_fc4_type : 0));
 
-	if (!new_ndlp) {
-		rc = memcmp(&ndlp->nlp_portname, name,
-			    sizeof(struct lpfc_name));
-		if (!rc) {
-			if (active_rrqs_xri_bitmap)
-				mempool_free(active_rrqs_xri_bitmap,
-					     phba->active_rrq_pool);
-			return ndlp;
-		}
-		new_ndlp = lpfc_nlp_init(vport, ndlp->nlp_DID);
-		if (!new_ndlp) {
-			if (active_rrqs_xri_bitmap)
-				mempool_free(active_rrqs_xri_bitmap,
-					     phba->active_rrq_pool);
-			return ndlp;
-		}
-	} else {
-		keepDID = new_ndlp->nlp_DID;
-		if (phba->sli_rev == LPFC_SLI_REV4 &&
-		    active_rrqs_xri_bitmap)
-			memcpy(active_rrqs_xri_bitmap,
-			       new_ndlp->active_rrqs_xri_bitmap,
-			       phba->cfg_rrq_xri_bitmap_sz);
-	}
+	keepDID = new_ndlp->nlp_DID;
+
+	if (phba->sli_rev == LPFC_SLI_REV4 && active_rrqs_xri_bitmap)
+		memcpy(active_rrqs_xri_bitmap, new_ndlp->active_rrqs_xri_bitmap,
+		       phba->cfg_rrq_xri_bitmap_sz);
 
 	/* At this point in this routine, we know new_ndlp will be
 	 * returned. however, any previous GID_FTs that were done
@@ -2004,9 +1994,20 @@ lpfc_cmpl_els_plogi(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 			lpfc_disc_state_machine(vport, ndlp, cmdiocb,
 						NLP_EVT_CMPL_PLOGI);
 
-		/* As long as this node is not registered with the scsi or nvme
-		 * transport, it is no longer an active node.  Otherwise
-		 * devloss handles the final cleanup.
+		/* If a PLOGI collision occurred, the node needs to continue
+		 * with the reglogin process.
+		 */
+		spin_lock_irq(&ndlp->lock);
+		if ((ndlp->nlp_flag & (NLP_ACC_REGLOGIN | NLP_RCV_PLOGI)) &&
+		    ndlp->nlp_state == NLP_STE_REG_LOGIN_ISSUE) {
+			spin_unlock_irq(&ndlp->lock);
+			goto out;
+		}
+		spin_unlock_irq(&ndlp->lock);
+
+		/* No PLOGI collision and the node is not registered with the
+		 * scsi or nvme transport. It is no longer an active node. Just
+		 * start the device remove process.
 		 */
 		if (!(ndlp->fc4_xpt_flags & (SCSI_XPT_REGD | NVME_XPT_REGD))) {
 			spin_lock_irq(&ndlp->lock);
@@ -2063,13 +2064,12 @@ out_freeiocb:
  * This routine issues a Port Login (PLOGI) command to a remote N_Port
  * (with the @did) for a @vport. Before issuing a PLOGI to a remote N_Port,
  * the ndlp with the remote N_Port DID must exist on the @vport's ndlp list.
- * This routine constructs the proper feilds of the PLOGI IOCB and invokes
+ * This routine constructs the proper fields of the PLOGI IOCB and invokes
  * the lpfc_sli_issue_iocb() routine to send out PLOGI ELS command.
  *
- * Note that, in lpfc_prep_els_iocb() routine, the reference count of ndlp
- * will be incremented by 1 for holding the ndlp and the reference to ndlp
- * will be stored into the context1 field of the IOCB for the completion
- * callback function to the PLOGI ELS command.
+ * Note that the ndlp reference count will be incremented by 1 for holding
+ * the ndlp and the reference to ndlp will be stored into the context1 field
+ * of the IOCB for the completion callback function to the PLOGI ELS command.
  *
  * Return code
  *   0 - Successfully issued a plogi for @vport
@@ -2087,29 +2087,28 @@ lpfc_issue_els_plogi(struct lpfc_vport *vport, uint32_t did, uint8_t retry)
 	int ret;
 
 	ndlp = lpfc_findnode_did(vport, did);
+	if (!ndlp)
+		return 1;
 
-	if (ndlp) {
-		/* Defer the processing of the issue PLOGI until after the
-		 * outstanding UNREG_RPI mbox command completes, unless we
-		 * are going offline. This logic does not apply for Fabric DIDs
-		 */
-		if ((ndlp->nlp_flag & NLP_UNREG_INP) &&
-		    ((ndlp->nlp_DID & Fabric_DID_MASK) != Fabric_DID_MASK) &&
-		    !(vport->fc_flag & FC_OFFLINE_MODE)) {
-			lpfc_printf_vlog(vport, KERN_INFO, LOG_DISCOVERY,
-					 "4110 Issue PLOGI x%x deferred "
-					 "on NPort x%x rpi x%x Data: x%px\n",
-					 ndlp->nlp_defer_did, ndlp->nlp_DID,
-					 ndlp->nlp_rpi, ndlp);
+	/* Defer the processing of the issue PLOGI until after the
+	 * outstanding UNREG_RPI mbox command completes, unless we
+	 * are going offline. This logic does not apply for Fabric DIDs
+	 */
+	if ((ndlp->nlp_flag & NLP_UNREG_INP) &&
+	    ((ndlp->nlp_DID & Fabric_DID_MASK) != Fabric_DID_MASK) &&
+	    !(vport->fc_flag & FC_OFFLINE_MODE)) {
+		lpfc_printf_vlog(vport, KERN_INFO, LOG_DISCOVERY,
+				 "4110 Issue PLOGI x%x deferred "
+				 "on NPort x%x rpi x%x Data: x%px\n",
+				 ndlp->nlp_defer_did, ndlp->nlp_DID,
+				 ndlp->nlp_rpi, ndlp);
 
-			/* We can only defer 1st PLOGI */
-			if (ndlp->nlp_defer_did == NLP_EVT_NOTHING_PENDING)
-				ndlp->nlp_defer_did = did;
-			return 0;
-		}
+		/* We can only defer 1st PLOGI */
+		if (ndlp->nlp_defer_did == NLP_EVT_NOTHING_PENDING)
+			ndlp->nlp_defer_did = did;
+		return 0;
 	}
 
-	/* If ndlp is not NULL, we will bump the reference count on it */
 	cmdsize = (sizeof(uint32_t) + sizeof(struct serv_parm));
 	elsiocb = lpfc_prep_els_iocb(vport, 1, cmdsize, retry, ndlp, did,
 				     ELS_CMD_PLOGI);
@@ -2877,6 +2876,11 @@ lpfc_cmpl_els_logo(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 	 * log into the remote port.
 	 */
 	if (ndlp->nlp_flag & NLP_TARGET_REMOVE) {
+		spin_lock_irq(&ndlp->lock);
+		if (phba->sli_rev == LPFC_SLI_REV4)
+			ndlp->nlp_flag |= NLP_RELEASE_RPI;
+		ndlp->nlp_flag &= ~NLP_NPR_2B_DISC;
+		spin_unlock_irq(&ndlp->lock);
 		lpfc_disc_state_machine(vport, ndlp, cmdiocb,
 					NLP_EVT_DEVICE_RM);
 		lpfc_els_free_iocb(phba, cmdiocb);
@@ -3829,7 +3833,7 @@ lpfc_els_retry(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 		did = irsp->un.elsreq64.remoteID;
 		ndlp = lpfc_findnode_did(vport, did);
 		if (!ndlp && (cmd != ELS_CMD_PLOGI))
-			return 1;
+			return 0;
 	}
 
 	lpfc_debugfs_disc_trc(vport, LPFC_DISC_TRC_ELS_CMD,
@@ -4384,6 +4388,7 @@ lpfc_cmpl_els_logo_acc(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 	struct lpfc_nodelist *ndlp = (struct lpfc_nodelist *) cmdiocb->context1;
 	struct lpfc_vport *vport = cmdiocb->vport;
 	IOCB_t *irsp;
+	u32 xpt_flags = 0, did_mask = 0;
 
 	irsp = &rspiocb->iocb;
 	lpfc_debugfs_disc_trc(vport, LPFC_DISC_TRC_ELS_RSP,
@@ -4399,9 +4404,20 @@ lpfc_cmpl_els_logo_acc(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 	if (ndlp->nlp_state == NLP_STE_NPR_NODE) {
 		/* NPort Recovery mode or node is just allocated */
 		if (!lpfc_nlp_not_used(ndlp)) {
-			/* If the ndlp is being used by another discovery
-			 * thread, just unregister the RPI.
+			/* A LOGO is completing and the node is in NPR state.
+			 * If this a fabric node that cleared its transport
+			 * registration, release the rpi.
 			 */
+			xpt_flags = SCSI_XPT_REGD | NVME_XPT_REGD;
+			did_mask = ndlp->nlp_DID & Fabric_DID_MASK;
+			if (did_mask == Fabric_DID_MASK &&
+			    !(ndlp->fc4_xpt_flags & xpt_flags)) {
+				spin_lock_irq(&ndlp->lock);
+				ndlp->nlp_flag &= ~NLP_NPR_2B_DISC;
+				if (phba->sli_rev == LPFC_SLI_REV4)
+					ndlp->nlp_flag |= NLP_RELEASE_RPI;
+				spin_unlock_irq(&ndlp->lock);
+			}
 			lpfc_unreg_rpi(vport, ndlp);
 		} else {
 			/* Indicate the node has already released, should
@@ -4437,28 +4453,37 @@ lpfc_mbx_cmpl_dflt_rpi(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 {
 	struct lpfc_dmabuf *mp = (struct lpfc_dmabuf *)(pmb->ctx_buf);
 	struct lpfc_nodelist *ndlp = (struct lpfc_nodelist *)pmb->ctx_ndlp;
+	u32 mbx_flag = pmb->mbox_flag;
+	u32 mbx_cmd = pmb->u.mb.mbxCommand;
 
 	pmb->ctx_buf = NULL;
 	pmb->ctx_ndlp = NULL;
 
+	if (ndlp) {
+		lpfc_printf_vlog(ndlp->vport, KERN_INFO, LOG_NODE,
+				 "0006 rpi x%x DID:%x flg:%x %d x%px "
+				 "mbx_cmd x%x mbx_flag x%x x%px\n",
+				 ndlp->nlp_rpi, ndlp->nlp_DID, ndlp->nlp_flag,
+				 kref_read(&ndlp->kref), ndlp, mbx_cmd,
+				 mbx_flag, pmb);
+
+		/* This ends the default/temporary RPI cleanup logic for this
+		 * ndlp and the node and rpi needs to be released. Free the rpi
+		 * first on an UNREG_LOGIN and then release the final
+		 * references.
+		 */
+		spin_lock_irq(&ndlp->lock);
+		ndlp->nlp_flag &= ~NLP_REG_LOGIN_SEND;
+		if (mbx_cmd == MBX_UNREG_LOGIN)
+			ndlp->nlp_flag &= ~NLP_UNREG_INP;
+		spin_unlock_irq(&ndlp->lock);
+		lpfc_nlp_put(ndlp);
+		lpfc_drop_node(ndlp->vport, ndlp);
+	}
+
 	lpfc_mbuf_free(phba, mp->virt, mp->phys);
 	kfree(mp);
 	mempool_free(pmb, phba->mbox_mem_pool);
-	if (ndlp) {
-		lpfc_printf_vlog(ndlp->vport, KERN_INFO, LOG_NODE,
-				 "0006 rpi x%x DID:%x flg:%x %d x%px\n",
-				 ndlp->nlp_rpi, ndlp->nlp_DID, ndlp->nlp_flag,
-				 kref_read(&ndlp->kref),
-				 ndlp);
-		/* This is the end of the default RPI cleanup logic for
-		 * this ndlp and it could get released.  Clear the nlp_flags to
-		 * prevent any further processing.
-		 */
-		ndlp->nlp_flag &= ~NLP_REG_LOGIN_SEND;
-		lpfc_nlp_put(ndlp);
-		lpfc_nlp_not_used(ndlp);
-	}
-
 	return;
 }
 
@@ -4473,10 +4498,7 @@ lpfc_mbx_cmpl_dflt_rpi(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
  * nlp_flag bitmap in the ndlp data structure, if the mbox command reference
  * field in the command IOCB is not NULL, the referred mailbox command will
  * be send out, and then invokes the lpfc_els_free_iocb() routine to release
- * the IOCB. Under error conditions, such as when a LS_RJT is returned or a
- * link down event occurred during the discovery, the lpfc_nlp_not_used()
- * routine shall be invoked trying to release the ndlp if no other threads
- * are currently referring it.
+ * the IOCB.
  **/
 static void
 lpfc_cmpl_els_rsp(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
@@ -4486,10 +4508,8 @@ lpfc_cmpl_els_rsp(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 	struct lpfc_vport *vport = ndlp ? ndlp->vport : NULL;
 	struct Scsi_Host  *shost = vport ? lpfc_shost_from_vport(vport) : NULL;
 	IOCB_t  *irsp;
-	uint8_t *pcmd;
 	LPFC_MBOXQ_t *mbox = NULL;
 	struct lpfc_dmabuf *mp = NULL;
-	uint32_t ls_rjt = 0;
 
 	irsp = &rspiocb->iocb;
 
@@ -4501,18 +4521,6 @@ lpfc_cmpl_els_rsp(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 	if (cmdiocb->context_un.mbox)
 		mbox = cmdiocb->context_un.mbox;
 
-	/* First determine if this is a LS_RJT cmpl. Note, this callback
-	 * function can have cmdiocb->contest1 (ndlp) field set to NULL.
-	 */
-	pcmd = (uint8_t *) (((struct lpfc_dmabuf *) cmdiocb->context2)->virt);
-	if (ndlp && (*((uint32_t *) (pcmd)) == ELS_CMD_LS_RJT)) {
-		/* A LS_RJT associated with Default RPI cleanup has its own
-		 * separate code path.
-		 */
-		if (!(ndlp->nlp_flag & NLP_RM_DFLT_RPI))
-			ls_rjt = 1;
-	}
-
 	/* Check to see if link went down during discovery */
 	if (!ndlp || lpfc_els_chk_latt(vport)) {
 		if (mbox) {
@@ -4523,15 +4531,6 @@ lpfc_cmpl_els_rsp(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 			}
 			mempool_free(mbox, phba->mbox_mem_pool);
 		}
-		if (ndlp && (ndlp->nlp_flag & NLP_RM_DFLT_RPI))
-			if (lpfc_nlp_not_used(ndlp)) {
-				ndlp = NULL;
-				/* Indicate the node has already released,
-				 * should not reference to it from within
-				 * the routine lpfc_els_free_iocb.
-				 */
-				cmdiocb->context1 = NULL;
-			}
 		goto out;
 	}
 
@@ -4542,11 +4541,11 @@ lpfc_cmpl_els_rsp(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 	/* ELS response tag <ulpIoTag> completes */
 	lpfc_printf_vlog(vport, KERN_INFO, LOG_ELS,
 			 "0110 ELS response tag x%x completes "
-			 "Data: x%x x%x x%x x%x x%x x%x x%x\n",
+			 "Data: x%x x%x x%x x%x x%x x%x x%x x%x x%px\n",
 			 cmdiocb->iocb.ulpIoTag, rspiocb->iocb.ulpStatus,
 			 rspiocb->iocb.un.ulpWord[4], rspiocb->iocb.ulpTimeout,
 			 ndlp->nlp_DID, ndlp->nlp_flag, ndlp->nlp_state,
-			 ndlp->nlp_rpi);
+			 ndlp->nlp_rpi, kref_read(&ndlp->kref), mbox);
 	if (mbox) {
 		if ((rspiocb->iocb.ulpStatus == 0) &&
 		    (ndlp->nlp_flag & NLP_ACC_REGLOGIN)) {
@@ -4609,29 +4608,6 @@ lpfc_cmpl_els_rsp(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 				"Data: x%x x%x x%x\n",
 				ndlp->nlp_DID, ndlp->nlp_flag, ndlp->nlp_state,
 				ndlp->nlp_rpi);
-
-			if (lpfc_nlp_not_used(ndlp)) {
-				ndlp = NULL;
-				/* Indicate node has already been released,
-				 * should not reference to it from within
-				 * the routine lpfc_els_free_iocb.
-				 */
-				cmdiocb->context1 = NULL;
-			}
-		} else {
-			/* Do not drop node for lpfc_els_abort'ed ELS cmds */
-			if (!lpfc_error_lost_link(irsp) &&
-			    ndlp->nlp_flag & NLP_ACC_REGLOGIN) {
-				if (lpfc_nlp_not_used(ndlp)) {
-					ndlp = NULL;
-					/* Indicate node has already been
-					 * released, should not reference
-					 * to it from within the routine
-					 * lpfc_els_free_iocb.
-					 */
-					cmdiocb->context1 = NULL;
-				}
-			}
 		}
 		mp = (struct lpfc_dmabuf *)mbox->ctx_buf;
 		if (mp) {
@@ -4647,19 +4623,20 @@ out:
 			ndlp->nlp_flag &= ~NLP_ACC_REGLOGIN;
 		ndlp->nlp_flag &= ~NLP_RM_DFLT_RPI;
 		spin_unlock_irq(&ndlp->lock);
+	}
 
-		/* If the node is not being used by another discovery thread,
-		 * and we are sending a reject, we are done with it.
-		 * Release driver reference count here and free associated
-		 * resources.
-		 */
-		if (ls_rjt)
-			if (lpfc_nlp_not_used(ndlp))
-				/* Indicate node has already been released,
-				 * should not reference to it from within
-				 * the routine lpfc_els_free_iocb.
-				 */
-				cmdiocb->context1 = NULL;
+	/* An SLI4 NPIV instance wants to drop the node at this point under
+	 * these conditions and release the RPI.
+	 */
+	if (phba->sli_rev == LPFC_SLI_REV4 &&
+	    (vport && vport->port_type == LPFC_NPIV_PORT) &&
+	    ndlp->nlp_flag & NLP_RELEASE_RPI) {
+		lpfc_sli4_free_rpi(phba, ndlp->nlp_rpi);
+		spin_lock_irq(&ndlp->lock);
+		ndlp->nlp_rpi = LPFC_RPI_ALLOC_ERROR;
+		ndlp->nlp_flag &= ~NLP_RELEASE_RPI;
+		spin_unlock_irq(&ndlp->lock);
+		lpfc_drop_node(vport, ndlp);
 	}
 
 	/* Release the originating I/O reference. */
@@ -4845,10 +4822,10 @@ lpfc_els_rsp_acc(struct lpfc_vport *vport, uint32_t flag,
 	lpfc_printf_vlog(vport, KERN_INFO, LOG_ELS,
 			 "0128 Xmit ELS ACC response Status: x%x, IoTag: x%x, "
 			 "XRI: x%x, DID: x%x, nlp_flag: x%x nlp_state: x%x "
-			 "RPI: x%x, fc_flag x%x\n",
+			 "RPI: x%x, fc_flag x%x refcnt %d\n",
 			 rc, elsiocb->iotag, elsiocb->sli4_xritag,
 			 ndlp->nlp_DID, ndlp->nlp_flag, ndlp->nlp_state,
-			 ndlp->nlp_rpi, vport->fc_flag);
+			 ndlp->nlp_rpi, vport->fc_flag, kref_read(&ndlp->kref));
 	return 0;
 
 io_err:
@@ -6059,6 +6036,17 @@ lpfc_els_rdp_cmpl(struct lpfc_hba *phba, struct lpfc_rdp_context *rdp_context,
 	if (!elsiocb->context1) {
 		lpfc_els_free_iocb(phba, elsiocb);
 		goto free_rdp_context;
+	}
+
+	/* The NPIV instance is rejecting this unsolicited ELS. Make sure the
+	 * node's assigned RPI needs to be released as this node will get
+	 * freed.
+	 */
+	if (phba->sli_rev == LPFC_SLI_REV4 &&
+	    vport->port_type == LPFC_NPIV_PORT) {
+		spin_lock_irq(&ndlp->lock);
+		ndlp->nlp_flag |= NLP_RELEASE_RPI;
+		spin_unlock_irq(&ndlp->lock);
 	}
 
 	rc = lpfc_sli_issue_iocb(phba, LPFC_ELS_RING, elsiocb, 0);

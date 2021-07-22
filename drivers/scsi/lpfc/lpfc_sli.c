@@ -5683,12 +5683,10 @@ lpfc_sli4_get_ctl_attr(struct lpfc_hba *phba)
 			phba->sli4_hba.lnk_info.lnk_no,
 			phba->BIOSVersion);
 out_free_mboxq:
-	if (rc != MBX_TIMEOUT) {
-		if (bf_get(lpfc_mqe_command, &mboxq->u.mqe) == MBX_SLI4_CONFIG)
-			lpfc_sli4_mbox_cmd_free(phba, mboxq);
-		else
-			mempool_free(mboxq, phba->mbox_mem_pool);
-	}
+	if (bf_get(lpfc_mqe_command, &mboxq->u.mqe) == MBX_SLI4_CONFIG)
+		lpfc_sli4_mbox_cmd_free(phba, mboxq);
+	else
+		mempool_free(mboxq, phba->mbox_mem_pool);
 	return rc;
 }
 
@@ -5789,12 +5787,10 @@ retrieve_ppname:
 	}
 
 out_free_mboxq:
-	if (rc != MBX_TIMEOUT) {
-		if (bf_get(lpfc_mqe_command, &mboxq->u.mqe) == MBX_SLI4_CONFIG)
-			lpfc_sli4_mbox_cmd_free(phba, mboxq);
-		else
-			mempool_free(mboxq, phba->mbox_mem_pool);
-	}
+	if (bf_get(lpfc_mqe_command, &mboxq->u.mqe) == MBX_SLI4_CONFIG)
+		lpfc_sli4_mbox_cmd_free(phba, mboxq);
+	else
+		mempool_free(mboxq, phba->mbox_mem_pool);
 	return rc;
 }
 
@@ -7966,7 +7962,7 @@ lpfc_sli4_hba_setup(struct lpfc_hba *phba)
 				"0393 Error %d during rpi post operation\n",
 				rc);
 		rc = -ENODEV;
-		goto out_destroy_queue;
+		goto out_free_iocblist;
 	}
 	lpfc_sli4_node_prep(phba);
 
@@ -8132,8 +8128,9 @@ out_io_buff_free:
 out_unset_queue:
 	/* Unset all the queues set up in this routine when error out */
 	lpfc_sli4_queue_unset(phba);
-out_destroy_queue:
+out_free_iocblist:
 	lpfc_free_iocb_list(phba);
+out_destroy_queue:
 	lpfc_sli4_queue_destroy(phba);
 out_stop_timers:
 	lpfc_stop_hba_timers(phba);
@@ -11647,7 +11644,7 @@ lpfc_sli_issue_abort_iotag(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
 	icmd = &cmdiocb->iocb;
 	if (icmd->ulpCommand == CMD_ABORT_XRI_CN ||
 	    icmd->ulpCommand == CMD_CLOSE_XRI_CN ||
-	    (cmdiocb->iocb_flag & LPFC_DRIVER_ABORTED) != 0)
+	    cmdiocb->iocb_flag & LPFC_DRIVER_ABORTED)
 		return IOCB_ABORTING;
 
 	if (!pring) {
@@ -11811,13 +11808,20 @@ lpfc_sli_validate_fcp_iocb(struct lpfc_iocbq *iocbq, struct lpfc_vport *vport,
 			   lpfc_ctx_cmd ctx_cmd)
 {
 	struct lpfc_io_buf *lpfc_cmd;
+	IOCB_t *icmd = NULL;
 	int rc = 1;
 
 	if (!iocbq || iocbq->vport != vport)
 		return rc;
 
-	if (!(iocbq->iocb_flag &  LPFC_IO_FCP) ||
-	    !(iocbq->iocb_flag & LPFC_IO_ON_TXCMPLQ))
+	if (!(iocbq->iocb_flag & LPFC_IO_FCP) ||
+	    !(iocbq->iocb_flag & LPFC_IO_ON_TXCMPLQ) ||
+	      iocbq->iocb_flag & LPFC_DRIVER_ABORTED)
+		return rc;
+
+	icmd = &iocbq->iocb;
+	if (icmd->ulpCommand == CMD_ABORT_XRI_CN ||
+	    icmd->ulpCommand == CMD_CLOSE_XRI_CN)
 		return rc;
 
 	lpfc_cmd = container_of(iocbq, struct lpfc_io_buf, cur_iocbq);
@@ -11945,7 +11949,6 @@ lpfc_sli_abort_fcp_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 /**
  * lpfc_sli_abort_iocb - issue abort for all commands on a host/target/LUN
  * @vport: Pointer to virtual port.
- * @pring: Pointer to driver SLI ring object.
  * @tgt_id: SCSI ID of the target.
  * @lun_id: LUN ID of the scsi device.
  * @abort_cmd: LPFC_CTX_LUN/LPFC_CTX_TGT/LPFC_CTX_HOST.
@@ -11960,18 +11963,22 @@ lpfc_sli_abort_fcp_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
  * FCP iocbs associated with SCSI target specified by tgt_id parameter.
  * When abort_cmd == LPFC_CTX_HOST, the function sends abort to all
  * FCP iocbs associated with virtual port.
+ * The pring used for SLI3 is sli3_ring[LPFC_FCP_RING], for SLI4
+ * lpfc_sli4_calc_ring is used.
  * This function returns number of iocbs it failed to abort.
  * This function is called with no locks held.
  **/
 int
-lpfc_sli_abort_iocb(struct lpfc_vport *vport, struct lpfc_sli_ring *pring,
-		    uint16_t tgt_id, uint64_t lun_id, lpfc_ctx_cmd abort_cmd)
+lpfc_sli_abort_iocb(struct lpfc_vport *vport, u16 tgt_id, u64 lun_id,
+		    lpfc_ctx_cmd abort_cmd)
 {
 	struct lpfc_hba *phba = vport->phba;
+	struct lpfc_sli_ring *pring = NULL;
 	struct lpfc_iocbq *iocbq;
 	int errcnt = 0, ret_val = 0;
 	unsigned long iflags;
 	int i;
+	void *fcp_cmpl = NULL;
 
 	/* all I/Os are in process of being flushed */
 	if (phba->hba_flag & HBA_IOQ_FLUSH)
@@ -11985,8 +11992,15 @@ lpfc_sli_abort_iocb(struct lpfc_vport *vport, struct lpfc_sli_ring *pring,
 			continue;
 
 		spin_lock_irqsave(&phba->hbalock, iflags);
+		if (phba->sli_rev == LPFC_SLI_REV3) {
+			pring = &phba->sli.sli3_ring[LPFC_FCP_RING];
+			fcp_cmpl = lpfc_sli_abort_fcp_cmpl;
+		} else if (phba->sli_rev == LPFC_SLI_REV4) {
+			pring = lpfc_sli4_calc_ring(phba, iocbq);
+			fcp_cmpl = lpfc_sli4_abort_fcp_cmpl;
+		}
 		ret_val = lpfc_sli_issue_abort_iotag(phba, pring, iocbq,
-						     lpfc_sli_abort_fcp_cmpl);
+						     fcp_cmpl);
 		spin_unlock_irqrestore(&phba->hbalock, iflags);
 		if (ret_val != IOCB_SUCCESS)
 			errcnt++;
@@ -13615,9 +13629,15 @@ lpfc_sli4_sp_handle_mbox_event(struct lpfc_hba *phba, struct lpfc_mcqe *mcqe)
 		if (mcqe_status == MB_CQE_STATUS_SUCCESS) {
 			mp = (struct lpfc_dmabuf *)(pmb->ctx_buf);
 			ndlp = (struct lpfc_nodelist *)pmb->ctx_ndlp;
-			/* Reg_LOGIN of dflt RPI was successful. Now lets get
-			 * RID of the PPI using the same mbox buffer.
+
+			/* Reg_LOGIN of dflt RPI was successful. Mark the
+			 * node as having an UNREG_LOGIN in progress to stop
+			 * an unsolicited PLOGI from the same NPortId from
+			 * starting another mailbox transaction.
 			 */
+			spin_lock_irqsave(&ndlp->lock, iflags);
+			ndlp->nlp_flag |= NLP_UNREG_INP;
+			spin_unlock_irqrestore(&ndlp->lock, iflags);
 			lpfc_unreg_login(phba, vport->vpi,
 					 pmbox->un.varWords[0], pmb);
 			pmb->mbox_cmpl = lpfc_mbx_cmpl_dflt_rpi;
@@ -17072,8 +17092,7 @@ lpfc_rq_destroy(struct lpfc_hba *phba, struct lpfc_queue *hrq,
 				"2509 RQ_DESTROY mailbox failed with "
 				"status x%x add_status x%x, mbx status x%x\n",
 				shdr_status, shdr_add_status, rc);
-		if (rc != MBX_TIMEOUT)
-			mempool_free(mbox, hrq->phba->mbox_mem_pool);
+		mempool_free(mbox, hrq->phba->mbox_mem_pool);
 		return -ENXIO;
 	}
 	bf_set(lpfc_mbx_rq_destroy_q_id, &mbox->u.mqe.un.rq_destroy.u.request,
@@ -17170,7 +17189,9 @@ lpfc_sli4_post_sgl(struct lpfc_hba *phba,
 	shdr = (union lpfc_sli4_cfg_shdr *) &post_sgl_pages->header.cfg_shdr;
 	shdr_status = bf_get(lpfc_mbox_hdr_status, &shdr->response);
 	shdr_add_status = bf_get(lpfc_mbox_hdr_add_status, &shdr->response);
-	if (rc != MBX_TIMEOUT)
+	if (!phba->sli4_hba.intr_enable)
+		mempool_free(mbox, phba->mbox_mem_pool);
+	else if (rc != MBX_TIMEOUT)
 		mempool_free(mbox, phba->mbox_mem_pool);
 	if (shdr_status || shdr_add_status || rc) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
@@ -17367,7 +17388,9 @@ lpfc_sli4_post_sgl_list(struct lpfc_hba *phba,
 	shdr = (union lpfc_sli4_cfg_shdr *) &sgl->cfg_shdr;
 	shdr_status = bf_get(lpfc_mbox_hdr_status, &shdr->response);
 	shdr_add_status = bf_get(lpfc_mbox_hdr_add_status, &shdr->response);
-	if (rc != MBX_TIMEOUT)
+	if (!phba->sli4_hba.intr_enable)
+		lpfc_sli4_mbox_cmd_free(phba, mbox);
+	else if (rc != MBX_TIMEOUT)
 		lpfc_sli4_mbox_cmd_free(phba, mbox);
 	if (shdr_status || shdr_add_status || rc) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
@@ -17480,7 +17503,9 @@ lpfc_sli4_post_io_sgl_block(struct lpfc_hba *phba, struct list_head *nblist,
 	shdr = (union lpfc_sli4_cfg_shdr *)&sgl->cfg_shdr;
 	shdr_status = bf_get(lpfc_mbox_hdr_status, &shdr->response);
 	shdr_add_status = bf_get(lpfc_mbox_hdr_add_status, &shdr->response);
-	if (rc != MBX_TIMEOUT)
+	if (!phba->sli4_hba.intr_enable)
+		lpfc_sli4_mbox_cmd_free(phba, mbox);
+	else if (rc != MBX_TIMEOUT)
 		lpfc_sli4_mbox_cmd_free(phba, mbox);
 	if (shdr_status || shdr_add_status || rc) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
@@ -18064,7 +18089,6 @@ lpfc_sli4_seq_abort_rsp_cmpl(struct lpfc_hba *phba,
 	if (cmd_iocbq) {
 		ndlp = (struct lpfc_nodelist *)cmd_iocbq->context1;
 		lpfc_nlp_put(ndlp);
-		lpfc_nlp_not_used(ndlp);
 		lpfc_sli_release_iocbq(phba, cmd_iocbq);
 	}
 
@@ -18831,8 +18855,7 @@ lpfc_sli4_post_rpi_hdr(struct lpfc_hba *phba, struct lpfc_rpi_hdr *rpi_page)
 	shdr = (union lpfc_sli4_cfg_shdr *) &hdr_tmpl->header.cfg_shdr;
 	shdr_status = bf_get(lpfc_mbox_hdr_status, &shdr->response);
 	shdr_add_status = bf_get(lpfc_mbox_hdr_add_status, &shdr->response);
-	if (rc != MBX_TIMEOUT)
-		mempool_free(mboxq, phba->mbox_mem_pool);
+	mempool_free(mboxq, phba->mbox_mem_pool);
 	if (shdr_status || shdr_add_status || rc) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
 				"2514 POST_RPI_HDR mailbox failed with "
@@ -20076,7 +20099,9 @@ lpfc_wr_object(struct lpfc_hba *phba, struct list_head *dmabuf_list,
 			break;
 		}
 	}
-	if (rc != MBX_TIMEOUT)
+	if (!phba->sli4_hba.intr_enable)
+		mempool_free(mbox, phba->mbox_mem_pool);
+	else if (rc != MBX_TIMEOUT)
 		mempool_free(mbox, phba->mbox_mem_pool);
 	if (shdr_status || shdr_add_status || rc) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
@@ -20573,10 +20598,8 @@ lpfc_sli4_issue_abort_iotag(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 	abtswqe = &abtsiocb->wqe;
 	memset(abtswqe, 0, sizeof(*abtswqe));
 
-	if (lpfc_is_link_up(phba))
+	if (!lpfc_is_link_up(phba))
 		bf_set(abort_cmd_ia, &abtswqe->abort_cmd, 1);
-	else
-		bf_set(abort_cmd_ia, &abtswqe->abort_cmd, 0);
 	bf_set(abort_cmd_criteria, &abtswqe->abort_cmd, T_XRI_TAG);
 	abtswqe->abort_cmd.rsrvd5 = 0;
 	abtswqe->abort_cmd.wqe_com.abort_tag = xritag;

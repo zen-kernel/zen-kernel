@@ -74,8 +74,8 @@ mt7921_init_wiphy(struct ieee80211_hw *hw)
 	struct wiphy *wiphy = hw->wiphy;
 
 	hw->queues = 4;
-	hw->max_rx_aggregation_subframes = IEEE80211_MAX_AMPDU_BUF;
-	hw->max_tx_aggregation_subframes = IEEE80211_MAX_AMPDU_BUF;
+	hw->max_rx_aggregation_subframes = 64;
+	hw->max_tx_aggregation_subframes = 128;
 
 	phy->slottime = 9;
 
@@ -110,29 +110,11 @@ mt7921_init_wiphy(struct ieee80211_hw *hw)
 static void
 mt7921_mac_init_band(struct mt7921_dev *dev, u8 band)
 {
-	u32 mask, set;
-
 	mt76_rmw_field(dev, MT_TMAC_CTCR0(band),
 		       MT_TMAC_CTCR0_INS_DDLMT_REFTIME, 0x3f);
 	mt76_set(dev, MT_TMAC_CTCR0(band),
 		 MT_TMAC_CTCR0_INS_DDLMT_VHT_SMPDU_EN |
 		 MT_TMAC_CTCR0_INS_DDLMT_EN);
-
-	mask = MT_MDP_RCFR0_MCU_RX_MGMT |
-	       MT_MDP_RCFR0_MCU_RX_CTL_NON_BAR |
-	       MT_MDP_RCFR0_MCU_RX_CTL_BAR;
-	set = FIELD_PREP(MT_MDP_RCFR0_MCU_RX_MGMT, MT_MDP_TO_HIF) |
-	      FIELD_PREP(MT_MDP_RCFR0_MCU_RX_CTL_NON_BAR, MT_MDP_TO_HIF) |
-	      FIELD_PREP(MT_MDP_RCFR0_MCU_RX_CTL_BAR, MT_MDP_TO_HIF);
-	mt76_rmw(dev, MT_MDP_BNRCFR0(band), mask, set);
-
-	mask = MT_MDP_RCFR1_MCU_RX_BYPASS |
-	       MT_MDP_RCFR1_RX_DROPPED_UCAST |
-	       MT_MDP_RCFR1_RX_DROPPED_MCAST;
-	set = FIELD_PREP(MT_MDP_RCFR1_MCU_RX_BYPASS, MT_MDP_TO_HIF) |
-	      FIELD_PREP(MT_MDP_RCFR1_RX_DROPPED_UCAST, MT_MDP_TO_HIF) |
-	      FIELD_PREP(MT_MDP_RCFR1_RX_DROPPED_MCAST, MT_MDP_TO_HIF);
-	mt76_rmw(dev, MT_MDP_BNRCFR1(band), mask, set);
 
 	mt76_set(dev, MT_WF_RMAC_MIB_TIME0(band), MT_WF_RMAC_MIB_RXTIME_EN);
 	mt76_set(dev, MT_WF_RMAC_MIB_AIRTIME0(band), MT_WF_RMAC_MIB_RXTIME_EN);
@@ -142,7 +124,7 @@ mt7921_mac_init_band(struct mt7921_dev *dev, u8 band)
 	mt76_clear(dev, MT_DMA_DCR0(band), MT_DMA_DCR0_RXD_G5_EN);
 }
 
-static void mt7921_mac_init(struct mt7921_dev *dev)
+void mt7921_mac_init(struct mt7921_dev *dev)
 {
 	int i;
 
@@ -232,7 +214,6 @@ int mt7921_register_device(struct mt7921_dev *dev)
 	INIT_LIST_HEAD(&dev->sta_poll_list);
 	spin_lock_init(&dev->sta_poll_lock);
 
-	init_waitqueue_head(&dev->reset_wait);
 	INIT_WORK(&dev->reset_work, mt7921_mac_reset_work);
 
 	ret = mt7921_init_hardware(dev);

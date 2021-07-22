@@ -137,7 +137,7 @@ static int mt7921_pci_probe(struct pci_dev *pdev,
 
 	mt76_wr(dev, MT_WFDMA0_HOST_INT_ENA, 0);
 
-	mt7921_l1_wr(dev, MT_PCIE_MAC_INT_ENABLE, 0xff);
+	mt76_wr(dev, MT_PCIE_MAC_INT_ENABLE, 0xff);
 
 	ret = devm_request_irq(mdev->dev, pdev->irq, mt7921_irq_handler,
 			       IRQF_SHARED, KBUILD_MODNAME, dev);
@@ -146,10 +146,12 @@ static int mt7921_pci_probe(struct pci_dev *pdev,
 
 	ret = mt7921_register_device(dev);
 	if (ret)
-		goto err_free_dev;
+		goto err_free_irq;
 
 	return 0;
 
+err_free_irq:
+	devm_free_irq(&pdev->dev, pdev->irq, dev);
 err_free_dev:
 	mt76_free_device(&dev->mt76);
 err_free_pci_vec:
@@ -193,7 +195,6 @@ static int mt7921_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 	mt76_for_each_q_rx(mdev, i) {
 		napi_disable(&mdev->napi[i]);
 	}
-	tasklet_kill(&dev->irq_tasklet);
 
 	pci_enable_wake(pdev, pci_choose_state(pdev, state), true);
 
@@ -208,13 +209,16 @@ static int mt7921_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 
 	/* disable interrupt */
 	mt76_wr(dev, MT_WFDMA0_HOST_INT_ENA, 0);
+	mt76_wr(dev, MT_PCIE_MAC_INT_ENABLE, 0x0);
+	synchronize_irq(pdev->irq);
+	tasklet_kill(&dev->irq_tasklet);
 
-	pci_save_state(pdev);
-	err = pci_set_power_state(pdev, pci_choose_state(pdev, state));
+	err = mt7921_mcu_fw_pmctrl(dev);
 	if (err)
 		goto restore;
 
-	err = mt7921_mcu_drv_pmctrl(dev);
+	pci_save_state(pdev);
+	err = pci_set_power_state(pdev, pci_choose_state(pdev, state));
 	if (err)
 		goto restore;
 
@@ -237,18 +241,18 @@ static int mt7921_pci_resume(struct pci_dev *pdev)
 	struct mt7921_dev *dev = container_of(mdev, struct mt7921_dev, mt76);
 	int i, err;
 
-	err = mt7921_mcu_fw_pmctrl(dev);
-	if (err < 0)
-		return err;
-
 	err = pci_set_power_state(pdev, PCI_D0);
 	if (err)
 		return err;
 
 	pci_restore_state(pdev);
 
+	err = mt7921_mcu_drv_pmctrl(dev);
+	if (err < 0)
+		return err;
+
 	/* enable interrupt */
-	mt7921_l1_wr(dev, MT_PCIE_MAC_INT_ENABLE, 0xff);
+	mt76_wr(dev, MT_PCIE_MAC_INT_ENABLE, 0xff);
 	mt7921_irq_enable(dev, MT_INT_RX_DONE_ALL | MT_INT_TX_DONE_ALL |
 			  MT_INT_MCU_CMD);
 

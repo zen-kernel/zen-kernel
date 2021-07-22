@@ -277,16 +277,28 @@ set_freq:
 	return 0;
 }
 
-static int core_get_v1(struct device *dev)
+static int core_get_v1(struct venus_core *core)
 {
-	struct venus_core *core = dev_get_drvdata(dev);
+	int ret;
 
-	return core_clks_get(core);
+	ret = core_clks_get(core);
+	if (ret)
+		return ret;
+
+	core->opp_table = dev_pm_opp_set_clkname(core->dev, "core");
+	if (IS_ERR(core->opp_table))
+		return PTR_ERR(core->opp_table);
+
+	return 0;
 }
 
-static int core_power_v1(struct device *dev, int on)
+static void core_put_v1(struct venus_core *core)
 {
-	struct venus_core *core = dev_get_drvdata(dev);
+	dev_pm_opp_put_clkname(core->opp_table);
+}
+
+static int core_power_v1(struct venus_core *core, int on)
+{
 	int ret = 0;
 
 	if (on == POWER_ON)
@@ -299,6 +311,7 @@ static int core_power_v1(struct device *dev, int on)
 
 static const struct venus_pm_ops pm_ops_v1 = {
 	.core_get = core_get_v1,
+	.core_put = core_put_v1,
 	.core_power = core_power_v1,
 	.load_scale = load_scale_v1,
 };
@@ -371,6 +384,7 @@ static int venc_power_v3(struct device *dev, int on)
 
 static const struct venus_pm_ops pm_ops_v3 = {
 	.core_get = core_get_v1,
+	.core_put = core_put_v1,
 	.core_power = core_power_v1,
 	.vdec_get = vdec_get_v3,
 	.vdec_power = vdec_power_v3,
@@ -753,12 +767,12 @@ static int venc_power_v4(struct device *dev, int on)
 	return ret;
 }
 
-static int vcodec_domains_get(struct device *dev)
+static int vcodec_domains_get(struct venus_core *core)
 {
 	int ret;
 	struct opp_table *opp_table;
 	struct device **opp_virt_dev;
-	struct venus_core *core = dev_get_drvdata(dev);
+	struct device *dev = core->dev;
 	const struct venus_resources *res = core->res;
 	struct device *pd;
 	unsigned int i;
@@ -809,9 +823,8 @@ opp_attach_err:
 	return ret;
 }
 
-static void vcodec_domains_put(struct device *dev)
+static void vcodec_domains_put(struct venus_core *core)
 {
-	struct venus_core *core = dev_get_drvdata(dev);
 	const struct venus_resources *res = core->res;
 	unsigned int i;
 
@@ -834,9 +847,9 @@ skip_pmdomains:
 	dev_pm_opp_detach_genpd(core->opp_table);
 }
 
-static int core_get_v4(struct device *dev)
+static int core_get_v4(struct venus_core *core)
 {
-	struct venus_core *core = dev_get_drvdata(dev);
+	struct device *dev = core->dev;
 	const struct venus_resources *res = core->res;
 	int ret;
 
@@ -875,7 +888,7 @@ static int core_get_v4(struct device *dev)
 		}
 	}
 
-	ret = vcodec_domains_get(dev);
+	ret = vcodec_domains_get(core);
 	if (ret) {
 		if (core->has_opp_table)
 			dev_pm_opp_of_remove_table(dev);
@@ -886,14 +899,14 @@ static int core_get_v4(struct device *dev)
 	return 0;
 }
 
-static void core_put_v4(struct device *dev)
+static void core_put_v4(struct venus_core *core)
 {
-	struct venus_core *core = dev_get_drvdata(dev);
+	struct device *dev = core->dev;
 
 	if (legacy_binding)
 		return;
 
-	vcodec_domains_put(dev);
+	vcodec_domains_put(core);
 
 	if (core->has_opp_table)
 		dev_pm_opp_of_remove_table(dev);
@@ -901,9 +914,9 @@ static void core_put_v4(struct device *dev)
 
 }
 
-static int core_power_v4(struct device *dev, int on)
+static int core_power_v4(struct venus_core *core, int on)
 {
-	struct venus_core *core = dev_get_drvdata(dev);
+	struct device *dev = core->dev;
 	struct device *pmctrl = core->pmdomains[0];
 	int ret = 0;
 

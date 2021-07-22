@@ -2,6 +2,7 @@
 /* Copyright(c) 2018-2019  Realtek Corporation
  */
 
+#include <linux/dmi.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include "main.h"
@@ -581,11 +582,12 @@ static int rtw_pci_start(struct rtw_dev *rtwdev)
 {
 	struct rtw_pci *rtwpci = (struct rtw_pci *)rtwdev->priv;
 
+	rtw_pci_napi_start(rtwdev);
+
 	spin_lock_bh(&rtwpci->irq_lock);
+	rtwpci->running = true;
 	rtw_pci_enable_interrupt(rtwdev, rtwpci, false);
 	spin_unlock_bh(&rtwpci->irq_lock);
-
-	rtw_pci_napi_start(rtwdev);
 
 	return 0;
 }
@@ -593,11 +595,17 @@ static int rtw_pci_start(struct rtw_dev *rtwdev)
 static void rtw_pci_stop(struct rtw_dev *rtwdev)
 {
 	struct rtw_pci *rtwpci = (struct rtw_pci *)rtwdev->priv;
+	struct pci_dev *pdev = rtwpci->pdev;
 
+	spin_lock_bh(&rtwpci->irq_lock);
+	rtwpci->running = false;
+	rtw_pci_disable_interrupt(rtwdev, rtwpci);
+	spin_unlock_bh(&rtwpci->irq_lock);
+
+	synchronize_irq(pdev->irq);
 	rtw_pci_napi_stop(rtwdev);
 
 	spin_lock_bh(&rtwpci->irq_lock);
-	rtw_pci_disable_interrupt(rtwdev, rtwpci);
 	rtw_pci_dma_release(rtwdev, rtwpci);
 	spin_unlock_bh(&rtwpci->irq_lock);
 }
@@ -1138,7 +1146,8 @@ static irqreturn_t rtw_pci_interrupt_threadfn(int irq, void *dev)
 		rtw_fw_c2h_cmd_isr(rtwdev);
 
 	/* all of the jobs for this interrupt have been done */
-	rtw_pci_enable_interrupt(rtwdev, rtwpci, rx);
+	if (rtwpci->running)
+		rtw_pci_enable_interrupt(rtwdev, rtwpci, rx);
 	spin_unlock_bh(&rtwpci->irq_lock);
 
 	return IRQ_HANDLED;
@@ -1558,7 +1567,8 @@ static int rtw_pci_napi_poll(struct napi_struct *napi, int budget)
 	if (work_done < budget) {
 		napi_complete_done(napi, work_done);
 		spin_lock_bh(&rtwpci->irq_lock);
-		rtw_pci_enable_interrupt(rtwdev, rtwpci, false);
+		if (rtwpci->running)
+			rtw_pci_enable_interrupt(rtwdev, rtwpci, false);
 		spin_unlock_bh(&rtwpci->irq_lock);
 		/* When ISR happens during polling and before napi_complete
 		 * while no further data is received. Data on the dma_ring will
@@ -1588,6 +1598,36 @@ static void rtw_pci_napi_deinit(struct rtw_dev *rtwdev)
 	rtw_pci_napi_stop(rtwdev);
 	netif_napi_del(&rtwpci->napi);
 }
+
+enum rtw88_quirk_dis_pci_caps {
+	QUIRK_DIS_PCI_CAP_MSI,
+	QUIRK_DIS_PCI_CAP_ASPM,
+};
+
+static int disable_pci_caps(const struct dmi_system_id *dmi)
+{
+	uintptr_t dis_caps = (uintptr_t)dmi->driver_data;
+
+	if (dis_caps & BIT(QUIRK_DIS_PCI_CAP_MSI))
+		rtw_disable_msi = true;
+	if (dis_caps & BIT(QUIRK_DIS_PCI_CAP_ASPM))
+		rtw_pci_disable_aspm = true;
+
+	return 1;
+}
+
+static const struct dmi_system_id rtw88_pci_quirks[] = {
+	{
+		.callback = disable_pci_caps,
+		.ident = "Protempo Ltd L116HTN6SPW",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Protempo Ltd"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "L116HTN6SPW"),
+		},
+		.driver_data = (void *)BIT(QUIRK_DIS_PCI_CAP_ASPM),
+	},
+	{}
+};
 
 int rtw_pci_probe(struct pci_dev *pdev,
 		  const struct pci_device_id *id)
@@ -1639,6 +1679,7 @@ int rtw_pci_probe(struct pci_dev *pdev,
 		goto err_destroy_pci;
 	}
 
+	dmi_check_system(rtw88_pci_quirks);
 	rtw_pci_phy_cfg(rtwdev);
 
 	ret = rtw_register_hw(rtwdev, hw);

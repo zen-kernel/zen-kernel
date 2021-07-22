@@ -1619,9 +1619,10 @@ static int expand_inode_data(struct inode *inode, loff_t offset,
 	struct f2fs_map_blocks map = { .m_next_pgofs = NULL,
 			.m_next_extent = NULL, .m_seg_type = NO_CHECK_TYPE,
 			.m_may_create = true };
-	pgoff_t pg_end;
+	pgoff_t pg_start, pg_end;
 	loff_t new_size = i_size_read(inode);
 	loff_t off_end;
+	block_t expanded = 0;
 	int err;
 
 	err = inode_newsize_ok(inode, (len + offset));
@@ -1634,11 +1635,12 @@ static int expand_inode_data(struct inode *inode, loff_t offset,
 
 	f2fs_balance_fs(sbi, true);
 
+	pg_start = ((unsigned long long)offset) >> PAGE_SHIFT;
 	pg_end = ((unsigned long long)offset + len) >> PAGE_SHIFT;
 	off_end = (offset + len) & (PAGE_SIZE - 1);
 
-	map.m_lblk = ((unsigned long long)offset) >> PAGE_SHIFT;
-	map.m_len = pg_end - map.m_lblk;
+	map.m_lblk = pg_start;
+	map.m_len = pg_end - pg_start;
 	if (off_end)
 		map.m_len++;
 
@@ -1646,19 +1648,15 @@ static int expand_inode_data(struct inode *inode, loff_t offset,
 		return 0;
 
 	if (f2fs_is_pinned_file(inode)) {
-		block_t len = (map.m_len >> sbi->log_blocks_per_seg) <<
-					sbi->log_blocks_per_seg;
-		block_t done = 0;
+		block_t sec_blks = BLKS_PER_SEC(sbi);
+		block_t sec_len = roundup(map.m_len, sec_blks);
 
-		if (map.m_len % sbi->blocks_per_seg)
-			len += sbi->blocks_per_seg;
-
-		map.m_len = sbi->blocks_per_seg;
+		map.m_len = sec_blks;
 next_alloc:
 		if (has_not_enough_free_secs(sbi, 0,
 			GET_SEC_FROM_SEG(sbi, overprovision_segments(sbi)))) {
 			down_write(&sbi->gc_lock);
-			err = f2fs_gc(sbi, true, false, NULL_SEGNO);
+			err = f2fs_gc(sbi, true, false, false, NULL_SEGNO);
 			if (err && err != -ENODATA && err != -EAGAIN)
 				goto out_err;
 		}
@@ -1666,7 +1664,7 @@ next_alloc:
 		down_write(&sbi->pin_sem);
 
 		f2fs_lock_op(sbi);
-		f2fs_allocate_new_segment(sbi, CURSEG_COLD_DATA_PINNED);
+		f2fs_allocate_new_section(sbi, CURSEG_COLD_DATA_PINNED);
 		f2fs_unlock_op(sbi);
 
 		map.m_seg_type = CURSEG_COLD_DATA_PINNED;
@@ -1674,24 +1672,25 @@ next_alloc:
 
 		up_write(&sbi->pin_sem);
 
-		done += map.m_len;
-		len -= map.m_len;
+		expanded += map.m_len;
+		sec_len -= map.m_len;
 		map.m_lblk += map.m_len;
-		if (!err && len)
+		if (!err && sec_len)
 			goto next_alloc;
 
-		map.m_len = done;
+		map.m_len = expanded;
 	} else {
 		err = f2fs_map_blocks(inode, &map, 1, F2FS_GET_BLOCK_PRE_AIO);
+		expanded = map.m_len;
 	}
 out_err:
 	if (err) {
 		pgoff_t last_off;
 
-		if (!map.m_len)
+		if (!expanded)
 			return err;
 
-		last_off = map.m_lblk + map.m_len - 1;
+		last_off = pg_start + expanded - 1;
 
 		/* update new size to the failed position */
 		new_size = (last_off == pg_end) ? offset + len :
@@ -2489,7 +2488,7 @@ static int f2fs_ioc_gc(struct file *filp, unsigned long arg)
 		down_write(&sbi->gc_lock);
 	}
 
-	ret = f2fs_gc(sbi, sync, true, NULL_SEGNO);
+	ret = f2fs_gc(sbi, sync, true, false, NULL_SEGNO);
 out:
 	mnt_drop_write_file(filp);
 	return ret;
@@ -2525,7 +2524,8 @@ do_more:
 		down_write(&sbi->gc_lock);
 	}
 
-	ret = f2fs_gc(sbi, range->sync, true, GET_SEGNO(sbi, range->start));
+	ret = f2fs_gc(sbi, range->sync, true, false,
+				GET_SEGNO(sbi, range->start));
 	if (ret) {
 		if (ret == -EBUSY)
 			ret = -EAGAIN;
@@ -2978,7 +2978,7 @@ static int f2fs_ioc_flush_device(struct file *filp, unsigned long arg)
 		sm->last_victim[GC_CB] = end_segno + 1;
 		sm->last_victim[GC_GREEDY] = end_segno + 1;
 		sm->last_victim[ALLOC_NEXT] = end_segno + 1;
-		ret = f2fs_gc(sbi, true, true, start_segno);
+		ret = f2fs_gc(sbi, true, true, true, start_segno);
 		if (ret == -EAGAIN)
 			ret = 0;
 		else if (ret < 0)

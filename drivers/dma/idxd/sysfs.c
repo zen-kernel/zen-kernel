@@ -16,69 +16,6 @@ static char *idxd_wq_type_names[] = {
 	[IDXD_WQT_USER]		= "user",
 };
 
-static void idxd_conf_device_release(struct device *dev)
-{
-	dev_dbg(dev, "%s for %s\n", __func__, dev_name(dev));
-}
-
-static struct device_type idxd_group_device_type = {
-	.name = "group",
-	.release = idxd_conf_device_release,
-};
-
-static struct device_type idxd_wq_device_type = {
-	.name = "wq",
-	.release = idxd_conf_device_release,
-};
-
-static struct device_type idxd_engine_device_type = {
-	.name = "engine",
-	.release = idxd_conf_device_release,
-};
-
-static struct device_type dsa_device_type = {
-	.name = "dsa",
-	.release = idxd_conf_device_release,
-};
-
-static struct device_type iax_device_type = {
-	.name = "iax",
-	.release = idxd_conf_device_release,
-};
-
-static inline bool is_dsa_dev(struct device *dev)
-{
-	return dev ? dev->type == &dsa_device_type : false;
-}
-
-static inline bool is_iax_dev(struct device *dev)
-{
-	return dev ? dev->type == &iax_device_type : false;
-}
-
-static inline bool is_idxd_dev(struct device *dev)
-{
-	return is_dsa_dev(dev) || is_iax_dev(dev);
-}
-
-static inline bool is_idxd_wq_dev(struct device *dev)
-{
-	return dev ? dev->type == &idxd_wq_device_type : false;
-}
-
-static inline bool is_idxd_wq_dmaengine(struct idxd_wq *wq)
-{
-	if (wq->type == IDXD_WQT_KERNEL &&
-	    strcmp(wq->name, "dmaengine") == 0)
-		return true;
-	return false;
-}
-
-static inline bool is_idxd_wq_cdev(struct idxd_wq *wq)
-{
-	return wq->type == IDXD_WQT_USER;
-}
-
 static int idxd_config_bus_match(struct device *dev,
 				 struct device_driver *drv)
 {
@@ -322,7 +259,7 @@ static int idxd_config_bus_remove(struct device *dev)
 		dev_dbg(dev, "%s removing dev %s\n", __func__,
 			dev_name(&idxd->conf_dev));
 		for (i = 0; i < idxd->max_wqs; i++) {
-			struct idxd_wq *wq = &idxd->wqs[i];
+			struct idxd_wq *wq = idxd->wqs[i];
 
 			if (wq->state == IDXD_WQ_DISABLED)
 				continue;
@@ -334,7 +271,7 @@ static int idxd_config_bus_remove(struct device *dev)
 		idxd_unregister_dma_device(idxd);
 		rc = idxd_device_disable(idxd);
 		for (i = 0; i < idxd->max_wqs; i++) {
-			struct idxd_wq *wq = &idxd->wqs[i];
+			struct idxd_wq *wq = idxd->wqs[i];
 
 			mutex_lock(&wq->wq_lock);
 			idxd_wq_disable_cleanup(wq);
@@ -405,7 +342,7 @@ struct bus_type *idxd_get_bus_type(struct idxd_device *idxd)
 	return idxd_bus_types[idxd->type];
 }
 
-static struct device_type *idxd_get_device_type(struct idxd_device *idxd)
+struct device_type *idxd_get_device_type(struct idxd_device *idxd)
 {
 	if (idxd->type == IDXD_TYPE_DSA)
 		return &dsa_device_type;
@@ -488,7 +425,7 @@ static ssize_t engine_group_id_store(struct device *dev,
 
 	if (prevg)
 		prevg->num_engines--;
-	engine->group = &idxd->groups[id];
+	engine->group = idxd->groups[id];
 	engine->group->num_engines++;
 
 	return count;
@@ -512,6 +449,19 @@ static const struct attribute_group *idxd_engine_attribute_groups[] = {
 	NULL,
 };
 
+static void idxd_conf_engine_release(struct device *dev)
+{
+	struct idxd_engine *engine = container_of(dev, struct idxd_engine, conf_dev);
+
+	kfree(engine);
+}
+
+struct device_type idxd_engine_device_type = {
+	.name = "engine",
+	.release = idxd_conf_engine_release,
+	.groups = idxd_engine_attribute_groups,
+};
+
 /* Group attributes */
 
 static void idxd_set_free_tokens(struct idxd_device *idxd)
@@ -519,7 +469,7 @@ static void idxd_set_free_tokens(struct idxd_device *idxd)
 	int i, tokens;
 
 	for (i = 0, tokens = 0; i < idxd->max_groups; i++) {
-		struct idxd_group *g = &idxd->groups[i];
+		struct idxd_group *g = idxd->groups[i];
 
 		tokens += g->tokens_reserved;
 	}
@@ -674,7 +624,7 @@ static ssize_t group_engines_show(struct device *dev,
 	struct idxd_device *idxd = group->idxd;
 
 	for (i = 0; i < idxd->max_engines; i++) {
-		struct idxd_engine *engine = &idxd->engines[i];
+		struct idxd_engine *engine = idxd->engines[i];
 
 		if (!engine->group)
 			continue;
@@ -703,7 +653,7 @@ static ssize_t group_work_queues_show(struct device *dev,
 	struct idxd_device *idxd = group->idxd;
 
 	for (i = 0; i < idxd->max_wqs; i++) {
-		struct idxd_wq *wq = &idxd->wqs[i];
+		struct idxd_wq *wq = idxd->wqs[i];
 
 		if (!wq->group)
 			continue;
@@ -824,6 +774,19 @@ static const struct attribute_group *idxd_group_attribute_groups[] = {
 	NULL,
 };
 
+static void idxd_conf_group_release(struct device *dev)
+{
+	struct idxd_group *group = container_of(dev, struct idxd_group, conf_dev);
+
+	kfree(group);
+}
+
+struct device_type idxd_group_device_type = {
+	.name = "group",
+	.release = idxd_conf_group_release,
+	.groups = idxd_group_attribute_groups,
+};
+
 /* IDXD work queue attribs */
 static ssize_t wq_clients_show(struct device *dev,
 			       struct device_attribute *attr, char *buf)
@@ -896,7 +859,7 @@ static ssize_t wq_group_id_store(struct device *dev,
 		return count;
 	}
 
-	group = &idxd->groups[id];
+	group = idxd->groups[id];
 	prevg = wq->group;
 
 	if (prevg)
@@ -960,7 +923,7 @@ static int total_claimed_wq_size(struct idxd_device *idxd)
 	int wq_size = 0;
 
 	for (i = 0; i < idxd->max_wqs; i++) {
-		struct idxd_wq *wq = &idxd->wqs[i];
+		struct idxd_wq *wq = idxd->wqs[i];
 
 		wq_size += wq->size;
 	}
@@ -1206,8 +1169,16 @@ static ssize_t wq_cdev_minor_show(struct device *dev,
 				  struct device_attribute *attr, char *buf)
 {
 	struct idxd_wq *wq = container_of(dev, struct idxd_wq, conf_dev);
+	int minor = -1;
 
-	return sprintf(buf, "%d\n", wq->idxd_cdev.minor);
+	mutex_lock(&wq->wq_lock);
+	if (wq->idxd_cdev)
+		minor = wq->idxd_cdev->minor;
+	mutex_unlock(&wq->wq_lock);
+
+	if (minor == -1)
+		return -ENXIO;
+	return sysfs_emit(buf, "%d\n", minor);
 }
 
 static struct device_attribute dev_attr_wq_cdev_minor =
@@ -1356,6 +1327,20 @@ static const struct attribute_group *idxd_wq_attribute_groups[] = {
 	NULL,
 };
 
+static void idxd_conf_wq_release(struct device *dev)
+{
+	struct idxd_wq *wq = container_of(dev, struct idxd_wq, conf_dev);
+
+	kfree(wq->wqcfg);
+	kfree(wq);
+}
+
+struct device_type idxd_wq_device_type = {
+	.name = "wq",
+	.release = idxd_conf_wq_release,
+	.groups = idxd_wq_attribute_groups,
+};
+
 /* IDXD device attribs */
 static ssize_t version_show(struct device *dev, struct device_attribute *attr,
 			    char *buf)
@@ -1486,7 +1471,7 @@ static ssize_t clients_show(struct device *dev,
 
 	spin_lock_irqsave(&idxd->dev_lock, flags);
 	for (i = 0; i < idxd->max_wqs; i++) {
-		struct idxd_wq *wq = &idxd->wqs[i];
+		struct idxd_wq *wq = idxd->wqs[i];
 
 		count += wq->client_count;
 	}
@@ -1644,183 +1629,160 @@ static const struct attribute_group *idxd_attribute_groups[] = {
 	NULL,
 };
 
-static int idxd_setup_engine_sysfs(struct idxd_device *idxd)
+static void idxd_conf_device_release(struct device *dev)
 {
-	struct device *dev = &idxd->pdev->dev;
-	int i, rc;
+	struct idxd_device *idxd = container_of(dev, struct idxd_device, conf_dev);
+
+	kfree(idxd->groups);
+	kfree(idxd->wqs);
+	kfree(idxd->engines);
+	kfree(idxd->irq_entries);
+	ida_free(idxd_ida(idxd), idxd->id);
+	kfree(idxd);
+}
+
+struct device_type dsa_device_type = {
+	.name = "dsa",
+	.release = idxd_conf_device_release,
+	.groups = idxd_attribute_groups,
+};
+
+struct device_type iax_device_type = {
+	.name = "iax",
+	.release = idxd_conf_device_release,
+	.groups = idxd_attribute_groups,
+};
+
+static int idxd_register_engine_devices(struct idxd_device *idxd)
+{
+	int i, j, rc;
 
 	for (i = 0; i < idxd->max_engines; i++) {
-		struct idxd_engine *engine = &idxd->engines[i];
+		struct idxd_engine *engine = idxd->engines[i];
 
-		engine->conf_dev.parent = &idxd->conf_dev;
-		dev_set_name(&engine->conf_dev, "engine%d.%d",
-			     idxd->id, engine->id);
-		engine->conf_dev.bus = idxd_get_bus_type(idxd);
-		engine->conf_dev.groups = idxd_engine_attribute_groups;
-		engine->conf_dev.type = &idxd_engine_device_type;
-		dev_dbg(dev, "Engine device register: %s\n",
-			dev_name(&engine->conf_dev));
-		rc = device_register(&engine->conf_dev);
-		if (rc < 0) {
-			put_device(&engine->conf_dev);
+		rc = device_add(&engine->conf_dev);
+		if (rc < 0)
 			goto cleanup;
-		}
 	}
 
 	return 0;
 
 cleanup:
-	while (i--) {
-		struct idxd_engine *engine = &idxd->engines[i];
+	j = i - 1;
+	for (; i < idxd->max_engines; i++)
+		put_device(&idxd->engines[i]->conf_dev);
 
-		device_unregister(&engine->conf_dev);
-	}
+	while (j--)
+		device_unregister(&idxd->engines[j]->conf_dev);
 	return rc;
 }
 
-static int idxd_setup_group_sysfs(struct idxd_device *idxd)
+static int idxd_register_group_devices(struct idxd_device *idxd)
 {
-	struct device *dev = &idxd->pdev->dev;
-	int i, rc;
+	int i, j, rc;
 
 	for (i = 0; i < idxd->max_groups; i++) {
-		struct idxd_group *group = &idxd->groups[i];
+		struct idxd_group *group = idxd->groups[i];
 
-		group->conf_dev.parent = &idxd->conf_dev;
-		dev_set_name(&group->conf_dev, "group%d.%d",
-			     idxd->id, group->id);
-		group->conf_dev.bus = idxd_get_bus_type(idxd);
-		group->conf_dev.groups = idxd_group_attribute_groups;
-		group->conf_dev.type = &idxd_group_device_type;
-		dev_dbg(dev, "Group device register: %s\n",
-			dev_name(&group->conf_dev));
-		rc = device_register(&group->conf_dev);
-		if (rc < 0) {
-			put_device(&group->conf_dev);
+		rc = device_add(&group->conf_dev);
+		if (rc < 0)
 			goto cleanup;
-		}
 	}
 
 	return 0;
 
 cleanup:
-	while (i--) {
-		struct idxd_group *group = &idxd->groups[i];
+	j = i - 1;
+	for (; i < idxd->max_groups; i++)
+		put_device(&idxd->groups[i]->conf_dev);
 
-		device_unregister(&group->conf_dev);
-	}
+	while (j--)
+		device_unregister(&idxd->groups[j]->conf_dev);
 	return rc;
 }
 
-static int idxd_setup_wq_sysfs(struct idxd_device *idxd)
+static int idxd_register_wq_devices(struct idxd_device *idxd)
 {
-	struct device *dev = &idxd->pdev->dev;
-	int i, rc;
+	int i, rc, j;
 
 	for (i = 0; i < idxd->max_wqs; i++) {
-		struct idxd_wq *wq = &idxd->wqs[i];
+		struct idxd_wq *wq = idxd->wqs[i];
 
-		wq->conf_dev.parent = &idxd->conf_dev;
-		dev_set_name(&wq->conf_dev, "wq%d.%d", idxd->id, wq->id);
-		wq->conf_dev.bus = idxd_get_bus_type(idxd);
-		wq->conf_dev.groups = idxd_wq_attribute_groups;
-		wq->conf_dev.type = &idxd_wq_device_type;
-		dev_dbg(dev, "WQ device register: %s\n",
-			dev_name(&wq->conf_dev));
-		rc = device_register(&wq->conf_dev);
-		if (rc < 0) {
-			put_device(&wq->conf_dev);
+		rc = device_add(&wq->conf_dev);
+		if (rc < 0)
 			goto cleanup;
-		}
 	}
 
 	return 0;
 
 cleanup:
-	while (i--) {
-		struct idxd_wq *wq = &idxd->wqs[i];
+	j = i - 1;
+	for (; i < idxd->max_wqs; i++)
+		put_device(&idxd->wqs[i]->conf_dev);
 
-		device_unregister(&wq->conf_dev);
-	}
+	while (j--)
+		device_unregister(&idxd->wqs[j]->conf_dev);
 	return rc;
 }
 
-static int idxd_setup_device_sysfs(struct idxd_device *idxd)
+int idxd_register_devices(struct idxd_device *idxd)
 {
 	struct device *dev = &idxd->pdev->dev;
-	int rc;
-	char devname[IDXD_NAME_SIZE];
+	int rc, i;
 
-	sprintf(devname, "%s%d", idxd_get_dev_name(idxd), idxd->id);
-	idxd->conf_dev.parent = dev;
-	dev_set_name(&idxd->conf_dev, "%s", devname);
-	idxd->conf_dev.bus = idxd_get_bus_type(idxd);
-	idxd->conf_dev.groups = idxd_attribute_groups;
-	idxd->conf_dev.type = idxd_get_device_type(idxd);
-
-	dev_dbg(dev, "IDXD device register: %s\n", dev_name(&idxd->conf_dev));
-	rc = device_register(&idxd->conf_dev);
-	if (rc < 0) {
-		put_device(&idxd->conf_dev);
+	rc = device_add(&idxd->conf_dev);
+	if (rc < 0)
 		return rc;
+
+	rc = idxd_register_wq_devices(idxd);
+	if (rc < 0) {
+		dev_dbg(dev, "WQ devices registering failed: %d\n", rc);
+		goto err_wq;
+	}
+
+	rc = idxd_register_engine_devices(idxd);
+	if (rc < 0) {
+		dev_dbg(dev, "Engine devices registering failed: %d\n", rc);
+		goto err_engine;
+	}
+
+	rc = idxd_register_group_devices(idxd);
+	if (rc < 0) {
+		dev_dbg(dev, "Group device registering failed: %d\n", rc);
+		goto err_group;
 	}
 
 	return 0;
+
+ err_group:
+	for (i = 0; i < idxd->max_engines; i++)
+		device_unregister(&idxd->engines[i]->conf_dev);
+ err_engine:
+	for (i = 0; i < idxd->max_wqs; i++)
+		device_unregister(&idxd->wqs[i]->conf_dev);
+ err_wq:
+	device_del(&idxd->conf_dev);
+	return rc;
 }
 
-int idxd_setup_sysfs(struct idxd_device *idxd)
-{
-	struct device *dev = &idxd->pdev->dev;
-	int rc;
-
-	rc = idxd_setup_device_sysfs(idxd);
-	if (rc < 0) {
-		dev_dbg(dev, "Device sysfs registering failed: %d\n", rc);
-		return rc;
-	}
-
-	rc = idxd_setup_wq_sysfs(idxd);
-	if (rc < 0) {
-		/* unregister conf dev */
-		dev_dbg(dev, "Work Queue sysfs registering failed: %d\n", rc);
-		return rc;
-	}
-
-	rc = idxd_setup_group_sysfs(idxd);
-	if (rc < 0) {
-		/* unregister conf dev */
-		dev_dbg(dev, "Group sysfs registering failed: %d\n", rc);
-		return rc;
-	}
-
-	rc = idxd_setup_engine_sysfs(idxd);
-	if (rc < 0) {
-		/* unregister conf dev */
-		dev_dbg(dev, "Engine sysfs registering failed: %d\n", rc);
-		return rc;
-	}
-
-	return 0;
-}
-
-void idxd_cleanup_sysfs(struct idxd_device *idxd)
+void idxd_unregister_devices(struct idxd_device *idxd)
 {
 	int i;
 
 	for (i = 0; i < idxd->max_wqs; i++) {
-		struct idxd_wq *wq = &idxd->wqs[i];
+		struct idxd_wq *wq = idxd->wqs[i];
 
 		device_unregister(&wq->conf_dev);
 	}
 
 	for (i = 0; i < idxd->max_engines; i++) {
-		struct idxd_engine *engine = &idxd->engines[i];
+		struct idxd_engine *engine = idxd->engines[i];
 
 		device_unregister(&engine->conf_dev);
 	}
 
 	for (i = 0; i < idxd->max_groups; i++) {
-		struct idxd_group *group = &idxd->groups[i];
+		struct idxd_group *group = idxd->groups[i];
 
 		device_unregister(&group->conf_dev);
 	}

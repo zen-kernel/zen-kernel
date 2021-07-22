@@ -521,7 +521,7 @@ static struct nft_table *nft_table_lookup(const struct net *net,
 		    table->family == family &&
 		    nft_active_genmask(table, genmask)) {
 			if (nft_table_has_owner(table) &&
-			    table->nlpid != nlpid)
+			    nlpid && table->nlpid != nlpid)
 				return ERR_PTR(-EPERM);
 
 			return table;
@@ -533,14 +533,19 @@ static struct nft_table *nft_table_lookup(const struct net *net,
 
 static struct nft_table *nft_table_lookup_byhandle(const struct net *net,
 						   const struct nlattr *nla,
-						   u8 genmask)
+						   u8 genmask, u32 nlpid)
 {
 	struct nft_table *table;
 
 	list_for_each_entry(table, &net->nft.tables, list) {
 		if (be64_to_cpu(nla_get_be64(nla)) == table->handle &&
-		    nft_active_genmask(table, genmask))
+		    nft_active_genmask(table, genmask)) {
+			if (nft_table_has_owner(table) &&
+			    nlpid && table->nlpid != nlpid)
+				return ERR_PTR(-EPERM);
+
 			return table;
+		}
 	}
 
 	return ERR_PTR(-ENOENT);
@@ -1213,7 +1218,8 @@ static int nf_tables_deltable(struct net *net, struct sock *nlsk,
 
 	if (nla[NFTA_TABLE_HANDLE]) {
 		attr = nla[NFTA_TABLE_HANDLE];
-		table = nft_table_lookup_byhandle(net, attr, genmask);
+		table = nft_table_lookup_byhandle(net, attr, genmask,
+						  NETLINK_CB(skb).portid);
 	} else {
 		attr = nla[NFTA_TABLE_NAME];
 		table = nft_table_lookup(net, attr, family, genmask,
@@ -3288,8 +3294,10 @@ static int nf_tables_newrule(struct net *net, struct sock *nlsk,
 			if (n == NFT_RULE_MAXEXPRS)
 				goto err1;
 			err = nf_tables_expr_parse(&ctx, tmp, &info[n]);
-			if (err < 0)
+			if (err < 0) {
+				NL_SET_BAD_ATTR(extack, tmp);
 				goto err1;
+			}
 			size += info[n].ops->size;
 			n++;
 		}
@@ -4315,44 +4323,7 @@ static int nf_tables_newset(struct net *net, struct sock *nlsk,
 	err = nf_tables_set_alloc_name(&ctx, set, name);
 	kfree(name);
 	if (err < 0)
-		goto err_set_alloc_name;
-
-	if (nla[NFTA_SET_EXPR]) {
-		expr = nft_set_elem_expr_alloc(&ctx, set, nla[NFTA_SET_EXPR]);
-		if (IS_ERR(expr)) {
-			err = PTR_ERR(expr);
-			goto err_set_alloc_name;
-		}
-		set->exprs[0] = expr;
-		set->num_exprs++;
-	} else if (nla[NFTA_SET_EXPRESSIONS]) {
-		struct nft_expr *expr;
-		struct nlattr *tmp;
-		int left;
-
-		if (!(flags & NFT_SET_EXPR)) {
-			err = -EINVAL;
-			goto err_set_alloc_name;
-		}
-		i = 0;
-		nla_for_each_nested(tmp, nla[NFTA_SET_EXPRESSIONS], left) {
-			if (i == NFT_SET_EXPR_MAX) {
-				err = -E2BIG;
-				goto err_set_init;
-			}
-			if (nla_type(tmp) != NFTA_LIST_ELEM) {
-				err = -EINVAL;
-				goto err_set_init;
-			}
-			expr = nft_set_elem_expr_alloc(&ctx, set, tmp);
-			if (IS_ERR(expr)) {
-				err = PTR_ERR(expr);
-				goto err_set_init;
-			}
-			set->exprs[i++] = expr;
-			set->num_exprs++;
-		}
-	}
+		goto err_set_name;
 
 	udata = NULL;
 	if (udlen) {
@@ -4363,20 +4334,19 @@ static int nf_tables_newset(struct net *net, struct sock *nlsk,
 	INIT_LIST_HEAD(&set->bindings);
 	set->table = table;
 	write_pnet(&set->net, net);
-	set->ops   = ops;
+	set->ops = ops;
 	set->ktype = ktype;
-	set->klen  = desc.klen;
+	set->klen = desc.klen;
 	set->dtype = dtype;
 	set->objtype = objtype;
-	set->dlen  = desc.dlen;
+	set->dlen = desc.dlen;
 	set->flags = flags;
-	set->size  = desc.size;
+	set->size = desc.size;
 	set->policy = policy;
-	set->udlen  = udlen;
-	set->udata  = udata;
+	set->udlen = udlen;
+	set->udata = udata;
 	set->timeout = timeout;
 	set->gc_int = gc_int;
-	set->handle = nf_tables_alloc_handle(table);
 
 	set->field_count = desc.field_count;
 	for (i = 0; i < desc.field_count; i++)
@@ -4386,20 +4356,59 @@ static int nf_tables_newset(struct net *net, struct sock *nlsk,
 	if (err < 0)
 		goto err_set_init;
 
+	if (nla[NFTA_SET_EXPR]) {
+		expr = nft_set_elem_expr_alloc(&ctx, set, nla[NFTA_SET_EXPR]);
+		if (IS_ERR(expr)) {
+			err = PTR_ERR(expr);
+			goto err_set_expr_alloc;
+		}
+		set->exprs[0] = expr;
+		set->num_exprs++;
+	} else if (nla[NFTA_SET_EXPRESSIONS]) {
+		struct nft_expr *expr;
+		struct nlattr *tmp;
+		int left;
+
+		if (!(flags & NFT_SET_EXPR)) {
+			err = -EINVAL;
+			goto err_set_expr_alloc;
+		}
+		i = 0;
+		nla_for_each_nested(tmp, nla[NFTA_SET_EXPRESSIONS], left) {
+			if (i == NFT_SET_EXPR_MAX) {
+				err = -E2BIG;
+				goto err_set_expr_alloc;
+			}
+			if (nla_type(tmp) != NFTA_LIST_ELEM) {
+				err = -EINVAL;
+				goto err_set_expr_alloc;
+			}
+			expr = nft_set_elem_expr_alloc(&ctx, set, tmp);
+			if (IS_ERR(expr)) {
+				err = PTR_ERR(expr);
+				goto err_set_expr_alloc;
+			}
+			set->exprs[i++] = expr;
+			set->num_exprs++;
+		}
+	}
+
+	set->handle = nf_tables_alloc_handle(table);
+
 	err = nft_trans_set_add(&ctx, NFT_MSG_NEWSET, set);
 	if (err < 0)
-		goto err_set_trans;
+		goto err_set_expr_alloc;
 
 	list_add_tail_rcu(&set->list, &table->sets);
 	table->use++;
 	return 0;
 
-err_set_trans:
-	ops->destroy(set);
-err_set_init:
+err_set_expr_alloc:
 	for (i = 0; i < set->num_exprs; i++)
 		nft_expr_destroy(&ctx, set->exprs[i]);
-err_set_alloc_name:
+
+	ops->destroy(set);
+err_set_init:
 	kfree(set->name);
 err_set_name:
 	kvfree(set);
@@ -6246,9 +6255,9 @@ err_obj_ht:
 	INIT_LIST_HEAD(&obj->list);
 	return err;
 err_trans:
-	kfree(obj->key.name);
-err_userdata:
 	kfree(obj->udata);
+err_userdata:
+	kfree(obj->key.name);
 err_strdup:
 	if (obj->ops->destroy)
 		obj->ops->destroy(&ctx, obj);

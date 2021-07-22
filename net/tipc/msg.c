@@ -44,11 +44,14 @@
 #define MAX_FORWARD_SIZE 1024
 #ifdef CONFIG_TIPC_CRYPTO
 #define BUF_HEADROOM ALIGN(((LL_MAX_HEADER + 48) + EHDR_MAX_SIZE), 16)
-#define BUF_TAILROOM (TIPC_AES_GCM_TAG_SIZE)
+#define BUF_OVERHEAD (BUF_HEADROOM + TIPC_AES_GCM_TAG_SIZE)
 #else
 #define BUF_HEADROOM (LL_MAX_HEADER + 48)
-#define BUF_TAILROOM 16
+#define BUF_OVERHEAD BUF_HEADROOM
 #endif
+
+const int one_page_mtu = PAGE_SIZE - SKB_DATA_ALIGN(BUF_OVERHEAD) -
+			 SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
 
 static unsigned int align(unsigned int i)
 {
@@ -69,13 +72,8 @@ static unsigned int align(unsigned int i)
 struct sk_buff *tipc_buf_acquire(u32 size, gfp_t gfp)
 {
 	struct sk_buff *skb;
-#ifdef CONFIG_TIPC_CRYPTO
-	unsigned int buf_size = (BUF_HEADROOM + size + BUF_TAILROOM + 3) & ~3u;
-#else
-	unsigned int buf_size = (BUF_HEADROOM + size + 3) & ~3u;
-#endif
 
-	skb = alloc_skb_fclone(buf_size, gfp);
+	skb = alloc_skb_fclone(BUF_OVERHEAD + size, gfp);
 	if (skb) {
 		skb_reserve(skb, BUF_HEADROOM);
 		skb_put(skb, size);
@@ -149,18 +147,13 @@ int tipc_buf_append(struct sk_buff **headbuf, struct sk_buff **buf)
 		if (unlikely(head))
 			goto err;
 		*buf = NULL;
+		if (skb_has_frag_list(frag) && __skb_linearize(frag))
+			goto err;
 		frag = skb_unshare(frag, GFP_ATOMIC);
 		if (unlikely(!frag))
 			goto err;
 		head = *headbuf = frag;
 		TIPC_SKB_CB(head)->tail = NULL;
-		if (skb_is_nonlinear(head)) {
-			skb_walk_frags(head, tail) {
-				TIPC_SKB_CB(head)->tail = tail;
-			}
-		} else {
-			skb_frag_list_init(head);
-		}
 		return 0;
 	}
 
@@ -400,7 +393,8 @@ int tipc_msg_build(struct tipc_msg *mhdr, struct msghdr *m, int offset,
 		if (unlikely(!skb)) {
 			if (pktmax != MAX_MSG_SIZE)
 				return -ENOMEM;
-			rc = tipc_msg_build(mhdr, m, offset, dsz, FB_MTU, list);
+			rc = tipc_msg_build(mhdr, m, offset, dsz,
+					    one_page_mtu, list);
 			if (rc != dsz)
 				return rc;
 			if (tipc_msg_assemble(list))

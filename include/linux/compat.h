@@ -366,8 +366,8 @@ struct compat_robust_list_head {
 };
 
 struct compat_futex_waitv {
-	compat_u64 val;
 	compat_uptr_t uaddr;
+	compat_uint_t val;
 	compat_uint_t flags;
 };
 
@@ -666,9 +666,12 @@ compat_sys_get_robust_list(int pid, compat_uptr_t __user *head_ptr,
 			   compat_size_t __user *len_ptr);
 
 /* kernel/futex2.c */
-asmlinkage long
-compat_sys_futex_wait(void __user *uaddr, compat_u64 val, unsigned int flags,
-		      struct __kernel_timespec __user *timo);
+asmlinkage long compat_sys_futex_requeue(struct compat_futex_requeue *uaddr1,
+					 struct compat_futex_requeue *uaddr2,
+					 compat_uint_t nr_wake,
+					 compat_uint_t nr_requeue,
+					 compat_u64 cmpval,
+					 compat_uint_t flags);
 asmlinkage long compat_sys_futex_waitv(struct compat_futex_waitv *waiters,
 				       compat_uint_t nr_futexes, compat_uint_t flags,
 				       struct __kernel_timespec __user *timo);

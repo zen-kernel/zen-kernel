@@ -290,6 +290,8 @@ static int spinand_ondie_ecc_finish_io_req(struct nand_device *nand,
 {
 	struct spinand_ondie_ecc_conf *engine_conf = nand->ecc.ctx.priv;
 	struct spinand_device *spinand = nand_to_spinand(nand);
+	struct mtd_info *mtd = spinand_to_mtd(spinand);
+	int ret;
 
 	if (req->mode == MTD_OPS_RAW)
 		return 0;
@@ -299,7 +301,13 @@ static int spinand_ondie_ecc_finish_io_req(struct nand_device *nand,
 		return 0;
 
 	/* Finish a page write: check the status, report errors/bitflips */
-	return spinand_check_ecc_status(spinand, engine_conf->status);
+	ret = spinand_check_ecc_status(spinand, engine_conf->status);
+	if (ret == -EBADMSG)
+		mtd->ecc_stats.failed++;
+	else if (ret > 0)
+		mtd->ecc_stats.corrected += ret;
+
+	return ret;
 }
 
 static struct nand_ecc_engine_ops spinand_ondie_ecc_engine_ops = {
@@ -620,13 +628,10 @@ static int spinand_mtd_read(struct mtd_info *mtd, loff_t from,
 		if (ret < 0 && ret != -EBADMSG)
 			break;
 
-		if (ret == -EBADMSG) {
+		if (ret == -EBADMSG)
 			ecc_failed = true;
-			mtd->ecc_stats.failed++;
-		} else {
-			mtd->ecc_stats.corrected += ret;
+		else
 			max_bitflips = max_t(unsigned int, max_bitflips, ret);
-		}
 
 		ret = 0;
 		ops->retlen += iter.req.datalen;
@@ -1263,12 +1268,14 @@ static const struct spi_device_id spinand_ids[] = {
 	{ .name = "spi-nand" },
 	{ /* sentinel */ },
 };
+MODULE_DEVICE_TABLE(spi, spinand_ids);
 
 #ifdef CONFIG_OF
 static const struct of_device_id spinand_of_ids[] = {
 	{ .compatible = "spi-nand" },
 	{ /* sentinel */ },
 };
+MODULE_DEVICE_TABLE(of, spinand_of_ids);
 #endif
 
 static struct spi_mem_driver spinand_drv = {

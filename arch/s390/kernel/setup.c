@@ -165,7 +165,7 @@ static void __init set_preferred_console(void)
 	else if (CONSOLE_IS_3270)
 		add_preferred_console("tty3270", 0, NULL);
 	else if (CONSOLE_IS_VT220)
-		add_preferred_console("ttyS", 1, NULL);
+		add_preferred_console("ttysclp", 0, NULL);
 	else if (CONSOLE_IS_HVC)
 		add_preferred_console("hvc", 0, NULL);
 }
@@ -466,6 +466,7 @@ static void __init setup_lowcore_dat_off(void)
 	lc->br_r1_trampoline = 0x07f1;	/* br %r1 */
 	lc->return_lpswe = gen_lpswe(__LC_RETURN_PSW);
 	lc->return_mcck_lpswe = gen_lpswe(__LC_RETURN_MCCK_PSW);
+	lc->preempt_count = PREEMPT_DISABLED;
 
 	set_prefix((u32)(unsigned long) lc);
 	lowcore_ptr[0] = lc;
@@ -937,9 +938,9 @@ static int __init setup_hwcaps(void)
 	if (MACHINE_HAS_VX) {
 		elf_hwcap |= HWCAP_S390_VXRS;
 		if (test_facility(134))
-			elf_hwcap |= HWCAP_S390_VXRS_EXT;
-		if (test_facility(135))
 			elf_hwcap |= HWCAP_S390_VXRS_BCD;
+		if (test_facility(135))
+			elf_hwcap |= HWCAP_S390_VXRS_EXT;
 		if (test_facility(148))
 			elf_hwcap |= HWCAP_S390_VXRS_EXT2;
 		if (test_facility(152))

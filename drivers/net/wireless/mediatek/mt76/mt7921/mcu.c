@@ -87,28 +87,28 @@ struct mt7921_fw_region {
 #define to_wcid_lo(id)			FIELD_GET(GENMASK(7, 0), (u16)id)
 #define to_wcid_hi(id)			FIELD_GET(GENMASK(9, 8), (u16)id)
 
-static enum mt7921_cipher_type
+static enum mcu_cipher_type
 mt7921_mcu_get_cipher(int cipher)
 {
 	switch (cipher) {
 	case WLAN_CIPHER_SUITE_WEP40:
-		return MT_CIPHER_WEP40;
+		return MCU_CIPHER_WEP40;
 	case WLAN_CIPHER_SUITE_WEP104:
-		return MT_CIPHER_WEP104;
+		return MCU_CIPHER_WEP104;
 	case WLAN_CIPHER_SUITE_TKIP:
-		return MT_CIPHER_TKIP;
+		return MCU_CIPHER_TKIP;
 	case WLAN_CIPHER_SUITE_AES_CMAC:
-		return MT_CIPHER_BIP_CMAC_128;
+		return MCU_CIPHER_BIP_CMAC_128;
 	case WLAN_CIPHER_SUITE_CCMP:
-		return MT_CIPHER_AES_CCMP;
+		return MCU_CIPHER_AES_CCMP;
 	case WLAN_CIPHER_SUITE_CCMP_256:
-		return MT_CIPHER_CCMP_256;
+		return MCU_CIPHER_CCMP_256;
 	case WLAN_CIPHER_SUITE_GCMP:
-		return MT_CIPHER_GCMP;
+		return MCU_CIPHER_GCMP;
 	case WLAN_CIPHER_SUITE_GCMP_256:
-		return MT_CIPHER_GCMP_256;
+		return MCU_CIPHER_GCMP_256;
 	case WLAN_CIPHER_SUITE_SMS4:
-		return MT_CIPHER_WAPI;
+		return MCU_CIPHER_WAPI;
 	default:
 		return MT_CIPHER_NONE;
 	}
@@ -161,6 +161,8 @@ mt7921_mcu_parse_response(struct mt76_dev *mdev, int cmd,
 	if (!skb) {
 		dev_err(mdev->dev, "Message %d (seq %d) timeout\n",
 			cmd, seq);
+		mt7921_reset(mdev);
+
 		return -ETIMEDOUT;
 	}
 
@@ -391,29 +393,37 @@ static void
 mt7921_mcu_tx_rate_report(struct mt7921_dev *dev, struct sk_buff *skb,
 			  u16 wlan_idx)
 {
-	struct mt7921_mcu_wlan_info_event *wtbl_info =
-		(struct mt7921_mcu_wlan_info_event *)(skb->data);
-	struct rate_info rate = {};
-	u8 curr_idx = wtbl_info->rate_info.rate_idx;
-	u16 curr = le16_to_cpu(wtbl_info->rate_info.rate[curr_idx]);
-	struct mt7921_mcu_peer_cap peer = wtbl_info->peer_cap;
+	struct mt7921_mcu_wlan_info_event *wtbl_info;
 	struct mt76_phy *mphy = &dev->mphy;
 	struct mt7921_sta_stats *stats;
+	struct rate_info rate = {};
 	struct mt7921_sta *msta;
 	struct mt76_wcid *wcid;
+	u8 idx;
 
 	if (wlan_idx >= MT76_N_WCIDS)
 		return;
+
+	wtbl_info = (struct mt7921_mcu_wlan_info_event *)skb->data;
+	idx = wtbl_info->rate_info.rate_idx;
+	if (idx >= ARRAY_SIZE(wtbl_info->rate_info.rate))
+		return;
+
+	rcu_read_lock();
+
 	wcid = rcu_dereference(dev->mt76.wcid[wlan_idx]);
 	if (!wcid)
-		return;
+		goto out;
 
 	msta = container_of(wcid, struct mt7921_sta, wcid);
 	stats = &msta->stats;
 
 	/* current rate */
-	mt7921_mcu_tx_rate_parse(mphy, &peer, &rate, curr);
+	mt7921_mcu_tx_rate_parse(mphy, &wtbl_info->peer_cap, &rate,
+				 le16_to_cpu(wtbl_info->rate_info.rate[idx]));
 	stats->tx_rate = rate;
+out:
+	rcu_read_unlock();
 }
 
 static void
@@ -569,14 +579,14 @@ mt7921_mcu_sta_key_tlv(struct mt7921_sta *msta, struct sk_buff *skb,
 		sec_key = &sec->key[0];
 		sec_key->cipher_len = sizeof(*sec_key);
 
-		if (cipher == MT_CIPHER_BIP_CMAC_128) {
-			sec_key->cipher_id = MT_CIPHER_AES_CCMP;
+		if (cipher == MCU_CIPHER_BIP_CMAC_128) {
+			sec_key->cipher_id = MCU_CIPHER_AES_CCMP;
 			sec_key->key_id = bip->keyidx;
 			sec_key->key_len = 16;
 			memcpy(sec_key->key, bip->key, 16);
 
 			sec_key = &sec->key[1];
-			sec_key->cipher_id = MT_CIPHER_BIP_CMAC_128;
+			sec_key->cipher_id = MCU_CIPHER_BIP_CMAC_128;
 			sec_key->cipher_len = sizeof(*sec_key);
 			sec_key->key_len = 16;
 			memcpy(sec_key->key, key->key, 16);
@@ -588,14 +598,14 @@ mt7921_mcu_sta_key_tlv(struct mt7921_sta *msta, struct sk_buff *skb,
 			sec_key->key_len = key->keylen;
 			memcpy(sec_key->key, key->key, key->keylen);
 
-			if (cipher == MT_CIPHER_TKIP) {
+			if (cipher == MCU_CIPHER_TKIP) {
 				/* Rx/Tx MIC keys are swapped */
 				memcpy(sec_key->key + 16, key->key + 24, 8);
 				memcpy(sec_key->key + 24, key->key + 16, 8);
 			}
 
 			/* store key_conf for BIP batch update */
-			if (cipher == MT_CIPHER_AES_CCMP) {
+			if (cipher == MCU_CIPHER_AES_CCMP) {
 				memcpy(bip->key, key->key, key->keylen);
 				bip->keyidx = key->keyidx;
 			}
@@ -919,6 +929,24 @@ int mt7921_mcu_fw_log_2_host(struct mt7921_dev *dev, u8 ctrl)
 				 sizeof(data), false);
 }
 
+int mt7921_run_firmware(struct mt7921_dev *dev)
+{
+	int err;
+
+	err = mt7921_driver_own(dev);
+	if (err)
+		return err;
+
+	err = mt7921_load_firmware(dev);
+	if (err)
+		return err;
+
+	set_bit(MT76_STATE_MCU_RUNNING, &dev->mphy.state);
+	mt7921_mcu_fw_log_2_host(dev, 1);
+
+	return 0;
+}
+
 int mt7921_mcu_init(struct mt7921_dev *dev)
 {
 	static const struct mt76_mcu_ops mt7921_mcu_ops = {
@@ -927,22 +955,10 @@ int mt7921_mcu_init(struct mt7921_dev *dev)
 		.mcu_parse_response = mt7921_mcu_parse_response,
 		.mcu_restart = mt7921_mcu_restart,
 	};
-	int ret;
 
 	dev->mt76.mcu_ops = &mt7921_mcu_ops;
 
-	ret = mt7921_driver_own(dev);
-	if (ret)
-		return ret;
-
-	ret = mt7921_load_firmware(dev);
-	if (ret)
-		return ret;
-
-	set_bit(MT76_STATE_MCU_RUNNING, &dev->mphy.state);
-	mt7921_mcu_fw_log_2_host(dev, 1);
-
-	return 0;
+	return mt7921_run_firmware(dev);
 }
 
 void mt7921_mcu_exit(struct mt7921_dev *dev)
@@ -1255,6 +1271,7 @@ int mt7921_mcu_drv_pmctrl(struct mt7921_dev *dev)
 
 	if (i == MT7921_DRV_OWN_RETRY_COUNT) {
 		dev_err(dev->mt76.dev, "driver own failed\n");
+		mt7921_reset(&dev->mt76);
 		return -EIO;
 	}
 
@@ -1281,6 +1298,7 @@ int mt7921_mcu_fw_pmctrl(struct mt7921_dev *dev)
 
 	if (i == MT7921_DRV_OWN_RETRY_COUNT) {
 		dev_err(dev->mt76.dev, "firmware own failed\n");
+		mt7921_reset(&dev->mt76);
 		return -EIO;
 	}
 
@@ -1303,4 +1321,48 @@ mt7921_pm_interface_iter(void *priv, u8 *mac, struct ieee80211_vif *vif)
 		vif->driver_flags &= ~IEEE80211_VIF_BEACON_FILTER;
 		mt76_clear(dev, MT_WF_RFCR(0), MT_WF_RFCR_DROP_OTHER_BEACON);
 	}
+}
+
+int mt7921_mcu_update_arp_filter(struct ieee80211_hw *hw,
+				 struct ieee80211_vif *vif,
+				 struct ieee80211_bss_conf *info)
+{
+	struct mt7921_vif *mvif = (struct mt7921_vif *)vif->drv_priv;
+	struct mt7921_dev *dev = mt7921_hw_dev(hw);
+	struct sk_buff *skb;
+	int i, len = min_t(int, info->arp_addr_cnt,
+			   IEEE80211_BSS_ARP_ADDR_LIST_LEN);
+	struct {
+		struct {
+			u8 bss_idx;
+			u8 pad[3];
+		} __packed hdr;
+		struct mt76_connac_arpns_tlv arp;
+	} req_hdr = {
+		.hdr = {
+			.bss_idx = mvif->mt76.idx,
+		},
+		.arp = {
+			.tag = cpu_to_le16(UNI_OFFLOAD_OFFLOAD_ARP),
+			.len = cpu_to_le16(sizeof(struct mt76_connac_arpns_tlv)),
+			.ips_num = len,
+			.mode = 2,  /* update */
+			.option = 1,
+		},
+	};
+
+	skb = mt76_mcu_msg_alloc(&dev->mt76, NULL,
+				 sizeof(req_hdr) + len * sizeof(__be32));
+	if (!skb)
+		return -ENOMEM;
+
+	skb_put_data(skb, &req_hdr, sizeof(req_hdr));
+	for (i = 0; i < len; i++) {
+		u8 *addr = (u8 *)skb_put(skb, sizeof(__be32));
+
+		memcpy(addr, &info->arp_addr_list[i], sizeof(__be32));
+	}
+
+	return mt76_mcu_skb_send_msg(&dev->mt76, skb, MCU_UNI_CMD_OFFLOAD,
+				     true);
 }

@@ -667,9 +667,6 @@ static void ext4_handle_error(struct super_block *sb, bool force_ro, int error,
 			ext4_commit_super(sb);
 	}
 
-	if (sb_rdonly(sb) || continue_fs)
-		return;
-
 	/*
 	 * We force ERRORS_RO behavior when system is rebooting. Otherwise we
 	 * could panic during 'reboot -f' as the underlying device got already
@@ -679,6 +676,10 @@ static void ext4_handle_error(struct super_block *sb, bool force_ro, int error,
 		panic("EXT4-fs (device %s): panic forced after error\n",
 			sb->s_id);
 	}
+
+	if (sb_rdonly(sb) || continue_fs)
+		return;
+
 	ext4_msg(sb, KERN_CRIT, "Remounting filesystem read-only");
 	/*
 	 * Make sure updated value of ->s_mount_flags will be visible before
@@ -704,15 +705,23 @@ static void flush_stashed_error_work(struct work_struct *work)
 	 * ext4 error handling code during handling of previous errors.
 	 */
 	if (!sb_rdonly(sbi->s_sb) && journal) {
+		struct buffer_head *sbh = sbi->s_sbh;
 		handle = jbd2_journal_start(journal, 1);
 		if (IS_ERR(handle))
 			goto write_directly;
-		if (jbd2_journal_get_write_access(handle, sbi->s_sbh)) {
+		if (jbd2_journal_get_write_access(handle, sbh)) {
 			jbd2_journal_stop(handle);
 			goto write_directly;
 		}
 		ext4_update_super(sbi->s_sb);
-		if (jbd2_journal_dirty_metadata(handle, sbi->s_sbh)) {
+		if (buffer_write_io_error(sbh) || !buffer_uptodate(sbh)) {
+			ext4_msg(sbi->s_sb, KERN_ERR, "previous I/O error to "
+				 "superblock detected");
+			clear_buffer_write_io_error(sbh);
+			set_buffer_uptodate(sbh);
+		}
+
+		if (jbd2_journal_dirty_metadata(handle, sbh)) {
 			jbd2_journal_stop(handle);
 			goto write_directly;
 		}
@@ -1244,8 +1253,8 @@ static void ext4_put_super(struct super_block *sb)
 	ext4_xattr_destroy_cache(sbi->s_ea_block_cache);
 	sbi->s_ea_block_cache = NULL;
 
-	if (sbi->s_mmp_tsk)
-		kthread_stop(sbi->s_mmp_tsk);
+	ext4_stop_mmpd(sbi);
+
 	brelse(sbi->s_sbh);
 	sb->s_fs_info = NULL;
 	/*
@@ -3023,9 +3032,6 @@ static void ext4_orphan_cleanup(struct super_block *sb,
 		sb->s_flags &= ~SB_RDONLY;
 	}
 #ifdef CONFIG_QUOTA
-	/* Needed for iput() to work correctly and not trash data */
-	sb->s_flags |= SB_ACTIVE;
-
 	/*
 	 * Turn on quotas which were not enabled for read-only mounts if
 	 * filesystem has quota feature, so that they are updated correctly.
@@ -3086,8 +3092,15 @@ static void ext4_orphan_cleanup(struct super_block *sb,
 			inode_lock(inode);
 			truncate_inode_pages(inode->i_mapping, inode->i_size);
 			ret = ext4_truncate(inode);
-			if (ret)
+			if (ret) {
+				/*
+				 * We need to clean up the in-core orphan list
+				 * manually if ext4_truncate() failed to get a
+				 * transaction handle.
+				 */
+				ext4_orphan_del(NULL, inode);
 				ext4_std_error(inode->i_sb, ret);
+			}
 			inode_unlock(inode);
 			nr_truncates++;
 		} else {
@@ -4451,14 +4464,20 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 	if (sb->s_blocksize != blocksize) {
+		/*
+		 * bh must be released before kill_bdev(), otherwise
+		 * it won't be freed and its page also. kill_bdev()
+		 * is called by sb_set_blocksize().
+		 */
+		brelse(bh);
 		/* Validate the filesystem blocksize */
 		if (!sb_set_blocksize(sb, blocksize)) {
 			ext4_msg(sb, KERN_ERR, "bad block size %d",
 					blocksize);
+			bh = NULL;
 			goto failed_mount;
 		}
 
-		brelse(bh);
 		logical_sb_block = sb_block * EXT4_MIN_BLOCK_SIZE;
 		offset = do_div(logical_sb_block, blocksize);
 		bh = ext4_sb_bread_unmovable(sb, logical_sb_block);
@@ -5028,6 +5047,7 @@ no_journal:
 			ext4_msg(sb, KERN_ERR,
 			       "unable to initialize "
 			       "flex_bg meta info!");
+			ret = -ENOMEM;
 			goto failed_mount6;
 		}
 
@@ -5156,8 +5176,7 @@ failed_mount3a:
 failed_mount3:
 	flush_work(&sbi->s_error_work);
 	del_timer_sync(&sbi->s_err_report);
-	if (sbi->s_mmp_tsk)
-		kthread_stop(sbi->s_mmp_tsk);
+	ext4_stop_mmpd(sbi);
 failed_mount2:
 	rcu_read_lock();
 	group_desc = rcu_dereference(sbi->s_group_desc);
@@ -5178,8 +5197,9 @@ failed_mount:
 		kfree(get_qf_name(sb, sbi, i));
 #endif
 	fscrypt_free_dummy_policy(&sbi->s_dummy_enc_policy);
-	ext4_blkdev_remove(sbi);
+	/* ext4_blkdev_remove() calls kill_bdev(), release bh before it. */
 	brelse(bh);
+	ext4_blkdev_remove(sbi);
 out_fail:
 	sb->s_fs_info = NULL;
 	kfree(sbi->s_blockgroup_lock);
@@ -5561,8 +5581,10 @@ static int ext4_commit_super(struct super_block *sb)
 	struct buffer_head *sbh = EXT4_SB(sb)->s_sbh;
 	int error = 0;
 
-	if (!sbh || block_device_ejected(sb))
-		return error;
+	if (!sbh)
+		return -EINVAL;
+	if (block_device_ejected(sb))
+		return -ENODEV;
 
 	ext4_update_super(sb);
 
@@ -5952,8 +5974,7 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 				 */
 				ext4_mark_recovery_complete(sb, es);
 			}
-			if (sbi->s_mmp_tsk)
-				kthread_stop(sbi->s_mmp_tsk);
+			ext4_stop_mmpd(sbi);
 		} else {
 			/* Make sure we can mount this feature set readwrite */
 			if (ext4_has_feature_readonly(sb) ||

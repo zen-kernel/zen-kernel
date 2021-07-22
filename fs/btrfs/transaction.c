@@ -254,8 +254,11 @@ static inline int extwriter_counter_read(struct btrfs_transaction *trans)
 }
 
 /*
- * To be called after all the new block groups attached to the transaction
- * handle have been created (btrfs_create_pending_block_groups()).
+ * To be called after doing the chunk btree updates right after allocating a new
+ * chunk (after btrfs_chunk_alloc_add_chunk_item() is called), when removing a
+ * chunk after all chunk btree updates and after finishing the second phase of
+ * chunk allocation (btrfs_create_pending_block_groups()) in case some block
+ * group had its chunk item insertion delayed to the second phase.
  */
 void btrfs_trans_release_chunk_metadata(struct btrfs_trans_handle *trans)
 {
@@ -263,8 +266,6 @@ void btrfs_trans_release_chunk_metadata(struct btrfs_trans_handle *trans)
 
 	if (!trans->chunk_bytes_reserved)
 		return;
-
-	WARN_ON_ONCE(!list_empty(&trans->new_bgs));
 
 	btrfs_block_rsv_release(fs_info, &fs_info->chunk_block_rsv,
 				trans->chunk_bytes_reserved, NULL);
@@ -697,7 +698,6 @@ again:
 	h->fs_info = root->fs_info;
 
 	h->type = type;
-	h->can_flush_pending_bgs = true;
 	INIT_LIST_HEAD(&h->new_bgs);
 
 	smp_mb();
@@ -1388,8 +1388,10 @@ int btrfs_defrag_root(struct btrfs_root *root)
 
 	while (1) {
 		trans = btrfs_start_transaction(root, 0);
-		if (IS_ERR(trans))
-			return PTR_ERR(trans);
+		if (IS_ERR(trans)) {
+			ret = PTR_ERR(trans);
+			break;
+		}
 
 		ret = btrfs_defrag_leaves(trans, root);
 
@@ -1456,7 +1458,7 @@ static int qgroup_account_snapshot(struct btrfs_trans_handle *trans,
 	ret = btrfs_run_delayed_refs(trans, (unsigned long)-1);
 	if (ret) {
 		btrfs_abort_transaction(trans, ret);
-		goto out;
+		return ret;
 	}
 
 	/*
@@ -1961,7 +1963,6 @@ static void cleanup_transaction(struct btrfs_trans_handle *trans, int err)
 	 */
 	BUG_ON(list_empty(&cur_trans->list));
 
-	list_del_init(&cur_trans->list);
 	if (cur_trans == fs_info->running_transaction) {
 		cur_trans->state = TRANS_STATE_COMMIT_DOING;
 		spin_unlock(&fs_info->trans_lock);
@@ -1970,6 +1971,17 @@ static void cleanup_transaction(struct btrfs_trans_handle *trans, int err)
 
 		spin_lock(&fs_info->trans_lock);
 	}
+
+	/*
+	 * Now that we know no one else is still using the transaction we can
+	 * remove the transaction from the list of transactions. This avoids
+	 * the transaction kthread from cleaning up the transaction while some
+	 * other task is still using it, which could result in a use-after-free
+	 * on things like log trees, as it forces the transaction kthread to
+	 * wait for this transaction to be cleaned up by us.
+	 */
+	list_del_init(&cur_trans->list);
+
 	spin_unlock(&fs_info->trans_lock);
 
 	btrfs_cleanup_one_transaction(trans->transaction, fs_info);
@@ -2038,14 +2050,6 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 	int ret;
 
 	ASSERT(refcount_read(&trans->use_count) == 1);
-
-	/*
-	 * Some places just start a transaction to commit it.  We need to make
-	 * sure that if this commit fails that the abort code actually marks the
-	 * transaction as failed, so set trans->dirty to make the abort code do
-	 * the right thing.
-	 */
-	trans->dirty = true;
 
 	/* Stop the commit early if ->aborted is set */
 	if (TRANS_ABORTED(cur_trans)) {

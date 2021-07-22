@@ -1104,7 +1104,7 @@ struct dpp *dcn20_dpp_create(
 	uint32_t inst)
 {
 	struct dcn20_dpp *dpp =
-		kzalloc(sizeof(struct dcn20_dpp), GFP_KERNEL);
+		kzalloc(sizeof(struct dcn20_dpp), GFP_ATOMIC);
 
 	if (!dpp)
 		return NULL;
@@ -1122,7 +1122,7 @@ struct input_pixel_processor *dcn20_ipp_create(
 	struct dc_context *ctx, uint32_t inst)
 {
 	struct dcn10_ipp *ipp =
-		kzalloc(sizeof(struct dcn10_ipp), GFP_KERNEL);
+		kzalloc(sizeof(struct dcn10_ipp), GFP_ATOMIC);
 
 	if (!ipp) {
 		BREAK_TO_DEBUGGER();
@@ -1139,7 +1139,7 @@ struct output_pixel_processor *dcn20_opp_create(
 	struct dc_context *ctx, uint32_t inst)
 {
 	struct dcn20_opp *opp =
-		kzalloc(sizeof(struct dcn20_opp), GFP_KERNEL);
+		kzalloc(sizeof(struct dcn20_opp), GFP_ATOMIC);
 
 	if (!opp) {
 		BREAK_TO_DEBUGGER();
@@ -1156,7 +1156,7 @@ struct dce_aux *dcn20_aux_engine_create(
 	uint32_t inst)
 {
 	struct aux_engine_dce110 *aux_engine =
-		kzalloc(sizeof(struct aux_engine_dce110), GFP_KERNEL);
+		kzalloc(sizeof(struct aux_engine_dce110), GFP_ATOMIC);
 
 	if (!aux_engine)
 		return NULL;
@@ -1194,7 +1194,7 @@ struct dce_i2c_hw *dcn20_i2c_hw_create(
 	uint32_t inst)
 {
 	struct dce_i2c_hw *dce_i2c_hw =
-		kzalloc(sizeof(struct dce_i2c_hw), GFP_KERNEL);
+		kzalloc(sizeof(struct dce_i2c_hw), GFP_ATOMIC);
 
 	if (!dce_i2c_hw)
 		return NULL;
@@ -1207,7 +1207,7 @@ struct dce_i2c_hw *dcn20_i2c_hw_create(
 struct mpc *dcn20_mpc_create(struct dc_context *ctx)
 {
 	struct dcn20_mpc *mpc20 = kzalloc(sizeof(struct dcn20_mpc),
-					  GFP_KERNEL);
+					  GFP_ATOMIC);
 
 	if (!mpc20)
 		return NULL;
@@ -1225,7 +1225,7 @@ struct hubbub *dcn20_hubbub_create(struct dc_context *ctx)
 {
 	int i;
 	struct dcn20_hubbub *hubbub = kzalloc(sizeof(struct dcn20_hubbub),
-					  GFP_KERNEL);
+					  GFP_ATOMIC);
 
 	if (!hubbub)
 		return NULL;
@@ -1253,7 +1253,7 @@ struct timing_generator *dcn20_timing_generator_create(
 		uint32_t instance)
 {
 	struct optc *tgn10 =
-		kzalloc(sizeof(struct optc), GFP_KERNEL);
+		kzalloc(sizeof(struct optc), GFP_ATOMIC);
 
 	if (!tgn10)
 		return NULL;
@@ -1332,7 +1332,7 @@ static struct clock_source *dcn20_clock_source_create(
 	bool dp_clk_src)
 {
 	struct dce110_clk_src *clk_src =
-		kzalloc(sizeof(struct dce110_clk_src), GFP_KERNEL);
+		kzalloc(sizeof(struct dce110_clk_src), GFP_ATOMIC);
 
 	if (!clk_src)
 		return NULL;
@@ -1438,7 +1438,7 @@ struct display_stream_compressor *dcn20_dsc_create(
 	struct dc_context *ctx, uint32_t inst)
 {
 	struct dcn20_dsc *dsc =
-		kzalloc(sizeof(struct dcn20_dsc), GFP_KERNEL);
+		kzalloc(sizeof(struct dcn20_dsc), GFP_ATOMIC);
 
 	if (!dsc) {
 		BREAK_TO_DEBUGGER();
@@ -1572,7 +1572,7 @@ struct hubp *dcn20_hubp_create(
 	uint32_t inst)
 {
 	struct dcn20_hubp *hubp2 =
-		kzalloc(sizeof(struct dcn20_hubp), GFP_KERNEL);
+		kzalloc(sizeof(struct dcn20_hubp), GFP_ATOMIC);
 
 	if (!hubp2)
 		return NULL;
@@ -2284,12 +2284,14 @@ int dcn20_populate_dml_pipes_from_context(
 
 			pipes[pipe_cnt].pipe.src.source_scan = pln->rotation == ROTATION_ANGLE_90
 					|| pln->rotation == ROTATION_ANGLE_270 ? dm_vert : dm_horz;
-			pipes[pipe_cnt].pipe.src.viewport_y_y = scl->viewport_unadjusted.y;
-			pipes[pipe_cnt].pipe.src.viewport_y_c = scl->viewport_c_unadjusted.y;
-			pipes[pipe_cnt].pipe.src.viewport_width = scl->viewport_unadjusted.width;
-			pipes[pipe_cnt].pipe.src.viewport_width_c = scl->viewport_c_unadjusted.width;
-			pipes[pipe_cnt].pipe.src.viewport_height = scl->viewport_unadjusted.height;
-			pipes[pipe_cnt].pipe.src.viewport_height_c = scl->viewport_c_unadjusted.height;
+			pipes[pipe_cnt].pipe.src.viewport_y_y = scl->viewport.y;
+			pipes[pipe_cnt].pipe.src.viewport_y_c = scl->viewport_c.y;
+			pipes[pipe_cnt].pipe.src.viewport_width = scl->viewport.width;
+			pipes[pipe_cnt].pipe.src.viewport_width_c = scl->viewport_c.width;
+			pipes[pipe_cnt].pipe.src.viewport_height = scl->viewport.height;
+			pipes[pipe_cnt].pipe.src.viewport_height_c = scl->viewport_c.height;
+			pipes[pipe_cnt].pipe.src.viewport_width_max = pln->src_rect.width;
+			pipes[pipe_cnt].pipe.src.viewport_height_max = pln->src_rect.height;
 			pipes[pipe_cnt].pipe.src.surface_width_y = pln->plane_size.surface_size.width;
 			pipes[pipe_cnt].pipe.src.surface_height_y = pln->plane_size.surface_size.height;
 			pipes[pipe_cnt].pipe.src.surface_width_c = pln->plane_size.chroma_size.width;
@@ -3231,7 +3233,7 @@ static noinline bool dcn20_validate_bandwidth_fp(struct dc *dc,
 	voltage_supported = dcn20_validate_bandwidth_internal(dc, context, false);
 	dummy_pstate_supported = context->bw_ctx.bw.dcn.clk.p_state_change_support;
 
-	if (voltage_supported && dummy_pstate_supported) {
+	if (voltage_supported && (dummy_pstate_supported || !(context->stream_count))) {
 		context->bw_ctx.bw.dcn.clk.p_state_change_support = false;
 		goto restore_dml_state;
 	}
@@ -3390,7 +3392,7 @@ bool dcn20_mmhubbub_create(struct dc_context *ctx, struct resource_pool *pool)
 
 static struct pp_smu_funcs *dcn20_pp_smu_create(struct dc_context *ctx)
 {
-	struct pp_smu_funcs *pp_smu = kzalloc(sizeof(*pp_smu), GFP_KERNEL);
+	struct pp_smu_funcs *pp_smu = kzalloc(sizeof(*pp_smu), GFP_ATOMIC);
 
 	if (!pp_smu)
 		return pp_smu;
@@ -4034,7 +4036,7 @@ struct resource_pool *dcn20_create_resource_pool(
 		struct dc *dc)
 {
 	struct dcn20_resource_pool *pool =
-		kzalloc(sizeof(struct dcn20_resource_pool), GFP_KERNEL);
+		kzalloc(sizeof(struct dcn20_resource_pool), GFP_ATOMIC);
 
 	if (!pool)
 		return NULL;

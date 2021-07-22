@@ -1126,6 +1126,7 @@ static void rtw8822c_pwrtrack_init(struct rtw_dev *rtwdev)
 
 	dm_info->pwr_trk_triggered = false;
 	dm_info->thermal_meter_k = rtwdev->efuse.thermal_meter_k;
+	dm_info->thermal_meter_lck = rtwdev->efuse.thermal_meter_k;
 }
 
 static void rtw8822c_phy_set_param(struct rtw_dev *rtwdev)
@@ -2106,6 +2107,26 @@ static void rtw8822c_false_alarm_statistics(struct rtw_dev *rtwdev)
 	rtw_write32_set(rtwdev, REG_CNT_CTRL, BIT_ALL_CNT_RST);
 	rtw_write32_clr(rtwdev, REG_CNT_CTRL, BIT_ALL_CNT_RST);
 	rtw_write32_set(rtwdev, REG_RX_BREAK, BIT_COM_RX_GCK_EN);
+}
+
+static void rtw8822c_do_lck(struct rtw_dev *rtwdev)
+{
+	u32 val;
+
+	rtw_write_rf(rtwdev, RF_PATH_A, RF_SYN_CTRL, RFREG_MASK, 0x80010);
+	rtw_write_rf(rtwdev, RF_PATH_A, RF_SYN_PFD, RFREG_MASK, 0x1F0FA);
+	fsleep(1);
+	rtw_write_rf(rtwdev, RF_PATH_A, RF_AAC_CTRL, RFREG_MASK, 0x80000);
+	rtw_write_rf(rtwdev, RF_PATH_A, RF_SYN_AAC, RFREG_MASK, 0x80001);
+	read_poll_timeout(rtw_read_rf, val, val != 0x1, 1000, 100000,
+			  true, rtwdev, RF_PATH_A, RF_AAC_CTRL, 0x1000);
+	rtw_write_rf(rtwdev, RF_PATH_A, RF_SYN_PFD, RFREG_MASK, 0x1F0F8);
+	rtw_write_rf(rtwdev, RF_PATH_B, RF_SYN_CTRL, RFREG_MASK, 0x80010);
+
+	rtw_write_rf(rtwdev, RF_PATH_A, RF_FAST_LCK, RFREG_MASK, 0x0f000);
+	rtw_write_rf(rtwdev, RF_PATH_A, RF_FAST_LCK, RFREG_MASK, 0x4f000);
+	fsleep(1);
+	rtw_write_rf(rtwdev, RF_PATH_A, RF_FAST_LCK, RFREG_MASK, 0x0f000);
 }
 
 static void rtw8822c_do_iqk(struct rtw_dev *rtwdev)
@@ -3508,26 +3529,28 @@ static void rtw8822c_pwrtrack_set(struct rtw_dev *rtwdev, u8 rf_path)
 	}
 }
 
-static void rtw8822c_pwr_track_path(struct rtw_dev *rtwdev,
-				    struct rtw_swing_table *swing_table,
-				    u8 path)
+static void rtw8822c_pwr_track_stats(struct rtw_dev *rtwdev, u8 path)
 {
-	struct rtw_dm_info *dm_info = &rtwdev->dm_info;
-	u8 thermal_value, delta;
+	u8 thermal_value;
 
 	if (rtwdev->efuse.thermal_meter[path] == 0xff)
 		return;
 
 	thermal_value = rtw_read_rf(rtwdev, path, RF_T_METER, 0x7e);
-
 	rtw_phy_pwrtrack_avg(rtwdev, thermal_value, path);
+}
+
+static void rtw8822c_pwr_track_path(struct rtw_dev *rtwdev,
+				    struct rtw_swing_table *swing_table,
+				    u8 path)
+{
+	struct rtw_dm_info *dm_info = &rtwdev->dm_info;
+	u8 delta;
 
 	delta = rtw_phy_pwrtrack_get_delta(rtwdev, path);
-
 	dm_info->delta_power_index[path] =
 		rtw_phy_pwrtrack_get_pwridx(rtwdev, swing_table, path, path,
 					    delta);
-
 	rtw8822c_pwrtrack_set(rtwdev, path);
 }
 
@@ -3539,10 +3562,11 @@ static void __rtw8822c_pwr_track(struct rtw_dev *rtwdev)
 	rtw_phy_config_swing_table(rtwdev, &swing_table);
 
 	for (i = 0; i < rtwdev->hal.rf_path_num; i++)
+		rtw8822c_pwr_track_stats(rtwdev, i);
+	if (rtw_phy_pwrtrack_need_lck(rtwdev))
+		rtw8822c_do_lck(rtwdev);
+	for (i = 0; i < rtwdev->hal.rf_path_num; i++)
 		rtw8822c_pwr_track_path(rtwdev, &swing_table, i);
-
-	if (rtw_phy_pwrtrack_need_iqk(rtwdev))
-		rtw8822c_do_iqk(rtwdev);
 }
 
 static void rtw8822c_pwr_track(struct rtw_dev *rtwdev)
@@ -4351,6 +4375,7 @@ struct rtw_chip_info rtw8822c_hw_spec = {
 	.dpd_ratemask = DIS_DPD_RATEALL,
 	.pwr_track_tbl = &rtw8822c_rtw_pwr_track_tbl,
 	.iqk_threshold = 8,
+	.lck_threshold = 8,
 	.bfer_su_max_num = 2,
 	.bfer_mu_max_num = 1,
 	.rx_ldpc = true,

@@ -622,7 +622,7 @@ asmlinkage long sys_set_robust_list(struct robust_list_head __user *head,
 				    size_t len);
 
 /* kernel/futex2.c */
-asmlinkage long sys_futex_wait(void __user *uaddr, u64 val, unsigned int flags,
+asmlinkage long sys_futex_wait(void __user *uaddr, unsigned int val, unsigned int flags,
 			       struct __kernel_timespec __user *timo);
 asmlinkage long sys_futex_wake(void __user *uaddr, unsigned int nr_wake,
 			       unsigned int flags);

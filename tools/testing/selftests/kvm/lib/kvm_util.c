@@ -58,7 +58,7 @@ int kvm_check_cap(long cap)
 		exit(KSFT_SKIP);
 
 	ret = ioctl(kvm_fd, KVM_CHECK_EXTENSION, cap);
-	TEST_ASSERT(ret != -1, "KVM_CHECK_EXTENSION IOCTL failed,\n"
+	TEST_ASSERT(ret >= 0, "KVM_CHECK_EXTENSION IOCTL failed,\n"
 		"  rc: %i errno: %i", ret, errno);
 
 	close(kvm_fd);
@@ -310,10 +310,6 @@ struct kvm_vm *vm_create_with_vcpus(enum vm_guest_mode mode, uint32_t nr_vcpus,
 		uint32_t vcpuid = vcpuids ? vcpuids[i] : i;
 
 		vm_vcpu_add_default(vm, vcpuid, guest_code);
-
-#ifdef __x86_64__
-		vcpu_set_cpuid(vm, vcpuid, kvm_get_supported_cpuid());
-#endif
 	}
 
 	return vm;
@@ -1969,7 +1965,7 @@ unsigned int vm_get_page_shift(struct kvm_vm *vm)
 	return vm->page_shift;
 }
 
-unsigned int vm_get_max_gfn(struct kvm_vm *vm)
+uint64_t vm_get_max_gfn(struct kvm_vm *vm)
 {
 	return vm->max_gfn;
 }

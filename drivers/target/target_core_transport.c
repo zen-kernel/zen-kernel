@@ -1400,7 +1400,7 @@ void transport_init_se_cmd(
 	cmd->orig_fe_lun = unpacked_lun;
 
 	if (!(cmd->se_cmd_flags & SCF_USE_CPUID))
-		cmd->cpuid = smp_processor_id();
+		cmd->cpuid = raw_smp_processor_id();
 
 	cmd->state_active = false;
 }
@@ -2995,9 +2995,7 @@ __transport_wait_for_tasks(struct se_cmd *cmd, bool fabric_stop,
 	__releases(&cmd->t_state_lock)
 	__acquires(&cmd->t_state_lock)
 {
-
-	assert_spin_locked(&cmd->t_state_lock);
-	WARN_ON_ONCE(!irqs_disabled());
+	lockdep_assert_held(&cmd->t_state_lock);
 
 	if (fabric_stop)
 		cmd->transport_state |= CMD_T_FABRIC_STOP;

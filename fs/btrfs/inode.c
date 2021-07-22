@@ -598,7 +598,7 @@ again:
 	 * inode has not been flagged as nocompress.  This flag can
 	 * change at any time if we discover bad compression ratios.
 	 */
-	if (inode_need_compress(BTRFS_I(inode), start, end)) {
+	if (nr_pages > 1 && inode_need_compress(BTRFS_I(inode), start, end)) {
 		WARN_ON(pages);
 		pages = kcalloc(nr_pages, sizeof(struct page *), GFP_NOFS);
 		if (!pages) {
@@ -2271,13 +2271,127 @@ bool btrfs_bio_fits_in_ordered_extent(struct page *page, struct bio *bio,
 	return ret;
 }
 
+/*
+ * Split an extent_map at [start, start + len]
+ *
+ * This function is intended to be used only for extract_ordered_extent().
+ */
+static int split_zoned_em(struct btrfs_inode *inode, u64 start, u64 len,
+			  u64 pre, u64 post)
+{
+	struct extent_map_tree *em_tree = &inode->extent_tree;
+	struct extent_map *em;
+	struct extent_map *split_pre = NULL;
+	struct extent_map *split_mid = NULL;
+	struct extent_map *split_post = NULL;
+	int ret = 0;
+	int modified;
+	unsigned long flags;
+
+	/* Sanity check */
+	if (pre == 0 && post == 0)
+		return 0;
+
+	split_pre = alloc_extent_map();
+	if (pre)
+		split_mid = alloc_extent_map();
+	if (post)
+		split_post = alloc_extent_map();
+	if (!split_pre || (pre && !split_mid) || (post && !split_post)) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	ASSERT(pre + post < len);
+
+	lock_extent(&inode->io_tree, start, start + len - 1);
+	write_lock(&em_tree->lock);
+	em = lookup_extent_mapping(em_tree, start, len);
+	if (!em) {
+		ret = -EIO;
+		goto out_unlock;
+	}
+
+	ASSERT(em->len == len);
+	ASSERT(!test_bit(EXTENT_FLAG_COMPRESSED, &em->flags));
+	ASSERT(em->block_start < EXTENT_MAP_LAST_BYTE);
+
+	flags = em->flags;
+	clear_bit(EXTENT_FLAG_PINNED, &em->flags);
+	clear_bit(EXTENT_FLAG_LOGGING, &flags);
+	modified = !list_empty(&em->list);
+
+	/* First, replace the em with a new extent_map starting from * em->start */
+	split_pre->start = em->start;
+	split_pre->len = (pre ? pre : em->len - post);
+	split_pre->orig_start = split_pre->start;
+	split_pre->block_start = em->block_start;
+	split_pre->block_len = split_pre->len;
+	split_pre->orig_block_len = split_pre->block_len;
+	split_pre->ram_bytes = split_pre->len;
+	split_pre->flags = flags;
+	split_pre->compress_type = em->compress_type;
+	split_pre->generation = em->generation;
+
+	replace_extent_mapping(em_tree, em, split_pre, modified);
+
+	/*
+	 * Now we only have an extent_map at:
+	 *     [em->start, em->start + pre] if pre != 0
+	 *     [em->start, em->start + em->len - post] if pre == 0
+	 */
+
+	if (pre) {
+		/* Insert the middle extent_map */
+		split_mid->start = em->start + pre;
+		split_mid->len = em->len - pre - post;
+		split_mid->orig_start = split_mid->start;
+		split_mid->block_start = em->block_start + pre;
+		split_mid->block_len = split_mid->len;
+		split_mid->orig_block_len = split_mid->block_len;
+		split_mid->ram_bytes = split_mid->len;
+		split_mid->flags = flags;
+		split_mid->compress_type = em->compress_type;
+		split_mid->generation = em->generation;
+		add_extent_mapping(em_tree, split_mid, modified);
+	}
+
+	if (post) {
+		split_post->start = em->start + em->len - post;
+		split_post->len = post;
+		split_post->orig_start = split_post->start;
+		split_post->block_start = em->block_start + em->len - post;
+		split_post->block_len = split_post->len;
+		split_post->orig_block_len = split_post->block_len;
+		split_post->ram_bytes = split_post->len;
+		split_post->flags = flags;
+		split_post->compress_type = em->compress_type;
+		split_post->generation = em->generation;
+		add_extent_mapping(em_tree, split_post, modified);
+	}
+
+	/* Once for us */
+	free_extent_map(em);
+	/* Once for the tree */
+	free_extent_map(em);
+
+out_unlock:
+	write_unlock(&em_tree->lock);
+	unlock_extent(&inode->io_tree, start, start + len - 1);
+out:
+	free_extent_map(split_pre);
+	free_extent_map(split_mid);
+	free_extent_map(split_post);
+
+	return ret;
+}
+
 static blk_status_t extract_ordered_extent(struct btrfs_inode *inode,
 					   struct bio *bio, loff_t file_offset)
 {
 	struct btrfs_ordered_extent *ordered;
-	struct extent_map *em = NULL, *em_new = NULL;
-	struct extent_map_tree *em_tree = &inode->extent_tree;
 	u64 start = (u64)bio->bi_iter.bi_sector << SECTOR_SHIFT;
+	u64 file_len;
 	u64 len = bio->bi_iter.bi_size;
 	u64 end = start + len;
 	u64 ordered_end;
@@ -2317,41 +2431,16 @@ static blk_status_t extract_ordered_extent(struct btrfs_inode *inode,
 		goto out;
 	}
 
+	file_len = ordered->num_bytes;
 	pre = start - ordered->disk_bytenr;
 	post = ordered_end - end;
 
 	ret = btrfs_split_ordered_extent(ordered, pre, post);
 	if (ret)
 		goto out;
-
-	read_lock(&em_tree->lock);
-	em = lookup_extent_mapping(em_tree, ordered->file_offset, len);
-	if (!em) {
-		read_unlock(&em_tree->lock);
-		ret = -EIO;
-		goto out;
-	}
-	read_unlock(&em_tree->lock);
-
-	ASSERT(!test_bit(EXTENT_FLAG_COMPRESSED, &em->flags));
-	/*
-	 * We cannot reuse em_new here but have to create a new one, as
-	 * unpin_extent_cache() expects the start of the extent map to be the
-	 * logical offset of the file, which does not hold true anymore after
-	 * splitting.
-	 */
-	em_new = create_io_em(inode, em->start + pre, len,
-			      em->start + pre, em->block_start + pre, len,
-			      len, len, BTRFS_COMPRESS_NONE,
-			      BTRFS_ORDERED_REGULAR);
-	if (IS_ERR(em_new)) {
-		ret = PTR_ERR(em_new);
-		goto out;
-	}
-	free_extent_map(em_new);
+	ret = split_zoned_em(inode, file_offset, file_len, pre, post);
 
 out:
-	free_extent_map(em);
 	btrfs_put_ordered_extent(ordered);
 
 	return errno_to_blk_status(ret);
@@ -3011,6 +3100,18 @@ out:
 	if (ret || truncated) {
 		u64 unwritten_start = start;
 
+		/*
+		 * If we failed to finish this ordered extent for any reason we
+		 * need to make sure BTRFS_ORDERED_IOERR is set on the ordered
+		 * extent, and mark the inode with the error if it wasn't
+		 * already set.  Any error during writeback would have already
+		 * set the mapping error, so we need to set it if we're the ones
+		 * marking this ordered extent as failed.
+		 */
+		if (ret && !test_and_set_bit(BTRFS_ORDERED_IOERR,
+					     &ordered_extent->flags))
+			mapping_set_error(ordered_extent->inode->i_mapping, -EIO);
+
 		if (truncated)
 			unwritten_start += logical_len;
 		clear_extent_uptodate(io_tree, unwritten_start, end, NULL);
@@ -3253,6 +3354,7 @@ void btrfs_run_delayed_iputs(struct btrfs_fs_info *fs_info)
 		inode = list_first_entry(&fs_info->delayed_iputs,
 				struct btrfs_inode, delayed_iput);
 		run_delayed_iput_locked(fs_info, inode);
+		cond_resched_lock(&fs_info->delayed_iput_lock);
 	}
 	spin_unlock(&fs_info->delayed_iput_lock);
 }
@@ -8373,7 +8475,19 @@ static void btrfs_invalidatepage(struct page *page, unsigned int offset,
 	 */
 	wait_on_page_writeback(page);
 
-	if (offset) {
+	/*
+	 * For subpage case, we have call sites like
+	 * btrfs_punch_hole_lock_range() which passes range not aligned to
+	 * sectorsize.
+	 * If the range doesn't cover the full page, we don't need to and
+	 * shouldn't clear page extent mapped, as page->private can still
+	 * record subpage dirty bits for other part of the range.
+	 *
+	 * For cases that can invalidate the full even the range doesn't
+	 * cover the full page, like invalidating the last page, we're
+	 * still safe to wait for ordered extent to finish.
+	 */
+	if (!(offset == 0 && length == PAGE_SIZE)) {
 		btrfs_releasepage(page, GFP_NOFS);
 		return;
 	}
@@ -8619,9 +8733,7 @@ again:
 	set_page_dirty(page);
 	SetPageUptodate(page);
 
-	BTRFS_I(inode)->last_trans = fs_info->generation;
-	BTRFS_I(inode)->last_sub_trans = BTRFS_I(inode)->root->log_transid;
-	BTRFS_I(inode)->last_log_commit = BTRFS_I(inode)->root->last_log_commit;
+	btrfs_set_inode_last_sub_trans(BTRFS_I(inode));
 
 	unlock_extent_cached(io_tree, page_start, page_end, &cached_state);
 
@@ -9077,6 +9189,7 @@ static int btrfs_rename_exchange(struct inode *old_dir,
 	int ret2;
 	bool root_log_pinned = false;
 	bool dest_log_pinned = false;
+	bool need_abort = false;
 
 	/* we only allow rename subvolume link between subvolumes */
 	if (old_ino != BTRFS_FIRST_FREE_OBJECTID && root != dest)
@@ -9133,6 +9246,7 @@ static int btrfs_rename_exchange(struct inode *old_dir,
 					     old_idx);
 		if (ret)
 			goto out_fail;
+		need_abort = true;
 	}
 
 	/* And now for the dest. */
@@ -9148,8 +9262,11 @@ static int btrfs_rename_exchange(struct inode *old_dir,
 					     new_ino,
 					     btrfs_ino(BTRFS_I(old_dir)),
 					     new_idx);
-		if (ret)
+		if (ret) {
+			if (need_abort)
+				btrfs_abort_transaction(trans, ret);
 			goto out_fail;
+		}
 	}
 
 	/* Update inode version and ctime/mtime. */
@@ -9674,7 +9791,7 @@ out:
 	return ret;
 }
 
-int btrfs_start_delalloc_snapshot(struct btrfs_root *root)
+int btrfs_start_delalloc_snapshot(struct btrfs_root *root, bool in_reclaim_context)
 {
 	struct writeback_control wbc = {
 		.nr_to_write = LONG_MAX,
@@ -9687,7 +9804,7 @@ int btrfs_start_delalloc_snapshot(struct btrfs_root *root)
 	if (test_bit(BTRFS_FS_STATE_ERROR, &fs_info->fs_state))
 		return -EROFS;
 
-	return start_delalloc_inodes(root, &wbc, true, false);
+	return start_delalloc_inodes(root, &wbc, true, in_reclaim_context);
 }
 
 int btrfs_start_delalloc_roots(struct btrfs_fs_info *fs_info, long nr,

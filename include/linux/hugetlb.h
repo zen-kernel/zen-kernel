@@ -145,6 +145,7 @@ bool hugetlb_reserve_pages(struct inode *inode, long from, long to,
 long hugetlb_unreserve_pages(struct inode *inode, long start, long end,
 						long freed);
 bool isolate_huge_page(struct page *page, struct list_head *list);
+int get_hwpoison_huge_page(struct page *page, bool *hugetlb);
 void putback_active_hugepage(struct page *page);
 void move_hugetlb_state(struct page *oldpage, struct page *newpage, int reason);
 void free_huge_page(struct page *page);
@@ -328,6 +329,11 @@ static inline pte_t *huge_pte_offset(struct mm_struct *mm, unsigned long addr,
 static inline bool isolate_huge_page(struct page *page, struct list_head *list)
 {
 	return false;
+}
+
+static inline int get_hwpoison_huge_page(struct page *page, bool *hugetlb)
+{
+	return 0;
 }
 
 static inline void putback_active_hugepage(struct page *page)
@@ -591,6 +597,8 @@ struct page *alloc_huge_page_vma(struct hstate *h, struct vm_area_struct *vma,
 				unsigned long address);
 int huge_add_to_page_cache(struct page *page, struct address_space *mapping,
 			pgoff_t idx);
+void restore_reserve_on_error(struct hstate *h, struct vm_area_struct *vma,
+				unsigned long address, struct page *page);
 
 /* arch callback */
 int __init __alloc_bootmem_huge_page(struct hstate *h);
@@ -718,17 +726,6 @@ static inline unsigned hstate_index_to_shift(unsigned index)
 static inline int hstate_index(struct hstate *h)
 {
 	return h - hstates;
-}
-
-pgoff_t __basepage_index(struct page *page);
-
-/* Return page->index in PAGE_SIZE units */
-static inline pgoff_t basepage_index(struct page *page)
-{
-	if (!PageCompound(page))
-		return page->index;
-
-	return __basepage_index(page);
 }
 
 extern int dissolve_free_huge_page(struct page *page);
@@ -865,6 +862,11 @@ static inline void huge_ptep_modify_prot_commit(struct vm_area_struct *vma,
 #else	/* CONFIG_HUGETLB_PAGE */
 struct hstate {};
 
+static inline struct hugepage_subpool *hugetlb_page_subpool(struct page *hpage)
+{
+	return NULL;
+}
+
 static inline struct page *alloc_huge_page(struct vm_area_struct *vma,
 					   unsigned long addr,
 					   int avoid_reserve)
@@ -959,11 +961,6 @@ static inline unsigned hstate_index_to_shift(unsigned index)
 static inline int hstate_index(struct hstate *h)
 {
 	return 0;
-}
-
-static inline pgoff_t basepage_index(struct page *page)
-{
-	return page->index;
 }
 
 static inline int dissolve_free_huge_page(struct page *page)

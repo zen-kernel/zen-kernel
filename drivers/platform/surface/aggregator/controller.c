@@ -1040,7 +1040,7 @@ static int ssam_dsm_load_u32(acpi_handle handle, u64 funcs, u64 func, u32 *ret)
 	union acpi_object *obj;
 	u64 val;
 
-	if (!(funcs & BIT(func)))
+	if (!(funcs & BIT_ULL(func)))
 		return 0; /* Not supported, leave *ret at its default value */
 
 	obj = acpi_evaluate_dsm_typed(handle, &SSAM_SSH_DSM_GUID,
@@ -1907,7 +1907,7 @@ static int ssam_ssh_event_disable(struct ssam_controller *ctrl,
 {
 	int status;
 
-	status = __ssam_ssh_event_request(ctrl, reg, reg.cid_enable, id, flags);
+	status = __ssam_ssh_event_request(ctrl, reg, reg.cid_disable, id, flags);
 
 	if (status < 0 && status != -EINVAL) {
 		ssam_err(ctrl,

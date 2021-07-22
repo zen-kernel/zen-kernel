@@ -6603,10 +6603,18 @@ EXPORT_SYMBOL_GPL(migrate_enable);
  * NOTE: this function does not set the idle thread's NEED_RESCHED
  * flag, to make booting more robust.
  */
-void init_idle(struct task_struct *idle, int cpu)
+void __init init_idle(struct task_struct *idle, int cpu)
 {
 	struct rq *rq = cpu_rq(cpu);
 	unsigned long flags;
+
+	/*
+	 * The idle task doesn't need the kthread struct to function, but it
+	 * is dressed up as a per-CPU kthread and thus needs to play the part
+	 * if we want to avoid special-casing it in code that deals with per-CPU
+	 * kthreads.
+	 */
+	set_kthread_struct(idle);
 
 	raw_spin_lock_irqsave(&idle->pi_lock, flags);
 	raw_spin_lock(rq->lock);
@@ -6615,7 +6623,12 @@ void init_idle(struct task_struct *idle, int cpu)
 	idle->state = TASK_RUNNING;
 	/* Setting prio to illegal value shouldn't matter when never queued */
 	idle->prio = PRIO_LIMIT;
-	idle->flags |= PF_IDLE;
+	/*
+	 * PF_KTHREAD should already be set at this point; regardless, make it
+	 * look like a proper per-CPU kthread.
+	 */
+	idle->flags |= PF_IDLE | PF_KTHREAD | PF_NO_SETAFFINITY;
+	kthread_set_per_cpu(idle, cpu);
 
 	scs_task_reset(idle);
 	kasan_unpoison_task_stack(idle);

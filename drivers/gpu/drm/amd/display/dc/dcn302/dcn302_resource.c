@@ -164,7 +164,7 @@ struct _vcs_dpi_soc_bounding_box_st dcn3_02_soc = {
 
 		.min_dcfclk = 500.0, /* TODO: set this to actual min DCFCLK */
 		.num_states = 1,
-		.sr_exit_time_us = 12,
+		.sr_exit_time_us = 15.5,
 		.sr_enter_plus_exit_time_us = 20,
 		.urgent_latency_us = 4.0,
 		.urgent_latency_pixel_data_only_us = 4.0,
@@ -282,10 +282,11 @@ static const struct dc_plane_cap plane_cap = {
 				.nv12 = 16000,
 				.fp16 = 16000
 		},
+		/* 6:1 downscaling ratio: 1000/6 = 166.666 */
 		.max_downscale_factor = {
-				.argb8888 = 600,
-				.nv12 = 600,
-				.fp16 = 600
+				.argb8888 = 167,
+				.nv12 = 167,
+				.fp16 = 167
 		},
 		16,
 		16

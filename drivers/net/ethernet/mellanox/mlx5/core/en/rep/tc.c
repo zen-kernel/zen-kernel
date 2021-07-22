@@ -93,13 +93,9 @@ void mlx5e_rep_update_flows(struct mlx5e_priv *priv,
 
 	ASSERT_RTNL();
 
-	/* wait for encap to be fully initialized */
-	wait_for_completion(&e->res_ready);
-
 	mutex_lock(&esw->offloads.encap_tbl_lock);
 	encap_connected = !!(e->flags & MLX5_ENCAP_ENTRY_VALID);
-	if (e->compl_result < 0 || (encap_connected == neigh_connected &&
-				    ether_addr_equal(e->h_dest, ha)))
+	if (encap_connected == neigh_connected && ether_addr_equal(e->h_dest, ha))
 		goto unlock;
 
 	mlx5e_take_all_encap_flows(e, &flow_list);
@@ -645,7 +641,7 @@ bool mlx5e_rep_tc_update_skb(struct mlx5_cqe64 *cqe,
 	}
 
 	if (chain) {
-		tc_skb_ext = skb_ext_add(skb, TC_SKB_EXT);
+		tc_skb_ext = tc_skb_ext_alloc(skb);
 		if (!tc_skb_ext) {
 			WARN_ON(1);
 			return false;

@@ -335,7 +335,7 @@ static int asus_raw_event(struct hid_device *hdev,
 	if (drvdata->quirks & QUIRK_MEDION_E1239T)
 		return asus_e1239t_event(drvdata, data, size);
 
-	if (drvdata->quirks & QUIRK_ROG_NKEY_KEYBOARD) {
+	if (drvdata->quirks & QUIRK_USE_KBD_BACKLIGHT) {
 		/*
 		 * Skip these report ID, the device emits a continuous stream associated
 		 * with the AURA mode it is in which looks like an 'echo'.
@@ -355,6 +355,16 @@ static int asus_raw_event(struct hid_device *hdev,
 				return -1;
 			}
 		}
+		if (drvdata->quirks & QUIRK_ROG_NKEY_KEYBOARD) {
+			/*
+			 * G713 and G733 send these codes on some keypresses, depending on
+			 * the key pressed it can trigger a shutdown event if not caught.
+			*/
+			if(data[0] == 0x02 && data[1] == 0x30) {
+				return -1;
+			}
+		}
+
 	}
 
 	return 0;

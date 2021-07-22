@@ -590,6 +590,8 @@ struct mlx5_ib_mr *mlx5_mr_cache_alloc(struct mlx5_ib_dev *dev,
 		ent->available_mrs--;
 		queue_adjust_cache_locked(ent);
 		spin_unlock_irq(&ent->lock);
+
+		mlx5_clear_mr(mr);
 	}
 	mr->access_flags = access_flags;
 	return mr;
@@ -615,16 +617,14 @@ static struct mlx5_ib_mr *get_cache_mr(struct mlx5_cache_ent *req_ent)
 			ent->available_mrs--;
 			queue_adjust_cache_locked(ent);
 			spin_unlock_irq(&ent->lock);
-			break;
+			mlx5_clear_mr(mr);
+			return mr;
 		}
 		queue_adjust_cache_locked(ent);
 		spin_unlock_irq(&ent->lock);
 	}
-
-	if (!mr)
-		req_ent->miss++;
-
-	return mr;
+	req_ent->miss++;
+	return NULL;
 }
 
 static void detach_mr_from_cache(struct mlx5_ib_mr *mr)
@@ -764,10 +764,10 @@ int mlx5_mr_cache_init(struct mlx5_ib_dev *dev)
 		ent->xlt = (1 << ent->order) * sizeof(struct mlx5_mtt) /
 			   MLX5_IB_UMR_OCTOWORD;
 		ent->access_mode = MLX5_MKC_ACCESS_MODE_MTT;
-		if ((dev->mdev->profile->mask & MLX5_PROF_MASK_MR_CACHE) &&
+		if ((dev->mdev->profile.mask & MLX5_PROF_MASK_MR_CACHE) &&
 		    !dev->is_rep && mlx5_core_is_pf(dev->mdev) &&
 		    mlx5_ib_can_load_pas_with_umr(dev, 0))
-			ent->limit = dev->mdev->profile->mr_cache[i].limit;
+			ent->limit = dev->mdev->profile.mr_cache[i].limit;
 		else
 			ent->limit = 0;
 		spin_lock_irq(&ent->lock);
@@ -993,8 +993,6 @@ static struct mlx5_ib_mr *alloc_cacheable_mr(struct ib_pd *pd,
 
 	mr->ibmr.pd = pd;
 	mr->umem = umem;
-	mr->access_flags = access_flags;
-	mr->desc_size = sizeof(struct mlx5_mtt);
 	mr->mmkey.iova = iova;
 	mr->mmkey.size = umem->length;
 	mr->mmkey.pd = to_mpd(pd)->pdn;

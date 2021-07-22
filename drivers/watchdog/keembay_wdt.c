@@ -23,12 +23,14 @@
 #define TIM_WDOG_EN		0x8
 #define TIM_SAFE		0xc
 
-#define WDT_ISR_MASK		GENMASK(9, 8)
+#define WDT_TH_INT_MASK		BIT(8)
+#define WDT_TO_INT_MASK		BIT(9)
 #define WDT_ISR_CLEAR		0x8200ff18
 #define WDT_UNLOCK		0xf1d0dead
 #define WDT_LOAD_MAX		U32_MAX
 #define WDT_LOAD_MIN		1
 #define WDT_TIMEOUT		5
+#define WDT_PRETIMEOUT		4
 
 static unsigned int timeout = WDT_TIMEOUT;
 module_param(timeout, int, 0);
@@ -82,7 +84,6 @@ static int keembay_wdt_start(struct watchdog_device *wdog)
 {
 	struct keembay_wdt *wdt = watchdog_get_drvdata(wdog);
 
-	keembay_wdt_set_timeout_reg(wdog);
 	keembay_wdt_writel(wdt, TIM_WDOG_EN, 1);
 
 	return 0;
@@ -108,6 +109,7 @@ static int keembay_wdt_set_timeout(struct watchdog_device *wdog, u32 t)
 {
 	wdog->timeout = t;
 	keembay_wdt_set_timeout_reg(wdog);
+	keembay_wdt_set_pretimeout_reg(wdog);
 
 	return 0;
 }
@@ -139,8 +141,7 @@ static irqreturn_t keembay_wdt_to_isr(int irq, void *dev_id)
 	struct keembay_wdt *wdt = dev_id;
 	struct arm_smccc_res res;
 
-	keembay_wdt_writel(wdt, TIM_WATCHDOG, 1);
-	arm_smccc_smc(WDT_ISR_CLEAR, WDT_ISR_MASK, 0, 0, 0, 0, 0, 0, &res);
+	arm_smccc_smc(WDT_ISR_CLEAR, WDT_TO_INT_MASK, 0, 0, 0, 0, 0, 0, &res);
 	dev_crit(wdt->wdd.parent, "Intel Keem Bay non-sec wdt timeout.\n");
 	emergency_restart();
 
@@ -152,7 +153,9 @@ static irqreturn_t keembay_wdt_th_isr(int irq, void *dev_id)
 	struct keembay_wdt *wdt = dev_id;
 	struct arm_smccc_res res;
 
-	arm_smccc_smc(WDT_ISR_CLEAR, WDT_ISR_MASK, 0, 0, 0, 0, 0, 0, &res);
+	keembay_wdt_set_pretimeout(&wdt->wdd, 0x0);
+
+	arm_smccc_smc(WDT_ISR_CLEAR, WDT_TH_INT_MASK, 0, 0, 0, 0, 0, 0, &res);
 	dev_crit(wdt->wdd.parent, "Intel Keem Bay non-sec wdt pre-timeout.\n");
 	watchdog_notify_pretimeout(&wdt->wdd);
 
@@ -224,11 +227,13 @@ static int keembay_wdt_probe(struct platform_device *pdev)
 	wdt->wdd.min_timeout	= WDT_LOAD_MIN;
 	wdt->wdd.max_timeout	= WDT_LOAD_MAX / wdt->rate;
 	wdt->wdd.timeout	= WDT_TIMEOUT;
+	wdt->wdd.pretimeout	= WDT_PRETIMEOUT;
 
 	watchdog_set_drvdata(&wdt->wdd, wdt);
 	watchdog_set_nowayout(&wdt->wdd, nowayout);
 	watchdog_init_timeout(&wdt->wdd, timeout, dev);
 	keembay_wdt_set_timeout(&wdt->wdd, wdt->wdd.timeout);
+	keembay_wdt_set_pretimeout(&wdt->wdd, wdt->wdd.pretimeout);
 
 	ret = devm_watchdog_register_device(dev, &wdt->wdd);
 	if (ret)

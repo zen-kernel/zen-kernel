@@ -31,7 +31,7 @@ static void i40e_vsi_reinit_locked(struct i40e_vsi *vsi);
 static void i40e_handle_reset_warning(struct i40e_pf *pf, bool lock_acquired);
 static int i40e_add_vsi(struct i40e_vsi *vsi);
 static int i40e_add_veb(struct i40e_veb *veb, struct i40e_vsi *vsi);
-static int i40e_setup_pf_switch(struct i40e_pf *pf, bool reinit);
+static int i40e_setup_pf_switch(struct i40e_pf *pf, bool reinit, bool lock_acquired);
 static int i40e_setup_misc_vector(struct i40e_pf *pf);
 static void i40e_determine_queue_usage(struct i40e_pf *pf);
 static int i40e_setup_pf_filter_control(struct i40e_pf *pf);
@@ -6879,40 +6879,6 @@ out:
 #endif /* CONFIG_I40E_DCB */
 
 /**
- * i40e_set_lldp_forwarding - set forwarding of lldp frames
- * @pf: PF being configured
- * @enable: if forwarding to OS shall be enabled
- *
- * Toggle forwarding of lldp frames behavior,
- * When passing DCB control from firmware to software
- * lldp frames must be forwarded to the software based
- * lldp agent.
- */
-void i40e_set_lldp_forwarding(struct i40e_pf *pf, bool enable)
-{
-	if (pf->lan_vsi == I40E_NO_VSI)
-		return;
-
-	if (!pf->vsi[pf->lan_vsi])
-		return;
-
-	/* No need to check the outcome, commands may fail
-	 * if desired value is already set
-	 */
-	i40e_aq_add_rem_control_packet_filter(&pf->hw, NULL, ETH_P_LLDP,
-					      I40E_AQC_ADD_CONTROL_PACKET_FLAGS_TX |
-					      I40E_AQC_ADD_CONTROL_PACKET_FLAGS_IGNORE_MAC,
-					      pf->vsi[pf->lan_vsi]->seid, 0,
-					      enable, NULL, NULL);
-
-	i40e_aq_add_rem_control_packet_filter(&pf->hw, NULL, ETH_P_LLDP,
-					      I40E_AQC_ADD_CONTROL_PACKET_FLAGS_RX |
-					      I40E_AQC_ADD_CONTROL_PACKET_FLAGS_IGNORE_MAC,
-					      pf->vsi[pf->lan_vsi]->seid, 0,
-					      enable, NULL, NULL);
-}
-
-/**
  * i40e_print_link_message - print link up or down
  * @vsi: the VSI for which link needs a message
  * @isup: true of link is up, false otherwise
@@ -8736,6 +8702,8 @@ int i40e_vsi_open(struct i40e_vsi *vsi)
 			 dev_driver_string(&pf->pdev->dev),
 			 dev_name(&pf->pdev->dev));
 		err = i40e_vsi_request_irq(vsi, int_name);
+		if (err)
+			goto err_setup_rx;
 
 	} else {
 		err = -EINVAL;
@@ -10602,7 +10570,7 @@ static void i40e_rebuild(struct i40e_pf *pf, bool reinit, bool lock_acquired)
 #endif /* CONFIG_I40E_DCB */
 	if (!lock_acquired)
 		rtnl_lock();
-	ret = i40e_setup_pf_switch(pf, reinit);
+	ret = i40e_setup_pf_switch(pf, reinit, true);
 	if (ret)
 		goto end_unlock;
 
@@ -10735,10 +10703,6 @@ static void i40e_rebuild(struct i40e_pf *pf, bool reinit, bool lock_acquired)
 	 */
 	i40e_add_filter_to_drop_tx_flow_control_frames(&pf->hw,
 						       pf->main_vsi_seid);
-#ifdef CONFIG_I40E_DCB
-	if (pf->flags & I40E_FLAG_DISABLE_FW_LLDP)
-		i40e_set_lldp_forwarding(pf, true);
-#endif /* CONFIG_I40E_DCB */
 
 	/* restart the VSIs that were rebuilt and running before the reset */
 	i40e_pf_unquiesce_all_vsi(pf);
@@ -14659,10 +14623,11 @@ int i40e_fetch_switch_configuration(struct i40e_pf *pf, bool printconfig)
  * i40e_setup_pf_switch - Setup the HW switch on startup or after reset
  * @pf: board private structure
  * @reinit: if the Main VSI needs to re-initialized.
+ * @lock_acquired: indicates whether or not the lock has been acquired
  *
  * Returns 0 on success, negative value on failure
  **/
-static int i40e_setup_pf_switch(struct i40e_pf *pf, bool reinit)
+static int i40e_setup_pf_switch(struct i40e_pf *pf, bool reinit, bool lock_acquired)
 {
 	u16 flags = 0;
 	int ret;
@@ -14764,8 +14729,14 @@ static int i40e_setup_pf_switch(struct i40e_pf *pf, bool reinit)
 
 	i40e_ptp_init(pf);
 
+	if (!lock_acquired)
+		rtnl_lock();
+
 	/* repopulate tunnel port filters */
 	udp_tunnel_nic_reset_ntf(pf->vsi[pf->lan_vsi]->netdev);
+
+	if (!lock_acquired)
+		rtnl_unlock();
 
 	return ret;
 }
@@ -15547,7 +15518,7 @@ static int i40e_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 			pf->flags |= I40E_FLAG_VEB_MODE_ENABLED;
 	}
 #endif
-	err = i40e_setup_pf_switch(pf, false);
+	err = i40e_setup_pf_switch(pf, false, false);
 	if (err) {
 		dev_info(&pdev->dev, "setup_pf_switch failed: %d\n", err);
 		goto err_vsis;
@@ -15753,10 +15724,6 @@ static int i40e_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	 */
 	i40e_add_filter_to_drop_tx_flow_control_frames(&pf->hw,
 						       pf->main_vsi_seid);
-#ifdef CONFIG_I40E_DCB
-	if (pf->flags & I40E_FLAG_DISABLE_FW_LLDP)
-		i40e_set_lldp_forwarding(pf, true);
-#endif /* CONFIG_I40E_DCB */
 
 	if ((pf->hw.device_id == I40E_DEV_ID_10G_BASE_T) ||
 		(pf->hw.device_id == I40E_DEV_ID_10G_BASE_T4))

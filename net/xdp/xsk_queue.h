@@ -131,9 +131,11 @@ static inline bool xp_aligned_validate_desc(struct xsk_buff_pool *pool,
 	u64 chunk, chunk_end;
 
 	chunk = xp_aligned_extract_addr(pool, desc->addr);
-	chunk_end = xp_aligned_extract_addr(pool, desc->addr + desc->len);
-	if (chunk != chunk_end)
-		return false;
+	if (likely(desc->len)) {
+		chunk_end = xp_aligned_extract_addr(pool, desc->addr + desc->len - 1);
+		if (chunk != chunk_end)
+			return false;
+	}
 
 	if (chunk >= pool->addrs_cnt)
 		return false;

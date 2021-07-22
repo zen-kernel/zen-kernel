@@ -1645,7 +1645,7 @@ static void pex_ep_event_pex_rst_deassert(struct tegra_pcie_dw *pcie)
 	if (pcie->ep_state == EP_STATE_ENABLED)
 		return;
 
-	ret = pm_runtime_get_sync(dev);
+	ret = pm_runtime_resume_and_get(dev);
 	if (ret < 0) {
 		dev_err(dev, "Failed to get runtime sync for PCIe dev: %d\n",
 			ret);
@@ -1826,7 +1826,7 @@ static int tegra_pcie_ep_raise_msi_irq(struct tegra_pcie_dw *pcie, u16 irq)
 	if (unlikely(irq > 31))
 		return -EINVAL;
 
-	appl_writel(pcie, (1 << irq), APPL_MSI_CTRL_1);
+	appl_writel(pcie, BIT(irq), APPL_MSI_CTRL_1);
 
 	return 0;
 }
@@ -2213,6 +2213,8 @@ static int tegra_pcie_dw_resume_noirq(struct device *dev)
 		dev_err(dev, "Failed to init host: %d\n", ret);
 		goto fail_host_init;
 	}
+
+	dw_pcie_setup_rc(&pcie->pci.pp);
 
 	ret = tegra_pcie_dw_start_link(&pcie->pci);
 	if (ret < 0)

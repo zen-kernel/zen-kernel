@@ -275,6 +275,7 @@ static void prepare_silent_urb(struct snd_usb_endpoint *ep,
 
 	urb->number_of_packets = ctx->packets;
 	urb->transfer_buffer_length = offs * ep->stride + ctx->packets * extra;
+	ctx->queued = 0;
 }
 
 /*
@@ -1442,11 +1443,11 @@ void snd_usb_endpoint_stop(struct snd_usb_endpoint *ep)
 	if (snd_BUG_ON(!atomic_read(&ep->running)))
 		return;
 
-	if (ep->sync_source)
-		WRITE_ONCE(ep->sync_source->sync_sink, NULL);
-
-	if (!atomic_dec_return(&ep->running))
+	if (!atomic_dec_return(&ep->running)) {
+		if (ep->sync_source)
+			WRITE_ONCE(ep->sync_source->sync_sink, NULL);
 		stop_urbs(ep, false);
+	}
 }
 
 /**

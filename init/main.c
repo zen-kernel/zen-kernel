@@ -918,11 +918,7 @@ asmlinkage __visible void __init __no_sanitize_address start_kernel(void)
 	 * time - but meanwhile we still have a functioning scheduler.
 	 */
 	sched_init();
-	/*
-	 * Disable preemption - early bootup scheduling is extremely
-	 * fragile until we cpu_idle() for the first time.
-	 */
-	preempt_disable();
+
 	if (WARN(!irqs_disabled(),
 		 "Interrupts were enabled *very* early, fixing it\n"))
 		local_irq_disable();
@@ -1516,7 +1512,7 @@ static noinline void __init kernel_init_freeable(void)
 	 */
 	set_mems_allowed(node_states[N_MEMORY]);
 
-	cad_pid = task_pid(current);
+	cad_pid = get_pid(task_pid(current));
 
 	smp_prepare_cpus(setup_max_cpus);
 

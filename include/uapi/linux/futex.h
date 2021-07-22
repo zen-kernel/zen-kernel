@@ -60,8 +60,8 @@
  * @flags: Flags for this waiter
  */
 struct futex_waitv {
-	__u64 val;
 	void __user *uaddr;
+	unsigned int val;
 	unsigned int flags;
 };
 

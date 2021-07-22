@@ -59,7 +59,7 @@ static const struct linear_range mt_volt_range1[] = {
 	REGULATOR_LINEAR_RANGE(0, 0, 0xbf, 6250),
 };
 
-static unsigned int mt6315_map_mode(u32 mode)
+static unsigned int mt6315_map_mode(unsigned int mode)
 {
 	switch (mode) {
 	case MT6315_BUCK_MODE_AUTO:
@@ -223,8 +223,8 @@ static int mt6315_regulator_probe(struct spmi_device *pdev)
 	int i;
 
 	regmap = devm_regmap_init_spmi_ext(pdev, &mt6315_regmap_config);
-	if (!regmap)
-		return -ENODEV;
+	if (IS_ERR(regmap))
+		return PTR_ERR(regmap);
 
 	chip = devm_kzalloc(dev, sizeof(struct mt6315_chip), GFP_KERNEL);
 	if (!chip)

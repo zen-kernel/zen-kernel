@@ -185,10 +185,10 @@ static void kvm_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu)
 	static_call(kvm_x86_vcpu_after_set_cpuid)(vcpu);
 
 	/*
-	 * Except for the MMU, which needs to be reset after any vendor
-	 * specific adjustments to the reserved GPA bits.
+	 * Except for the MMU, which needs to do its thing any vendor specific
+	 * adjustments to the reserved GPA bits.
 	 */
-	kvm_mmu_reset_context(vcpu);
+	kvm_mmu_after_set_cpuid(vcpu);
 }
 
 static int is_efer_nx(void)
@@ -589,7 +589,8 @@ static int __do_cpuid_func_emulated(struct kvm_cpuid_array *array, u32 func)
 	case 7:
 		entry->flags |= KVM_CPUID_FLAG_SIGNIFCANT_INDEX;
 		entry->eax = 0;
-		entry->ecx = F(RDPID);
+		if (kvm_cpu_cap_has(X86_FEATURE_RDTSCP))
+			entry->ecx = F(RDPID);
 		++array->nent;
 	default:
 		break;
@@ -843,8 +844,14 @@ static inline int __do_cpuid_func(struct kvm_cpuid_array *array, u32 function)
 		unsigned virt_as = max((entry->eax >> 8) & 0xff, 48U);
 		unsigned phys_as = entry->eax & 0xff;
 
-		if (!g_phys_as)
+		/*
+		 * Use bare metal's MAXPHADDR if the CPU doesn't report guest
+		 * MAXPHYADDR separately, or if TDP (NPT) is disabled, as the
+		 * guest version "applies only to guests using nested paging".
+		 */
+		if (!g_phys_as || !tdp_enabled)
 			g_phys_as = phys_as;
+
 		entry->eax = g_phys_as | (virt_as << 8);
 		entry->edx = 0;
 		cpuid_entry_override(entry, CPUID_8000_0008_EBX);
