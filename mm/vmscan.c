@@ -5524,19 +5524,6 @@ static bool walk_mm_list(struct lruvec *lruvec, unsigned long max_seq,
 
 	VM_BUG_ON(max_seq > READ_ONCE(lrugen->max_seq));
 
-	/*
-	 * For each walk of the mm_struct list of a memcg, we decrement the
-	 * priority of its lrugen. For each walk of all memcgs in kswapd, we
-	 * increment the priority of every lrugen.
-	 *
-	 * So if this lrugen has a higher priority (smaller value), it means
-	 * other concurrent reclaimers have walked its mm list, and we skip it
-	 * for this priority in order to balance the pressure on all memcgs.
-	 */
-	if (!mem_cgroup_disabled() && !cgroup_reclaim(sc) &&
-	    sc->priority > atomic_read(&lrugen->priority))
-		return false;
-
 	if (alloc) {
 		args = kvzalloc_node(sizeof(*args), GFP_KERNEL, nid);
 		if (!args)
@@ -5572,9 +5559,6 @@ static bool walk_mm_list(struct lruvec *lruvec, unsigned long max_seq,
 	VM_BUG_ON(max_seq != READ_ONCE(lrugen->max_seq));
 
 	inc_max_seq(lruvec);
-
-	if (!mem_cgroup_disabled())
-		atomic_add_unless(&lrugen->priority, -1, 0);
 
 	/* order against inc_max_seq() */
 	smp_mb();
@@ -5744,6 +5728,7 @@ static int scan_lru_gen_pages(struct lruvec *lruvec, struct scan_control *sc,
 	int isolated = 0;
 	int batch_size = 0;
 	struct lrugen *lrugen = &lruvec->evictable;
+	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
 
 	VM_BUG_ON(!list_empty(list));
 
@@ -5796,11 +5781,13 @@ static int scan_lru_gen_pages(struct lruvec *lruvec, struct scan_control *sc,
 	}
 
 	success = try_inc_min_seq(lruvec, file);
+	if (memcg && !mem_cgroup_is_root(memcg) && !cgroup_reclaim(sc) && success && file)
+		atomic_add_unless(&lrugen->priority, -1, 0);
 
 	item = current_is_kswapd() ? PGSCAN_KSWAPD : PGSCAN_DIRECT;
 	if (!cgroup_reclaim(sc))
 		__count_vm_events(item, scanned);
-	__count_memcg_events(lruvec_memcg(lruvec), item, scanned);
+	__count_memcg_events(memcg, item, scanned);
 	__count_vm_events(PGSCAN_ANON + file, scanned);
 
 	*nr_to_scan -= scanned;
@@ -6003,6 +5990,10 @@ static unsigned long get_nr_to_scan(struct lruvec *lruvec, struct scan_control *
 	DEFINE_MAX_SEQ();
 	DEFINE_MIN_SEQ();
 
+	/* only proceed with memcgs at the front of the priority queue */
+	if (!cgroup_reclaim(sc) && atomic_read(&lrugen->priority) != DEF_PRIORITY)
+		return 0;
+
 	lru_add_drain();
 
 	for (file = !swappiness; file < ANON_AND_FILE; file++) {
@@ -6122,7 +6113,7 @@ static void age_lru_gens(struct pglist_data *pgdat, struct scan_control *sc)
 		    (!mem_cgroup_below_low(memcg) || sc->memcg_low_reclaim))
 			try_walk_mm_list(lruvec, sc);
 
-		if (!mem_cgroup_disabled())
+		if (memcg && !mem_cgroup_is_root(memcg) && sc->priority != DEF_PRIORITY)
 			atomic_add_unless(&lrugen->priority, 1, DEF_PRIORITY);
 
 		cond_resched();
