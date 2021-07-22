@@ -4176,6 +4176,8 @@ static int scan_pages(struct lruvec *lruvec, struct scan_control *sc, long *nr_t
 	}
 
 	success = try_inc_min_seq(lruvec, type);
+	if (memcg && !mem_cgroup_is_root(memcg) && !cgroup_reclaim(sc) && success && type)
+		atomic_add_unless(&lrugen->priority, -1, 0);
 
 	item = current_is_kswapd() ? PGSCAN_KSWAPD : PGSCAN_DIRECT;
 	if (!cgroup_reclaim(sc)) {
@@ -4385,6 +4387,10 @@ static unsigned long get_nr_to_scan(struct lruvec *lruvec, struct scan_control *
 	DEFINE_MAX_SEQ();
 	DEFINE_MIN_SEQ();
 
+	/* only proceed with memcgs at the front of the priority queue */
+	if (!cgroup_reclaim(sc) && atomic_read(&lrugen->priority) != DEF_PRIORITY)
+		return 0;
+
 	lru_add_drain();
 
 	for (type = !swappiness; type < ANON_AND_FILE; type++) {
@@ -4495,10 +4501,14 @@ static void lru_gen_age_node(struct pglist_data *pgdat, struct scan_control *sc)
 	memcg = mem_cgroup_iter(NULL, NULL, NULL);
 	do {
 		struct lruvec *lruvec = mem_cgroup_lruvec(memcg, pgdat);
+		struct lrugen *lrugen = &lruvec->evictable;
 
 		if (!mem_cgroup_below_min(memcg) &&
 		    (!mem_cgroup_below_low(memcg) || sc->memcg_low_reclaim))
 			try_walk_mm_list(lruvec, sc);
+
+		if (memcg && !mem_cgroup_is_root(memcg) && sc->priority != DEF_PRIORITY)
+			atomic_add_unless(&lrugen->priority, 1, DEF_PRIORITY);
 
 		cond_resched();
 	} while ((memcg = mem_cgroup_iter(NULL, memcg, NULL)));
@@ -4904,7 +4914,7 @@ static int lru_gen_seq_show(struct seq_file *m, void *v)
 		seq_printf(m, "memcg %5hu %s\n", mem_cgroup_id(memcg), (char *)m->private);
 	}
 
-	seq_printf(m, " node %5d\n", nid);
+	seq_printf(m, " node %5d %10d\n", nid, atomic_read(&lrugen->priority));
 
 	seq = full ? (max_seq < MAX_NR_GENS ? 0 : max_seq - MAX_NR_GENS + 1) :
 		     min(min_seq[0], min_seq[1]);
@@ -5129,6 +5139,8 @@ void lru_gen_init_lruvec(struct lruvec *lruvec)
 	lrugen->max_seq = MIN_NR_GENS + 1;
 	lrugen->enabled[0] = lru_gen_enabled() && lru_gen_nr_swapfiles;
 	lrugen->enabled[1] = lru_gen_enabled();
+
+	atomic_set(&lrugen->priority, DEF_PRIORITY);
 
 	for (i = 0; i <= MIN_NR_GENS + 1; i++)
 		lrugen->timestamps[i] = jiffies;
