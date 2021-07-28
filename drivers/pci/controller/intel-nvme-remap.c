@@ -310,7 +310,7 @@ static int find_remapped_devices(struct nvme_remap_dev *nrdev,
 		return -ENODEV;
 
 	cap = readq(mmio + AHCI_REMAP_CAP);
-	for (i = 0; i < AHCI_MAX_REMAP; i++) {
+	for (i = AHCI_MAX_REMAP-1; i >= 0; i--) {
 		struct resource *remapped_mem;
 
 		if ((cap & (1 << i)) == 0)
