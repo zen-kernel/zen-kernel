@@ -3321,15 +3321,9 @@ void sched_exec(void)
 	struct task_struct *p = current;
 	unsigned long flags;
 	int dest_cpu;
-	struct rq *rq;
 
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
-	rq = this_rq();
-
-	if (rq != task_rq(p) || rq->nr_running < 2)
-		goto unlock;
-
-	dest_cpu = select_task_rq(p);
+	dest_cpu = cpumask_any(p->cpus_ptr);
 	if (dest_cpu == smp_processor_id())
 		goto unlock;
 
