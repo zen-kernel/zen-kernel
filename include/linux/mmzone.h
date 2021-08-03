@@ -377,8 +377,6 @@ struct lrugen {
 	/* arithmetic mean weighted by geometric series 1/2, 1/4, ... */
 	unsigned long avg_total[ANON_AND_FILE][MAX_NR_TIERS];
 	unsigned long avg_refaulted[ANON_AND_FILE][MAX_NR_TIERS];
-	/* the priority queue when choosing reclaimable memcgs */
-	atomic_t priority;
 	/* whether the multigenerational lru is enabled */
 	bool enabled[ANON_AND_FILE];
 };

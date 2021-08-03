@@ -4162,22 +4162,18 @@ static int scan_pages(struct lruvec *lruvec, struct scan_control *sc, long *nr_t
 				isolated += delta;
 			}
 
-			if (scanned >= *nr_to_scan || isolated >= SWAP_CLUSTER_MAX ||
-			    ++batch_size == MAX_BATCH_SIZE)
+			if (isolated >= SWAP_CLUSTER_MAX || ++batch_size == MAX_BATCH_SIZE)
 				break;
 		}
 
 		list_splice(&moved, head);
 		__count_zid_vm_events(PGSCAN_SKIP, zone, skipped);
 
-		if (scanned >= *nr_to_scan || isolated >= SWAP_CLUSTER_MAX ||
-		    batch_size == MAX_BATCH_SIZE)
+		if (isolated >= SWAP_CLUSTER_MAX || batch_size == MAX_BATCH_SIZE)
 			break;
 	}
 
 	success = try_inc_min_seq(lruvec, type);
-	if (memcg && !mem_cgroup_is_root(memcg) && !cgroup_reclaim(sc) && success && type)
-		atomic_add_unless(&lrugen->priority, -1, 0);
 
 	item = current_is_kswapd() ? PGSCAN_KSWAPD : PGSCAN_DIRECT;
 	if (!cgroup_reclaim(sc)) {
@@ -4197,7 +4193,7 @@ static int scan_pages(struct lruvec *lruvec, struct scan_control *sc, long *nr_t
 	 * may_unmap and may_writepage. The following check makes sure we won't
 	 * be stuck if we aren't making enough progress.
 	 */
-	return batch_size == MAX_BATCH_SIZE && sorted >= SWAP_CLUSTER_MAX ? 0 : -ENOENT;
+	return batch_size == MAX_BATCH_SIZE && sorted >= scanned / 2 ? 0 : -ENOENT;
 }
 
 static int get_tier_to_isolate(struct lruvec *lruvec, int type)
@@ -4382,16 +4378,12 @@ static unsigned long get_nr_to_scan(struct lruvec *lruvec, struct scan_control *
 				    int swappiness)
 {
 	int gen, type, zone;
+	int nr_gens;
 	long nr_to_scan = 0;
 	struct lrugen *lrugen = &lruvec->evictable;
+	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
 	DEFINE_MAX_SEQ();
 	DEFINE_MIN_SEQ();
-
-	/* only proceed with memcgs at the front of the priority queue */
-	if (!cgroup_reclaim(sc) && atomic_read(&lrugen->priority) != DEF_PRIORITY)
-		return 0;
-
-	lru_add_drain();
 
 	for (type = !swappiness; type < ANON_AND_FILE; type++) {
 		unsigned long seq;
@@ -4404,15 +4396,30 @@ static unsigned long get_nr_to_scan(struct lruvec *lruvec, struct scan_control *
 		}
 	}
 
-	nr_to_scan = max(nr_to_scan, 0L);
-	nr_to_scan = round_up(nr_to_scan >> sc->priority, SWAP_CLUSTER_MAX);
 
-	if (max_nr_gens(max_seq, min_seq, swappiness) > MIN_NR_GENS)
+	if (nr_to_scan <= 0)
+		return 0;
+
+	nr_gens = max_nr_gens(max_seq, min_seq, swappiness);
+
+	if (current_is_kswapd()) {
+		/* leave the work to age_lru_gens() */
+		if (nr_gens == MIN_NR_GENS)
+			return 0;
+
+		if (nr_to_scan >= sc->nr_to_reclaim)
+			sc->force_deactivate = 0;
+	}
+
+	nr_to_scan = max(nr_to_scan >> sc->priority, (long)!mem_cgroup_online(memcg));
+	if (!nr_to_scan || nr_gens > MIN_NR_GENS)
 		return nr_to_scan;
 
-	/* kswapd uses lru_gen_age_node() */
-	if (current_is_kswapd())
+	/* move onto other memcgs if we haven't tried them all yet */
+	if (memcg && !sc->force_deactivate) {
+		sc->skipped_deactivate = 1;
 		return 0;
+	}
 
 	return walk_mm_list(lruvec, max_seq, sc, swappiness, NULL) ? nr_to_scan : 0;
 }
@@ -4423,6 +4430,8 @@ static void lru_gen_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc
 	unsigned long scanned = 0;
 	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
 
+	lru_add_drain();
+
 	blk_start_plug(&plug);
 
 	while (true) {
@@ -4430,7 +4439,7 @@ static void lru_gen_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc
 		int swappiness = sc->may_swap ? get_swappiness(lruvec) : 0;
 
 		nr_to_scan = get_nr_to_scan(lruvec, sc, swappiness) - scanned;
-		if (nr_to_scan < (long)SWAP_CLUSTER_MAX)
+		if (nr_to_scan <= 0)
 			break;
 
 		scanned += nr_to_scan;
@@ -4498,17 +4507,21 @@ static void lru_gen_age_node(struct pglist_data *pgdat, struct scan_control *sc)
 
 	VM_BUG_ON(!current_is_kswapd());
 
+	if (!mem_cgroup_disabled() && !sc->force_deactivate) {
+		/* we may clear this later in get_nr_to_scan() */
+		sc->force_deactivate = 1;
+		return;
+	}
+
+	sc->force_deactivate = 0;
+
 	memcg = mem_cgroup_iter(NULL, NULL, NULL);
 	do {
 		struct lruvec *lruvec = mem_cgroup_lruvec(memcg, pgdat);
-		struct lrugen *lrugen = &lruvec->evictable;
 
 		if (!mem_cgroup_below_min(memcg) &&
 		    (!mem_cgroup_below_low(memcg) || sc->memcg_low_reclaim))
 			try_walk_mm_list(lruvec, sc);
-
-		if (memcg && !mem_cgroup_is_root(memcg) && sc->priority != DEF_PRIORITY)
-			atomic_add_unless(&lrugen->priority, 1, DEF_PRIORITY);
 
 		cond_resched();
 	} while ((memcg = mem_cgroup_iter(NULL, memcg, NULL)));
@@ -4914,7 +4927,7 @@ static int lru_gen_seq_show(struct seq_file *m, void *v)
 		seq_printf(m, "memcg %5hu %s\n", mem_cgroup_id(memcg), (char *)m->private);
 	}
 
-	seq_printf(m, " node %5d %10d\n", nid, atomic_read(&lrugen->priority));
+	seq_printf(m, " node %5d\n", nid);
 
 	seq = full ? (max_seq < MAX_NR_GENS ? 0 : max_seq - MAX_NR_GENS + 1) :
 		     min(min_seq[0], min_seq[1]);
@@ -5139,8 +5152,6 @@ void lru_gen_init_lruvec(struct lruvec *lruvec)
 	lrugen->max_seq = MIN_NR_GENS + 1;
 	lrugen->enabled[0] = lru_gen_enabled() && lru_gen_nr_swapfiles;
 	lrugen->enabled[1] = lru_gen_enabled();
-
-	atomic_set(&lrugen->priority, DEF_PRIORITY);
 
 	for (i = 0; i <= MIN_NR_GENS + 1; i++)
 		lrugen->timestamps[i] = jiffies;
