@@ -4374,6 +4374,8 @@ static int get_swappiness(struct lruvec *lruvec)
 	return swappiness;
 }
 
+static DEFINE_RATELIMIT_STATE(lru_gen_min_ttl, 0, 1);
+
 static unsigned long get_nr_to_scan(struct lruvec *lruvec, struct scan_control *sc,
 				    int swappiness)
 {
@@ -4403,6 +4405,11 @@ static unsigned long get_nr_to_scan(struct lruvec *lruvec, struct scan_control *
 	nr_gens = max_nr_gens(max_seq, min_seq, swappiness);
 
 	if (current_is_kswapd()) {
+		gen = lru_gen_from_seq(max_seq - nr_gens + 1);
+		if (time_is_before_eq_jiffies(READ_ONCE(lrugen->timestamps[gen]) +
+					      READ_ONCE(lru_gen_min_ttl.interval)))
+			sc->file_is_tiny = 0;
+
 		/* leave the work to age_lru_gens() */
 		if (nr_gens == MIN_NR_GENS)
 			return 0;
@@ -4506,6 +4513,21 @@ static void lru_gen_age_node(struct pglist_data *pgdat, struct scan_control *sc)
 	struct mem_cgroup *memcg;
 
 	VM_BUG_ON(!current_is_kswapd());
+
+	if (sc->file_is_tiny && READ_ONCE(lru_gen_min_ttl.interval) &&
+	    __ratelimit(&lru_gen_min_ttl)) {
+		struct oom_control oc = {
+			.gfp_mask = sc->gfp_mask,
+			.order = sc->order,
+		};
+
+		if (mutex_trylock(&oom_lock)) {
+			out_of_memory(&oc);
+			mutex_unlock(&oom_lock);
+		}
+	}
+
+	sc->file_is_tiny = 1;
 
 	if (!mem_cgroup_disabled() && !sc->force_deactivate) {
 		/* we may clear this later in get_nr_to_scan() */
@@ -4771,6 +4793,29 @@ static struct kobj_attribute lru_gen_spread_attr = __ATTR(
 	spread, 0644, show_lru_gen_spread, store_lru_gen_spread
 );
 
+static ssize_t show_lru_gen_min_ttl(struct kobject *kobj, struct kobj_attribute *attr,
+				    char *buf)
+{
+	return sprintf(buf, "%u\n", jiffies_to_msecs(READ_ONCE(lru_gen_min_ttl.interval)));
+}
+
+static ssize_t store_lru_gen_min_ttl(struct kobject *kobj, struct kobj_attribute *attr,
+				     const char *buf, size_t len)
+{
+	unsigned int msecs;
+
+	if (kstrtouint(buf, 10, &msecs))
+		return -EINVAL;
+
+	WRITE_ONCE(lru_gen_min_ttl.interval, msecs_to_jiffies(msecs));
+
+	return len;
+}
+
+static struct kobj_attribute lru_gen_min_ttl_attr = __ATTR(
+	min_ttl_ms, 0644, show_lru_gen_min_ttl, store_lru_gen_min_ttl
+);
+
 static ssize_t show_lru_gen_enabled(struct kobject *kobj, struct kobj_attribute *attr,
 				    char *buf)
 {
@@ -4796,6 +4841,7 @@ static struct kobj_attribute lru_gen_enabled_attr = __ATTR(
 
 static struct attribute *lru_gen_attrs[] = {
 	&lru_gen_spread_attr.attr,
+	&lru_gen_min_ttl_attr.attr,
 	&lru_gen_enabled_attr.attr,
 	NULL
 };

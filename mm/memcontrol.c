@@ -6011,7 +6011,7 @@ static void mem_cgroup_attach(struct cgroup_taskset *tset)
 	struct task_struct *task = NULL;
 
 	cgroup_taskset_for_each_leader(task, css, tset)
-		;
+		break;
 
 	if (!task)
 		return;
