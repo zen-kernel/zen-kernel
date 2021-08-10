@@ -588,7 +588,7 @@ static inline void sched_update_tick_dependency(struct rq *rq) { }
  */
 #define __SCHED_DEQUEUE_TASK(p, rq, flags, func)		\
 	psi_dequeue(p, flags & DEQUEUE_SLEEP);			\
-	sched_info_dequeued(rq, p);				\
+	sched_info_dequeue(rq, p);				\
 								\
 	list_del(&p->sq_node);					\
 	if (list_empty(&rq->queue.heads[p->sq_idx])) {		\
@@ -598,7 +598,7 @@ static inline void sched_update_tick_dependency(struct rq *rq) { }
 	}
 
 #define __SCHED_ENQUEUE_TASK(p, rq, flags)				\
-	sched_info_queued(rq, p);					\
+	sched_info_enqueue(rq, p);					\
 	psi_enqueue(p, flags);						\
 									\
 	p->sq_idx = task_sched_prio_idx(p, rq);				\
