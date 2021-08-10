@@ -807,7 +807,6 @@ void wake_up_q(struct wake_q_head *head)
 		struct task_struct *task;
 
 		task = container_of(node, struct task_struct, wake_q);
-		BUG_ON(!task);
 		/* task can safely be re-inserted now: */
 		node = node->next;
 		task->wake_q.next = NULL;
