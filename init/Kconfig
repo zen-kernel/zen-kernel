@@ -120,6 +120,7 @@ config ZEN_INTERACTIVE
 	  --- Virtual Memory Subsystem ---------------------------
 
 	    Background-reclaim hugepages...:   no   ->   yes
+	    MG-LRU minimum cache TTL.......:   0    ->   1000 ms
 
 config BROKEN
 	bool
