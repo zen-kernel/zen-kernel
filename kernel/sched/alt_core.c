@@ -1207,12 +1207,14 @@ static inline bool is_migration_disabled(struct task_struct *p)
 void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 {
 #ifdef CONFIG_SCHED_DEBUG
+	unsigned int state = READ_ONCE(p->__state);
+
 	/*
 	 * We should never call set_task_cpu() on a blocked task,
 	 * ttwu() will sort out the placement.
 	 */
-	WARN_ON_ONCE(p->state != TASK_RUNNING && p->state != TASK_WAKING &&
-		     !p->on_rq);
+	WARN_ON_ONCE(state != TASK_RUNNING && state != TASK_WAKING && !p->on_rq);
+
 #ifdef CONFIG_LOCKDEP
 	/*
 	 * The caller should hold either p->pi_lock or rq->lock, when changing
@@ -1512,7 +1514,7 @@ inline int task_curr(const struct task_struct *p)
  * smp_call_function() if an IPI is sent by the same process we are
  * waiting to become inactive.
  */
-unsigned long wait_task_inactive(struct task_struct *p, long match_state)
+unsigned long wait_task_inactive(struct task_struct *p, unsigned int match_state)
 {
 	unsigned long flags;
 	bool running, on_rq;
@@ -1535,7 +1537,7 @@ unsigned long wait_task_inactive(struct task_struct *p, long match_state)
 		 * running somewhere else!
 		 */
 		while (task_running(p) && p == rq->curr) {
-			if (match_state && unlikely(p->state != match_state))
+			if (match_state && unlikely(READ_ONCE(p->__state) != match_state))
 				return 0;
 			cpu_relax();
 		}
@@ -1550,7 +1552,7 @@ unsigned long wait_task_inactive(struct task_struct *p, long match_state)
 		running = task_running(p);
 		on_rq = p->on_rq;
 		ncsw = 0;
-		if (!match_state || p->state == match_state)
+		if (!match_state || READ_ONCE(p->__state) == match_state)
 			ncsw = p->nvcsw | LONG_MIN; /* sets MSB */
 		task_access_unlock_irqrestore(p, lock, &flags);
 
@@ -1853,7 +1855,7 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 		rq->nr_pinned--;
 	}
 
-	if (task_running(p) || p->state == TASK_WAKING) {
+	if (task_running(p) || READ_ONCE(p->__state) == TASK_WAKING) {
 		struct migration_arg arg = { p, dest_cpu };
 
 		/* Need help from migration thread: drop lock and wait. */
@@ -1937,7 +1939,7 @@ static inline void
 ttwu_do_wakeup(struct rq *rq, struct task_struct *p, int wake_flags)
 {
 	check_preempt_curr(rq);
-	p->state = TASK_RUNNING;
+	WRITE_ONCE(p->__state, TASK_RUNNING);
 	trace_sched_wakeup(p);
 }
 
@@ -2302,12 +2304,12 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 		 *  - we're serialized against set_special_state() by virtue of
 		 *    it disabling IRQs (this allows not taking ->pi_lock).
 		 */
-		if (!(p->state & state))
+		if (!(READ_ONCE(p->__state) & state))
 			goto out;
 
 		success = 1;
 		trace_sched_waking(p);
-		p->state = TASK_RUNNING;
+		WRITE_ONCE(p->__state, TASK_RUNNING);
 		trace_sched_wakeup(p);
 		goto out;
 	}
@@ -2320,7 +2322,7 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 	 */
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
 	smp_mb__after_spinlock();
-	if (!(p->state & state))
+	if (!(READ_ONCE(p->__state) & state))
 		goto unlock;
 
 	trace_sched_waking(p);
@@ -2386,7 +2388,7 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 	 * TASK_WAKING such that we can unlock p->pi_lock before doing the
 	 * enqueue, such as ttwu_queue_wakelist().
 	 */
-	p->state = TASK_WAKING;
+	WRITE_ONCE(p->__state, TASK_WAKING);
 
 	/*
 	 * If the owning (remote) CPU is still in the middle of schedule() with
@@ -2482,7 +2484,7 @@ bool try_invoke_on_locked_down_task(struct task_struct *p, bool (*func)(struct t
 			ret = func(p, arg);
 		__task_rq_unlock(rq, &rf);
 	} else {
-		switch (p->state) {
+		switch (READ_ONCE(p->__state)) {
 		case TASK_RUNNING:
 		case TASK_WAKING:
 			break;
@@ -2558,7 +2560,7 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 	 * nobody will actually run it, and a signal or other external
 	 * event cannot wake it up and insert it on the runqueue either.
 	 */
-	p->state = TASK_NEW;
+	p->__state = TASK_NEW;
 
 	/*
 	 * Make sure we do not leak PI boosting priority to the child.
@@ -2710,7 +2712,7 @@ void wake_up_new_task(struct task_struct *p)
 	struct rq *rq;
 
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
-	p->state = TASK_RUNNING;
+	WRITE_ONCE(p->__state, TASK_RUNNING);
 	rq = cpu_rq(select_task_rq(p));
 #ifdef CONFIG_SMP
 	rseq_migrate(p);
@@ -3063,7 +3065,7 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 	 * running on another CPU and we could rave with its RUNNING -> DEAD
 	 * transition, resulting in a double drop.
 	 */
-	prev_state = prev->state;
+	prev_state = READ_ONCE(prev->__state);
 	vtime_task_switch(prev);
 	perf_event_task_sched_in(prev, current);
 	finish_task(prev);
@@ -3841,7 +3843,7 @@ static inline void schedule_debug(struct task_struct *prev, bool preempt)
 #endif
 
 #ifdef CONFIG_DEBUG_ATOMIC_SLEEP
-	if (!preempt && prev->state && prev->non_block_count) {
+	if (!preempt && READ_ONCE(prev->__state) && prev->non_block_count) {
 		printk(KERN_ERR "BUG: scheduling in a non-blocking section: %s/%d/%i\n",
 			prev->comm, prev->pid, prev->non_block_count);
 		dump_stack();
@@ -4108,10 +4110,10 @@ static void __sched notrace __schedule(bool preempt)
 	 *  - we form a control dependency vs deactivate_task() below.
 	 *  - ptrace_{,un}freeze_traced() can change ->state underneath us.
 	 */
-	prev_state = prev->state;
-	if (!preempt && prev_state && prev_state == prev->state) {
+	prev_state = READ_ONCE(prev->__state);
+	if (!preempt && prev_state) {
 		if (signal_pending_state(prev_state, prev)) {
-			prev->state = TASK_RUNNING;
+			WRITE_ONCE(prev->__state, TASK_RUNNING);
 		} else {
 			prev->sched_contributes_to_load =
 				(prev_state & TASK_UNINTERRUPTIBLE) &&
@@ -4289,7 +4291,7 @@ void __sched schedule_idle(void)
 	 * current task can be in any other state. Note, idle is always in the
 	 * TASK_RUNNING state.
 	 */
-	WARN_ON_ONCE(current->state);
+	WARN_ON_ONCE(current->__state);
 	do {
 		__schedule(false);
 	} while (need_resched());
@@ -6056,26 +6058,28 @@ EXPORT_SYMBOL_GPL(sched_show_task);
 static inline bool
 state_filter_match(unsigned long state_filter, struct task_struct *p)
 {
+	unsigned int state = READ_ONCE(p->__state);
+
 	/* no filter, everything matches */
 	if (!state_filter)
 		return true;
 
 	/* filter, but doesn't match */
-	if (!(p->state & state_filter))
+	if (!(state & state_filter))
 		return false;
 
 	/*
 	 * When looking for TASK_UNINTERRUPTIBLE skip TASK_IDLE (allows
 	 * TASK_KILLABLE).
 	 */
-	if (state_filter == TASK_UNINTERRUPTIBLE && p->state == TASK_IDLE)
+	if (state_filter == TASK_UNINTERRUPTIBLE && state == TASK_IDLE)
 		return false;
 
 	return true;
 }
 
 
-void show_state_filter(unsigned long state_filter)
+void show_state_filter(unsigned int state_filter)
 {
 	struct task_struct *g, *p;
 
@@ -6142,7 +6146,7 @@ void __init init_idle(struct task_struct *idle, int cpu)
 	update_rq_clock(rq);
 
 	idle->last_ran = rq->clock_task;
-	idle->state = TASK_RUNNING;
+	idle->__state = TASK_RUNNING;
 	/*
 	 * PF_KTHREAD should already be set at this point; regardless, make it
 	 * look like a proper per-CPU kthread.
