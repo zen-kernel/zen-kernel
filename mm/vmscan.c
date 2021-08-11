@@ -3956,7 +3956,11 @@ static bool try_to_inc_max_seq(struct lruvec *lruvec, unsigned long max_seq,
 }
 
 /* Protect the working set accessed within the last N milliseconds. */
+#ifdef CONFIG_ZEN_INTERACTIVE
+static unsigned long lru_gen_min_ttl = 1000;
+#else
 static unsigned long lru_gen_min_ttl;
+#endif
 
 static void lru_gen_age_node(struct pglist_data *pgdat, struct scan_control *sc)
 {
