@@ -582,6 +582,11 @@ static inline void sched_update_tick_dependency(struct rq *rq)
 static inline void sched_update_tick_dependency(struct rq *rq) { }
 #endif
 
+bool sched_task_on_rq(struct task_struct *p)
+{
+	return task_on_rq_queued(p);
+}
+
 /*
  * Add/Remove/Requeue task to/from the runqueue routines
  * Context: rq->lock
