@@ -1361,6 +1361,7 @@ void kthread_use_mm(struct mm_struct *mm)
 	tsk->mm = mm;
 	membarrier_update_current_mm(mm);
 	switch_mm_irqs_off(active_mm, mm, tsk);
+	lru_gen_switch_mm(active_mm, mm);
 	local_irq_enable();
 	task_unlock(tsk);
 #ifdef finish_arch_post_lock_switch

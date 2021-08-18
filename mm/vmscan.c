@@ -2914,6 +2914,312 @@ static bool positive_ctrl_err(struct controller_pos *sp, struct controller_pos *
 }
 
 /******************************************************************************
+ *                          mm_struct list
+ ******************************************************************************/
+
+enum {
+	MM_SCHED_ACTIVE,	/* running processes */
+	MM_SCHED_INACTIVE,	/* sleeping processes */
+	MM_LOCK_CONTENTION,	/* lock contentions */
+	MM_VMA_INTERVAL,	/* VMAs within the range of each PUD/PMD/PTE */
+	MM_LEAF_OTHER_NODE,	/* entries not from the node under reclaim */
+	MM_LEAF_OTHER_MEMCG,	/* entries not from the memcg under reclaim */
+	MM_LEAF_OLD,		/* old entries */
+	MM_LEAF_YOUNG,		/* young entries */
+	MM_LEAF_DIRTY,		/* dirty entries */
+	MM_LEAF_HOLE,		/* non-present entries */
+	MM_NONLEAF_OLD,		/* old non-leaf PMD entries */
+	MM_NONLEAF_YOUNG,	/* young non-leaf PMD entries */
+	NR_MM_STATS
+};
+
+/* mnemonic codes for the stats above */
+#define MM_STAT_CODES		"aicvnmoydhlu"
+
+struct lru_gen_mm_list {
+	/* the head of a global or per-memcg mm_struct list */
+	struct list_head head;
+	/* protects the list */
+	spinlock_t lock;
+	struct {
+		/* set to max_seq after each round of walk */
+		unsigned long cur_seq;
+		/* the next mm_struct on the list to walk */
+		struct list_head *iter;
+		/* to wait for the last walker to finish */
+		struct wait_queue_head wait;
+		/* the number of concurrent walkers */
+		int nr_walkers;
+		/* stats for debugging */
+		unsigned long stats[NR_STAT_GENS][NR_MM_STATS];
+	} nodes[0];
+};
+
+static struct lru_gen_mm_list *global_mm_list;
+
+static struct lru_gen_mm_list *alloc_mm_list(void)
+{
+	int nid;
+	struct lru_gen_mm_list *mm_list;
+
+	mm_list = kvzalloc(struct_size(mm_list, nodes, nr_node_ids), GFP_KERNEL);
+	if (!mm_list)
+		return NULL;
+
+	INIT_LIST_HEAD(&mm_list->head);
+	spin_lock_init(&mm_list->lock);
+
+	for_each_node(nid) {
+		mm_list->nodes[nid].cur_seq = MIN_NR_GENS;
+		mm_list->nodes[nid].iter = &mm_list->head;
+		init_waitqueue_head(&mm_list->nodes[nid].wait);
+	}
+
+	return mm_list;
+}
+
+static struct lru_gen_mm_list *get_mm_list(struct mem_cgroup *memcg)
+{
+#ifdef CONFIG_MEMCG
+	if (!mem_cgroup_disabled())
+		return memcg ? memcg->mm_list : root_mem_cgroup->mm_list;
+#endif
+	VM_BUG_ON(memcg);
+
+	return global_mm_list;
+}
+
+void lru_gen_init_mm(struct mm_struct *mm)
+{
+	INIT_LIST_HEAD(&mm->lrugen.list);
+#ifdef CONFIG_MEMCG
+	mm->lrugen.memcg = NULL;
+#endif
+#ifndef CONFIG_ARCH_WANT_BATCHED_UNMAP_TLB_FLUSH
+	atomic_set(&mm->lrugen.nr_cpus, 0);
+#endif
+	nodes_clear(mm->lrugen.nodes);
+}
+
+void lru_gen_add_mm(struct mm_struct *mm)
+{
+	struct mem_cgroup *memcg = get_mem_cgroup_from_mm(mm);
+	struct lru_gen_mm_list *mm_list = get_mm_list(memcg);
+
+	VM_BUG_ON_MM(!list_empty(&mm->lrugen.list), mm);
+#ifdef CONFIG_MEMCG
+	VM_BUG_ON_MM(mm->lrugen.memcg, mm);
+	WRITE_ONCE(mm->lrugen.memcg, memcg);
+#endif
+	spin_lock(&mm_list->lock);
+	list_add_tail(&mm->lrugen.list, &mm_list->head);
+	spin_unlock(&mm_list->lock);
+}
+
+void lru_gen_del_mm(struct mm_struct *mm)
+{
+	int nid;
+#ifdef CONFIG_MEMCG
+	struct lru_gen_mm_list *mm_list = get_mm_list(mm->lrugen.memcg);
+#else
+	struct lru_gen_mm_list *mm_list = get_mm_list(NULL);
+#endif
+
+	spin_lock(&mm_list->lock);
+
+	for_each_node(nid) {
+		if (mm_list->nodes[nid].iter != &mm->lrugen.list)
+			continue;
+
+		mm_list->nodes[nid].iter = mm_list->nodes[nid].iter->next;
+		if (mm_list->nodes[nid].iter == &mm_list->head)
+			WRITE_ONCE(mm_list->nodes[nid].cur_seq,
+				   mm_list->nodes[nid].cur_seq + 1);
+	}
+
+	list_del_init(&mm->lrugen.list);
+
+	spin_unlock(&mm_list->lock);
+
+#ifdef CONFIG_MEMCG
+	mem_cgroup_put(mm->lrugen.memcg);
+	WRITE_ONCE(mm->lrugen.memcg, NULL);
+#endif
+}
+
+#ifdef CONFIG_MEMCG
+int lru_gen_alloc_mm_list(struct mem_cgroup *memcg)
+{
+	if (mem_cgroup_disabled())
+		return 0;
+
+	memcg->mm_list = alloc_mm_list();
+
+	return memcg->mm_list ? 0 : -ENOMEM;
+}
+
+void lru_gen_free_mm_list(struct mem_cgroup *memcg)
+{
+	kvfree(memcg->mm_list);
+	memcg->mm_list = NULL;
+}
+
+void lru_gen_migrate_mm(struct mm_struct *mm)
+{
+	struct mem_cgroup *memcg;
+
+	lockdep_assert_held(&mm->owner->alloc_lock);
+
+	if (mem_cgroup_disabled())
+		return;
+
+	rcu_read_lock();
+	memcg = mem_cgroup_from_task(mm->owner);
+	rcu_read_unlock();
+	if (memcg == mm->lrugen.memcg)
+		return;
+
+	VM_BUG_ON_MM(!mm->lrugen.memcg, mm);
+	VM_BUG_ON_MM(list_empty(&mm->lrugen.list), mm);
+
+	lru_gen_del_mm(mm);
+	lru_gen_add_mm(mm);
+}
+
+static bool mm_is_migrated(struct mm_struct *mm, struct mem_cgroup *memcg)
+{
+	return READ_ONCE(mm->lrugen.memcg) != memcg;
+}
+#else
+static bool mm_is_migrated(struct mm_struct *mm, struct mem_cgroup *memcg)
+{
+	return false;
+}
+#endif
+
+struct mm_walk_args {
+	struct mem_cgroup *memcg;
+	unsigned long max_seq;
+	unsigned long start_pfn;
+	unsigned long end_pfn;
+	unsigned long next_addr;
+	int node_id;
+	int swappiness;
+	int batch_size;
+	int nr_pages[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
+	int mm_stats[NR_MM_STATS];
+	unsigned long bitmap[0];
+};
+
+static void reset_mm_stats(struct lru_gen_mm_list *mm_list, bool last,
+			   struct mm_walk_args *args)
+{
+	int i;
+	int nid = args->node_id;
+	int hist = lru_hist_from_seq(args->max_seq);
+
+	lockdep_assert_held(&mm_list->lock);
+
+	for (i = 0; i < NR_MM_STATS; i++) {
+		WRITE_ONCE(mm_list->nodes[nid].stats[hist][i],
+			   mm_list->nodes[nid].stats[hist][i] + args->mm_stats[i]);
+		args->mm_stats[i] = 0;
+	}
+
+	if (!last || NR_STAT_GENS == 1)
+		return;
+
+	hist = lru_hist_from_seq(args->max_seq + 1);
+	for (i = 0; i < NR_MM_STATS; i++)
+		WRITE_ONCE(mm_list->nodes[nid].stats[hist][i], 0);
+}
+
+static bool should_skip_mm(struct mm_struct *mm, struct mm_walk_args *args)
+{
+	int type;
+	unsigned long size = 0;
+
+	if (!lru_gen_mm_is_active(mm) && !node_isset(args->node_id, mm->lrugen.nodes))
+		return true;
+
+	if (mm_is_oom_victim(mm))
+		return true;
+
+	for (type = !args->swappiness; type < ANON_AND_FILE; type++) {
+		size += type ? get_mm_counter(mm, MM_FILEPAGES) :
+			       get_mm_counter(mm, MM_ANONPAGES) +
+			       get_mm_counter(mm, MM_SHMEMPAGES);
+	}
+
+	/* leave the legwork to the rmap if the mappings are too sparse */
+	if (size < max(SWAP_CLUSTER_MAX, mm_pgtables_bytes(mm) / PAGE_SIZE))
+		return true;
+
+	return !mmget_not_zero(mm);
+}
+
+/* To support multiple walkers that concurrently walk an mm_struct list. */
+static bool get_next_mm(struct mm_walk_args *args, struct mm_struct **iter)
+{
+	bool last = true;
+	struct mm_struct *mm = NULL;
+	int nid = args->node_id;
+	struct lru_gen_mm_list *mm_list = get_mm_list(args->memcg);
+
+	if (*iter)
+		mmput_async(*iter);
+	else if (args->max_seq <= READ_ONCE(mm_list->nodes[nid].cur_seq))
+		return false;
+
+	spin_lock(&mm_list->lock);
+
+	VM_BUG_ON(args->max_seq > mm_list->nodes[nid].cur_seq + 1);
+	VM_BUG_ON(*iter && args->max_seq < mm_list->nodes[nid].cur_seq);
+	VM_BUG_ON(*iter && !mm_list->nodes[nid].nr_walkers);
+
+	if (args->max_seq <= mm_list->nodes[nid].cur_seq) {
+		last = *iter;
+		goto done;
+	}
+
+	if (mm_list->nodes[nid].iter == &mm_list->head) {
+		VM_BUG_ON(*iter || mm_list->nodes[nid].nr_walkers);
+		mm_list->nodes[nid].iter = mm_list->nodes[nid].iter->next;
+	}
+
+	while (!mm && mm_list->nodes[nid].iter != &mm_list->head) {
+		mm = list_entry(mm_list->nodes[nid].iter, struct mm_struct, lrugen.list);
+		mm_list->nodes[nid].iter = mm_list->nodes[nid].iter->next;
+		if (should_skip_mm(mm, args))
+			mm = NULL;
+
+		args->mm_stats[mm ? MM_SCHED_ACTIVE : MM_SCHED_INACTIVE]++;
+	}
+
+	if (mm_list->nodes[nid].iter == &mm_list->head)
+		WRITE_ONCE(mm_list->nodes[nid].cur_seq,
+			   mm_list->nodes[nid].cur_seq + 1);
+done:
+	if (*iter && !mm)
+		mm_list->nodes[nid].nr_walkers--;
+	if (!*iter && mm)
+		mm_list->nodes[nid].nr_walkers++;
+
+	last = last && !mm_list->nodes[nid].nr_walkers &&
+	       mm_list->nodes[nid].iter == &mm_list->head;
+
+	reset_mm_stats(mm_list, last, args);
+
+	spin_unlock(&mm_list->lock);
+
+	*iter = mm;
+	if (mm)
+		node_clear(nid, mm->lrugen.nodes);
+
+	return last;
+}
+
+/******************************************************************************
  *                          state change
  ******************************************************************************/
 
@@ -3146,6 +3452,13 @@ static int __init init_lru_gen(void)
 {
 	BUILD_BUG_ON(MIN_NR_GENS + 1 >= MAX_NR_GENS);
 	BUILD_BUG_ON(BIT(LRU_GEN_WIDTH) <= MAX_NR_GENS);
+	BUILD_BUG_ON(sizeof(MM_STAT_CODES) != NR_MM_STATS + 1);
+
+	if (mem_cgroup_disabled()) {
+		global_mm_list = alloc_mm_list();
+		if (!global_mm_list)
+			return -ENOMEM;
+	}
 
 	if (hotplug_memory_notifier(mem_notifier, 0))
 		pr_err("lru_gen: failed to subscribe hotplug notifications\n");

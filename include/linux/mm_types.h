@@ -15,6 +15,8 @@
 #include <linux/page-flags-layout.h>
 #include <linux/workqueue.h>
 #include <linux/seqlock.h>
+#include <linux/nodemask.h>
+#include <linux/mmdebug.h>
 
 #include <asm/mmu.h>
 
@@ -572,6 +574,22 @@ struct mm_struct {
 #ifdef CONFIG_IOMMU_SUPPORT
 		u32 pasid;
 #endif
+#ifdef CONFIG_LRU_GEN
+		struct {
+			/* the node of a global or per-memcg mm_struct list */
+			struct list_head list;
+#ifdef CONFIG_MEMCG
+			/* points to the memcg of the owner task above */
+			struct mem_cgroup *memcg;
+#endif
+			/* whether this mm_struct has been used since the last walk */
+			nodemask_t nodes;
+#ifndef CONFIG_ARCH_WANT_BATCHED_UNMAP_TLB_FLUSH
+			/* the number of CPUs using this mm_struct */
+			atomic_t nr_cpus;
+#endif
+		} lrugen;
+#endif
 	} __randomize_layout;
 
 	/*
@@ -597,6 +615,95 @@ static inline cpumask_t *mm_cpumask(struct mm_struct *mm)
 {
 	return (struct cpumask *)&mm->cpu_bitmap;
 }
+
+#ifdef CONFIG_LRU_GEN
+
+void lru_gen_init_mm(struct mm_struct *mm);
+void lru_gen_add_mm(struct mm_struct *mm);
+void lru_gen_del_mm(struct mm_struct *mm);
+#ifdef CONFIG_MEMCG
+int lru_gen_alloc_mm_list(struct mem_cgroup *memcg);
+void lru_gen_free_mm_list(struct mem_cgroup *memcg);
+void lru_gen_migrate_mm(struct mm_struct *mm);
+#endif
+
+/* Track the usage of each mm_struct so that we can skip inactive ones. */
+static inline void lru_gen_switch_mm(struct mm_struct *old, struct mm_struct *new)
+{
+	/* exclude init_mm, efi_mm, etc. */
+	if (!core_kernel_data((unsigned long)old)) {
+		VM_BUG_ON(old == &init_mm);
+
+		nodes_setall(old->lrugen.nodes);
+#ifndef CONFIG_ARCH_WANT_BATCHED_UNMAP_TLB_FLUSH
+		atomic_dec(&old->lrugen.nr_cpus);
+		VM_BUG_ON_MM(atomic_read(&old->lrugen.nr_cpus) < 0, old);
+#endif
+	} else
+		VM_BUG_ON_MM(READ_ONCE(old->lrugen.list.prev) ||
+			     READ_ONCE(old->lrugen.list.next), old);
+
+	if (!core_kernel_data((unsigned long)new)) {
+		VM_BUG_ON(new == &init_mm);
+
+#ifndef CONFIG_ARCH_WANT_BATCHED_UNMAP_TLB_FLUSH
+		atomic_inc(&new->lrugen.nr_cpus);
+		VM_BUG_ON_MM(atomic_read(&new->lrugen.nr_cpus) < 0, new);
+#endif
+	} else
+		VM_BUG_ON_MM(READ_ONCE(new->lrugen.list.prev) ||
+			     READ_ONCE(new->lrugen.list.next), new);
+}
+
+/* Return whether this mm_struct is being used on any CPUs. */
+static inline bool lru_gen_mm_is_active(struct mm_struct *mm)
+{
+#ifdef CONFIG_ARCH_WANT_BATCHED_UNMAP_TLB_FLUSH
+	return !cpumask_empty(mm_cpumask(mm));
+#else
+	return atomic_read(&mm->lrugen.nr_cpus);
+#endif
+}
+
+#else /* CONFIG_LRU_GEN */
+
+static inline void lru_gen_init_mm(struct mm_struct *mm)
+{
+}
+
+static inline void lru_gen_add_mm(struct mm_struct *mm)
+{
+}
+
+static inline void lru_gen_del_mm(struct mm_struct *mm)
+{
+}
+
+#ifdef CONFIG_MEMCG
+static inline int lru_gen_alloc_mm_list(struct mem_cgroup *memcg)
+{
+	return 0;
+}
+
+static inline void lru_gen_free_mm_list(struct mem_cgroup *memcg)
+{
+}
+
+static inline void lru_gen_migrate_mm(struct mm_struct *mm)
+{
+}
+#endif
+
+static inline void lru_gen_switch_mm(struct mm_struct *old, struct mm_struct *new)
+{
+}
+
+static inline bool lru_gen_mm_is_active(struct mm_struct *mm)
+{
+	return false;
+}
+
+#endif /* CONFIG_LRU_GEN */
 
 struct mmu_gather;
 extern void tlb_gather_mmu(struct mmu_gather *tlb, struct mm_struct *mm);
