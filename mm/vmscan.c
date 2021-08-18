@@ -1097,9 +1097,11 @@ static int __remove_mapping(struct address_space *mapping, struct page *page,
 
 	if (PageSwapCache(page)) {
 		swp_entry_t swap = { .val = page_private(page) };
-		mem_cgroup_swapout(page, swap);
+
+		/* get a shadow entry before page_memcg() is cleared */
 		if (reclaimed && !mapping_exiting(mapping))
 			shadow = workingset_eviction(page, target_memcg);
+		mem_cgroup_swapout(page, swap);
 		__delete_from_swap_cache(page, swap, shadow);
 		xa_unlock_irqrestore(&mapping->i_pages, flags);
 		put_swap_page(page, swap);
@@ -2822,6 +2824,93 @@ static bool __maybe_unused seq_is_valid(struct lruvec *lruvec)
 	       get_nr_gens(lruvec, 0) <= MAX_NR_GENS &&
 	       get_nr_gens(lruvec, 1) >= MIN_NR_GENS &&
 	       get_nr_gens(lruvec, 1) <= MAX_NR_GENS;
+}
+
+/******************************************************************************
+ *                          refault feedback loop
+ ******************************************************************************/
+
+/*
+ * A feedback loop modeled after the PID controller. Currently supports the
+ * proportional (P) and the integral (I) terms; the derivative (D) term can be
+ * added if necessary. The setpoint (SP) is the desired position; the process
+ * variable (PV) is the measured position. The error is the difference between
+ * the SP and the PV. A positive error results in a positive control output
+ * correction, which, in our case, is to allow eviction.
+ *
+ * The P term is the refault rate of the current generation being evicted. The I
+ * term is the exponential moving average of the refault rates of the previous
+ * generations, using the smoothing factor 1/2.
+ *
+ * Our goal is to make sure upper tiers have similar refault rates as the base
+ * tier. That is we try to be fair to all tiers by maintaining similar refault
+ * rates across them.
+ */
+struct controller_pos {
+	unsigned long refaulted;
+	unsigned long total;
+	int gain;
+};
+
+static void read_controller_pos(struct controller_pos *pos, struct lruvec *lruvec,
+				int type, int tier, int gain)
+{
+	struct lrugen *lrugen = &lruvec->evictable;
+	int hist = lru_hist_from_seq(lrugen->min_seq[type]);
+
+	pos->refaulted = lrugen->avg_refaulted[type][tier] +
+			 atomic_long_read(&lrugen->refaulted[hist][type][tier]);
+	pos->total = lrugen->avg_total[type][tier] +
+		     atomic_long_read(&lrugen->evicted[hist][type][tier]);
+	if (tier)
+		pos->total += lrugen->protected[hist][type][tier - 1];
+	pos->gain = gain;
+}
+
+static void reset_controller_pos(struct lruvec *lruvec, int gen, int type)
+{
+	int tier;
+	int hist = lru_hist_from_seq(gen);
+	struct lrugen *lrugen = &lruvec->evictable;
+	bool carryover = gen == lru_gen_from_seq(lrugen->min_seq[type]);
+
+	if (!carryover && NR_STAT_GENS == 1)
+		return;
+
+	for (tier = 0; tier < MAX_NR_TIERS; tier++) {
+		if (carryover) {
+			unsigned long sum;
+
+			sum = lrugen->avg_refaulted[type][tier] +
+			      atomic_long_read(&lrugen->refaulted[hist][type][tier]);
+			WRITE_ONCE(lrugen->avg_refaulted[type][tier], sum / 2);
+
+			sum = lrugen->avg_total[type][tier] +
+			      atomic_long_read(&lrugen->evicted[hist][type][tier]);
+			if (tier)
+				sum += lrugen->protected[hist][type][tier - 1];
+			WRITE_ONCE(lrugen->avg_total[type][tier], sum / 2);
+
+			if (NR_STAT_GENS > 1)
+				continue;
+		}
+
+		atomic_long_set(&lrugen->refaulted[hist][type][tier], 0);
+		atomic_long_set(&lrugen->evicted[hist][type][tier], 0);
+		if (tier)
+			WRITE_ONCE(lrugen->protected[hist][type][tier - 1], 0);
+	}
+}
+
+static bool positive_ctrl_err(struct controller_pos *sp, struct controller_pos *pv)
+{
+	/*
+	 * Allow eviction if the PV has a limited number of refaulted pages or a
+	 * lower refault rate than the SP.
+	 */
+	return pv->refaulted < SWAP_CLUSTER_MAX ||
+	       pv->refaulted * max(sp->total, 1UL) * sp->gain <=
+	       sp->refaulted * max(pv->total, 1UL) * pv->gain;
 }
 
 /******************************************************************************
