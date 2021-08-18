@@ -294,6 +294,94 @@ enum lruvec_flags {
 					 */
 };
 
+struct lruvec;
+
+#define LRU_GEN_MASK		((BIT(LRU_GEN_WIDTH) - 1) << LRU_GEN_PGOFF)
+#define LRU_USAGE_MASK		((BIT(LRU_USAGE_WIDTH) - 1) << LRU_USAGE_PGOFF)
+
+#ifdef CONFIG_LRU_GEN
+
+/*
+ * For each lruvec, evictable pages are divided into multiple generations. The
+ * youngest and the oldest generation numbers, AKA max_seq and min_seq, are
+ * monotonically increasing. The sliding window technique is used to track at
+ * most MAX_NR_GENS and at least MIN_NR_GENS generations. An offset within the
+ * window, AKA gen, indexes an array of per-type and per-zone lists for the
+ * corresponding generation. The counter in page->flags stores gen+1 while a
+ * page is on one of the multigenerational lru lists. Otherwise, it stores 0.
+ */
+#define MAX_NR_GENS		((unsigned int)CONFIG_NR_LRU_GENS)
+
+/*
+ * Each generation is then divided into multiple tiers. Tiers represent levels
+ * of usage from file descriptors, i.e., mark_page_accessed(). In contrast to
+ * moving across generations which requires the lru lock, moving across tiers
+ * only involves an atomic operation on page->flags and therefore has a
+ * negligible cost.
+ *
+ * The purposes of tiers are to:
+ *   1) estimate whether pages accessed multiple times via file descriptors are
+ *   more active than pages accessed only via page tables by separating the two
+ *   access types into upper tiers and the base tier and comparing refault rates
+ *   across tiers.
+ *   2) improve buffered io performance by deferring the protection of pages
+ *   accessed multiple times until the eviction. That is the protection happens
+ *   in the reclaim path, not the access path.
+ *
+ * Pages accessed N times via file descriptors belong to tier order_base_2(N).
+ * The base tier may be marked by PageReferenced(). All upper tiers are marked
+ * by PageReferenced() && PageWorkingset(). Additional bits from page->flags are
+ * used to support more than one upper tier.
+ */
+#define MAX_NR_TIERS		((unsigned int)CONFIG_TIERS_PER_GEN)
+#define LRU_TIER_FLAGS		(BIT(PG_referenced) | BIT(PG_workingset))
+
+/* Whether to keep historical stats for each generation. */
+#ifdef CONFIG_LRU_GEN_STATS
+#define NR_STAT_GENS		((unsigned int)CONFIG_NR_LRU_GENS)
+#else
+#define NR_STAT_GENS		1U
+#endif
+
+struct lrugen {
+	/* the aging increments the max generation number */
+	unsigned long max_seq;
+	/* the eviction increments the min generation numbers */
+	unsigned long min_seq[ANON_AND_FILE];
+	/* the birth time of each generation in jiffies */
+	unsigned long timestamps[MAX_NR_GENS];
+	/* the multigenerational lru lists */
+	struct list_head lists[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
+	/* the sizes of the multigenerational lru lists in pages */
+	unsigned long sizes[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
+	/* to determine which type and its tiers to evict */
+	atomic_long_t refaulted[NR_STAT_GENS][ANON_AND_FILE][MAX_NR_TIERS];
+	atomic_long_t evicted[NR_STAT_GENS][ANON_AND_FILE][MAX_NR_TIERS];
+	/* the base tier isn't protected, hence the minus one */
+	unsigned long protected[NR_STAT_GENS][ANON_AND_FILE][MAX_NR_TIERS - 1];
+	/* the exponential moving average of refaulted */
+	unsigned long avg_refaulted[ANON_AND_FILE][MAX_NR_TIERS];
+	/* the exponential moving average of evicted+protected */
+	unsigned long avg_total[ANON_AND_FILE][MAX_NR_TIERS];
+	/* whether the multigenerational lru is enabled */
+	bool enabled[ANON_AND_FILE];
+};
+
+void lru_gen_init_lrugen(struct lruvec *lruvec);
+void lru_gen_set_state(bool enable, bool main, bool swap);
+
+#else /* CONFIG_LRU_GEN */
+
+static inline void lru_gen_init_lrugen(struct lruvec *lruvec)
+{
+}
+
+static inline void lru_gen_set_state(bool enable, bool main, bool swap)
+{
+}
+
+#endif /* CONFIG_LRU_GEN */
+
 struct lruvec {
 	struct list_head		lists[NR_LRU_LISTS];
 	/* per lruvec lru_lock for memcg */
@@ -311,6 +399,10 @@ struct lruvec {
 	unsigned long			refaults[ANON_AND_FILE];
 	/* Various lruvec state flags (enum lruvec_flags) */
 	unsigned long			flags;
+#ifdef CONFIG_LRU_GEN
+	/* unevictable pages are on LRU_UNEVICTABLE */
+	struct lrugen			evictable;
+#endif
 #ifdef CONFIG_MEMCG
 	struct pglist_data *pgdat;
 #endif
