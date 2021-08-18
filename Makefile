@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 5
 PATCHLEVEL = 13
-SUBLEVEL = 11
+SUBLEVEL = 12
 EXTRAVERSION = -zen
 NAME = The City on the Edge of Forever
 
