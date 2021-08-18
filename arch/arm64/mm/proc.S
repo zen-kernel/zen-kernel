@@ -478,18 +478,6 @@ SYM_FUNC_START(__cpu_setup)
 	 * Set the IPS bits in TCR_EL1.
 	 */
 	tcr_compute_pa_size tcr, #TCR_IPS_SHIFT, x5, x6
-#ifdef CONFIG_ARM64_HW_AFDBM
-	/*
-	 * Enable hardware update of the Access Flags bit.
-	 * Hardware dirty bit management is enabled later,
-	 * via capabilities.
-	 */
-	mrs	x9, ID_AA64MMFR1_EL1
-	and	x9, x9, #0xf
-	cbz	x9, 1f
-	orr	tcr, tcr, #TCR_HA		// hardware Access flag update
-1:
-#endif	/* CONFIG_ARM64_HW_AFDBM */
 	msr	mair_el1, mair
 	msr	tcr_el1, tcr
 	/*
