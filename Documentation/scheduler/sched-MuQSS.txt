@@ -264,17 +264,18 @@ Runqueue sharing.
 
 By default MuQSS chooses to share runqueue resources (specifically the skip
 list and locking) between multicore siblings. It is configurable at build time
-to select between None, SMT, MC and SMP, corresponding to no sharing, sharing
-only between simultaneous mulithreading siblings, multicore siblings, or
-symmetric multiprocessing physical packages. Additionally it can be se at
-bootime with the use of the rqshare parameter. The reason for configurability
-is that some architectures have CPUs with many multicore siblings (>= 16)
-where it may be detrimental to throughput to share runqueues and another
-sharing option may be desirable. Additionally, more sharing than usual can
-improve latency on a system-wide level at the expense of throughput if desired.
+to select between None, SMT, MC, LLC and SMP, corresponding to no sharing,
+sharing only between simultaneous mulithreading siblings, multicore siblings,
+multicore siblings with adjacent LLC, or symmetric multiprocessing physical
+packages. Additionally it can be se at bootime with the use of the rqshare
+parameter. The reason for configurability is that some architectures have
+CPUs with many multicore siblings (>= 16) where it may be detrimental to
+throughput to share runqueues and another sharing option may be desirable.
+Additionally, more sharing than usual can improve latency on a system-wide
+level at the expense of throughput if desired.
 
 The options are:
-none, smt, mc, smp
+none, smt, mc, llc, smp
 
 eg:
 	rqshare=mc
