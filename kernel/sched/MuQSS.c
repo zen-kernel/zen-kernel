@@ -844,7 +844,7 @@ static void dequeue_task(struct rq *rq, struct task_struct *p, int flags)
 	update_clocks(rq);
 
 	if (!(flags & DEQUEUE_SAVE)) {
-		sched_info_dequeued(rq, p);
+		sched_info_dequeue(rq, p);
 		psi_dequeue(p, flags & DEQUEUE_SLEEP);
 	}
 	rq->nr_running--;
@@ -943,7 +943,7 @@ static void enqueue_task(struct rq *rq, struct task_struct *p, int flags)
 	 */
 	update_clocks(rq);
 	if (!(flags & ENQUEUE_RESTORE)) {
-		sched_info_queued(rq, p);
+		sched_info_enqueue(rq, p);
 		psi_enqueue(p, flags & ENQUEUE_WAKEUP);
 	}
 
@@ -1355,7 +1355,7 @@ static void activate_task(struct rq *rq, struct task_struct *p, int flags)
 static inline void deactivate_task(struct task_struct *p, struct rq *rq)
 {
 	p->on_rq = 0;
-	sched_info_dequeued(rq, p);
+	sched_info_dequeue(rq, p);
 	/* deactivate_task is always DEQUEUE_SLEEP in muqss */
 	psi_dequeue(p, DEQUEUE_SLEEP);
 }
@@ -1434,8 +1434,8 @@ static inline void take_task(struct rq *rq, int cpu, struct task_struct *p)
 
 	dequeue_task(p_rq, p, DEQUEUE_SAVE);
 	if (p_rq != rq) {
-		sched_info_dequeued(p_rq, p);
-		sched_info_queued(rq, p);
+		sched_info_dequeue(p_rq, p);
+		sched_info_enqueue(rq, p);
 	}
 	set_task_cpu(p, cpu);
 }
@@ -2802,7 +2802,7 @@ static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
 	 * remote lock we're migrating it to before enabling them.
 	 */
 	if (unlikely(task_on_rq_migrating(prev))) {
-		sched_info_dequeued(rq, prev);
+		sched_info_dequeue(rq, prev);
 		/*
 		 * We move the ownership of prev to the new cpu now. ttwu can't
 		 * activate prev to the wrong cpu since it has to grab this
