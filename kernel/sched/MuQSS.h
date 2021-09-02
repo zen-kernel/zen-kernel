@@ -413,6 +413,8 @@ static inline int task_on_rq_migrating(struct task_struct *p)
 	return READ_ONCE(p->on_rq) == TASK_ON_RQ_MIGRATING;
 }
 
+
+
 static inline void rq_lock(struct rq *rq)
 	__acquires(rq->lock)
 {
@@ -447,6 +449,11 @@ static inline void rq_unlock_irqrestore(struct rq *rq, struct rq_flags *rf)
 	__releases(rq->lock)
 {
 	raw_spin_rq_unlock_irqrestore(rq, rf->flags);
+}
+
+static inline bool sched_core_disabled(void)
+{
+	return true;
 }
 
 static inline raw_spinlock_t *rq_lockp(struct rq *rq)
@@ -906,6 +913,15 @@ unsigned long arch_scale_freq_capacity(int cpu)
 {
 	return SCHED_CAPACITY_SCALE;
 }
+#endif
+
+#ifdef CONFIG_SMP
+static inline bool rq_order_less(struct rq *rq1, struct rq *rq2)
+{
+	return rq1->cpu < rq2->cpu;
+}
+
+extern void double_rq_lock(struct rq *rq1, struct rq *rq2);
 #endif
 
 #ifdef CONFIG_NO_HZ_FULL
