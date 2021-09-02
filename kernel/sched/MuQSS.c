@@ -767,6 +767,11 @@ static inline bool task_queued(struct task_struct *p)
 	return !skiplist_node_empty(&p->node);
 }
 
+bool sched_task_on_rq(struct task_struct *p)
+{
+	return task_on_rq_queued(p);
+}
+
 static void enqueue_task(struct rq *rq, struct task_struct *p, int flags);
 static inline void resched_if_idle(struct rq *rq);
 
