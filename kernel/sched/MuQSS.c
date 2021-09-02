@@ -293,6 +293,9 @@ void raw_spin_rq_unlock(struct rq *rq)
 }
 
 static inline void sched_core_cpu_starting(unsigned int cpu) {}
+static inline void sched_core_enqueue(struct rq *rq, struct task_struct *p) { }
+static inline void sched_core_dequeue(struct rq *rq, struct task_struct *p) { }
+static inline void task_tick_core(struct rq *rq, struct task_struct *curr) {}
 
 #ifdef CONFIG_SMP
 /*
