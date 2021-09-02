@@ -469,40 +469,6 @@ static inline void synchronise_niffies(struct rq *rq1, struct rq *rq2)
 		rq1->niffies = rq2->niffies;
 }
 
-/*
- * double_rq_lock - safely lock two runqueues
- *
- * Note this does not disable interrupts like task_rq_lock,
- * you need to do so manually before calling.
- */
-
-/* For when we know rq1 != rq2 */
-static inline void __double_rq_lock(struct rq *rq1, struct rq *rq2)
-	__acquires(rq1->lock)
-	__acquires(rq2->lock)
-{
-	if (rq1 < rq2) {
-		raw_spin_lock(rq1->lock);
-		raw_spin_lock_nested(rq2->lock, SINGLE_DEPTH_NESTING);
-	} else {
-		raw_spin_lock(rq2->lock);
-		raw_spin_lock_nested(rq1->lock, SINGLE_DEPTH_NESTING);
-	}
-}
-
-static inline void double_rq_lock(struct rq *rq1, struct rq *rq2)
-	__acquires(rq1->lock)
-	__acquires(rq2->lock)
-{
-	BUG_ON(!irqs_disabled());
-	if (rq1->lock == rq2->lock) {
-		raw_spin_lock(rq1->lock);
-		__acquire(rq2->lock);	/* Fake it out ;) */
-	} else
-		__double_rq_lock(rq1, rq2);
-	synchronise_niffies(rq1, rq2);
-}
-
 static inline void lock_all_rqs(void)
 {
 	int cpu;
