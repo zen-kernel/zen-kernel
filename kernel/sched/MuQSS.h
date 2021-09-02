@@ -466,6 +466,11 @@ static inline raw_spinlock_t *rq_lockp(struct rq *rq)
 	return rq->__lock;
 }
 
+static inline raw_spinlock_t *__rq_lockp(struct rq *rq)
+{
+	return rq->__lock;
+}
+
 static inline void lockdep_assert_rq_held(struct rq *rq)
 {
 	lockdep_assert_held(rq_lockp(rq));

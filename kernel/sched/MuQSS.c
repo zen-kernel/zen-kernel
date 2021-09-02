@@ -292,6 +292,8 @@ void raw_spin_rq_unlock(struct rq *rq)
 	raw_spin_unlock(rq_lockp(rq));
 }
 
+static inline void sched_core_cpu_starting(unsigned int cpu) {}
+
 #ifdef CONFIG_SMP
 /*
  * double_rq_lock - safely lock two runqueues
