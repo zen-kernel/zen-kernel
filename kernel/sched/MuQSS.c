@@ -7852,7 +7852,7 @@ void __init sched_init(void)
 		rq->node = kmalloc(sizeof(skiplist_node), GFP_ATOMIC);
 		skiplist_init(rq->node);
 		rq->sl = new_skiplist(rq->node);
-		rq->lock = kmalloc(sizeof(raw_spinlock_t), GFP_ATOMIC);
+		rq->__lock = kmalloc(sizeof(raw_spinlock_t), GFP_ATOMIC);
 		raw_spin_lock_init(rq->__lock);
 		rq->nr_running = 0;
 		rq->nr_uninterruptible = 0;
