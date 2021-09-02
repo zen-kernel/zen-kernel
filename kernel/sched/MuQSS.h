@@ -455,7 +455,7 @@ static inline struct rq *task_rq_lock(struct task_struct *p, struct rq_flags *rf
 {
 	struct rq *rq;
 
-	while (42) {
+	for (;;) {
 		raw_spin_lock_irqsave(&p->pi_lock, rf->flags);
 		rq = task_rq(p);
 		raw_spin_lock(rq->lock);
@@ -482,7 +482,7 @@ static inline struct rq *__task_rq_lock(struct task_struct *p, struct rq_flags _
 
 	lockdep_assert_held(&p->pi_lock);
 
-	while (42) {
+	for (;;) {
 		rq = task_rq(p);
 		raw_spin_lock(rq->lock);
 		if (likely(rq == task_rq(p)))
