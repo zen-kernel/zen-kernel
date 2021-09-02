@@ -2750,6 +2750,19 @@ static inline void finish_task(struct task_struct *prev)
 #endif
 }
 
+static inline void __balance_callbacks(struct rq *rq)
+{
+}
+
+static inline struct callback_head *splice_balance_callbacks(struct rq *rq)
+{
+	return NULL;
+}
+
+static inline void balance_callbacks(struct rq *rq, struct callback_head *head)
+{
+}
+
 static inline void
 prepare_lock_switch(struct rq *rq, struct task_struct *next)
 {
@@ -2773,40 +2786,8 @@ static inline void finish_lock_switch(struct rq *rq)
 	 * fix up the runqueue lock - which gets 'carried over' from
 	 * prev into current:
 	 */
-	spin_acquire(&rq_lockp(rq)->dep_map, 0, 0, _THIS_IP_);
-
-#ifdef CONFIG_SMP
-	/*
-	 * If prev was marked as migrating to another CPU in return_task, drop
-	 * the local runqueue lock but leave interrupts disabled and grab the
-	 * remote lock we're migrating it to before enabling them.
-	 */
-	if (unlikely(task_on_rq_migrating(prev))) {
-		sched_info_dequeue(rq, prev);
-		/*
-		 * We move the ownership of prev to the new cpu now. ttwu can't
-		 * activate prev to the wrong cpu since it has to grab this
-		 * runqueue in ttwu_remote.
-		 */
-#ifdef CONFIG_THREAD_INFO_IN_TASK
-		prev->cpu = prev->wake_cpu;
-#else
-		task_thread_info(prev)->cpu = prev->wake_cpu;
-#endif
-		raw_spin_rq_unlock(rq);
-
-		raw_spin_lock(&prev->pi_lock);
-		rq = __task_rq_lock(prev, NULL);
-		/* Check that someone else hasn't already queued prev */
-		if (likely(!task_queued(prev))) {
-			enqueue_task(rq, prev, 0);
-			prev->on_rq = TASK_ON_RQ_QUEUED;
-			/* Wake up the CPU if it's not already running */
-			resched_if_idle(rq);
-		}
-		raw_spin_unlock(&prev->pi_lock);
-	}
-#endif
+	spin_acquire(&__rq_lockp(rq)->dep_map, 0, 0, _THIS_IP_);
+	__balance_callbacks(rq);
 	raw_spin_rq_unlock_irq(rq);
 }
 
@@ -7193,6 +7174,18 @@ void unregister_sched_domain_sysctl(void)
 	sd_sysctl_header = NULL;
 }
 #endif /* CONFIG_SYSCTL */
+
+static inline void balance_push(struct rq *rq)
+{
+}
+
+static inline void balance_push_set(int cpu, bool on)
+{
+}
+
+static inline void balance_hotplug_wait(void)
+{
+}
 
 void set_rq_online(struct rq *rq)
 {
