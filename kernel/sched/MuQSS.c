@@ -2451,7 +2451,6 @@ void sched_post_fork(struct task_struct *p)
 #ifdef CONFIG_SCHEDSTATS
 
 DEFINE_STATIC_KEY_FALSE(sched_schedstats);
-static bool __initdata __sched_schedstats = false;
 
 static void set_schedstats(bool enabled)
 {
@@ -2475,16 +2474,11 @@ static int __init setup_schedstats(char *str)
 	if (!str)
 		goto out;
 
-	/*
-	 * This code is called before jump labels have been set up, so we can't
-	 * change the static branch directly just yet.  Instead set a temporary
-	 * variable so init_schedstats() can do it later.
-	 */
 	if (!strcmp(str, "enable")) {
-		__sched_schedstats = true;
+		set_schedstats(true);
 		ret = 1;
 	} else if (!strcmp(str, "disable")) {
-		__sched_schedstats = false;
+		set_schedstats(false);
 		ret = 1;
 	}
 out:
@@ -2494,11 +2488,6 @@ out:
 	return ret;
 }
 __setup("schedstats=", setup_schedstats);
-
-static void __init init_schedstats(void)
-{
-	set_schedstats(__sched_schedstats);
-}
 
 #ifdef CONFIG_PROC_SYSCTL
 int sysctl_schedstats(struct ctl_table *table, int write, void *buffer,
@@ -2521,8 +2510,6 @@ int sysctl_schedstats(struct ctl_table *table, int write, void *buffer,
 	return err;
 }
 #endif /* CONFIG_PROC_SYSCTL */
-#else  /* !CONFIG_SCHEDSTATS */
-static inline void init_schedstats(void) {}
 #endif /* CONFIG_SCHEDSTATS */
 
 static void update_cpu_clock_switch(struct rq *rq, struct task_struct *p);
@@ -7998,8 +7985,6 @@ void __init sched_init(void)
 #ifdef CONFIG_SMP
 	idle_thread_set_boot_cpu();
 #endif /* SMP */
-
-	init_schedstats();
 
 	psi_init();
 }
