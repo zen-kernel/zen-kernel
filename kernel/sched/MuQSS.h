@@ -449,23 +449,12 @@ static inline void rq_unlock_irqrestore(struct rq *rq, struct rq_flags *rf)
 	raw_spin_unlock_irqrestore(rq->lock, rf->flags);
 }
 
-static inline struct rq *task_rq_lock(struct task_struct *p, struct rq_flags *rf)
-	__acquires(p->pi_lock)
-	__acquires(rq->lock)
-{
-	struct rq *rq;
+struct rq *__task_rq_lock(struct task_struct *p, struct rq_flags *rf)
+	__acquires(rq->lock);
 
-	for (;;) {
-		raw_spin_lock_irqsave(&p->pi_lock, rf->flags);
-		rq = task_rq(p);
-		raw_spin_lock(rq->lock);
-		if (likely(rq == task_rq(p)))
-			break;
-		raw_spin_unlock(rq->lock);
-		raw_spin_unlock_irqrestore(&p->pi_lock, rf->flags);
-	}
-	return rq;
-}
+struct rq *task_rq_lock(struct task_struct *p, struct rq_flags *rf)
+	__acquires(p->pi_lock)
+	__acquires(rq->lock);
 
 static inline void task_rq_unlock(struct rq *rq, struct task_struct *p, struct rq_flags *rf)
 	__releases(rq->lock)
@@ -473,23 +462,6 @@ static inline void task_rq_unlock(struct rq *rq, struct task_struct *p, struct r
 {
 	rq_unlock(rq);
 	raw_spin_unlock_irqrestore(&p->pi_lock, rf->flags);
-}
-
-static inline struct rq *__task_rq_lock(struct task_struct *p, struct rq_flags __always_unused *rf)
-	__acquires(rq->lock)
-{
-	struct rq *rq;
-
-	lockdep_assert_held(&p->pi_lock);
-
-	for (;;) {
-		rq = task_rq(p);
-		raw_spin_lock(rq->lock);
-		if (likely(rq == task_rq(p)))
-			break;
-		raw_spin_unlock(rq->lock);
-	}
-	return rq;
 }
 
 static inline void __task_rq_unlock(struct rq *rq, struct rq_flags __always_unused *rf)
