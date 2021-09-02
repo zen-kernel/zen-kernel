@@ -477,7 +477,7 @@ static inline void lock_all_rqs(void)
 	for_each_possible_cpu(cpu) {
 		struct rq *rq = cpu_rq(cpu);
 
-		do_raw_spin_rq_lock(rq);
+		raw_spin_rq_lock(rq);
 	}
 }
 
@@ -488,7 +488,7 @@ static inline void unlock_all_rqs(void)
 	for_each_possible_cpu(cpu) {
 		struct rq *rq = cpu_rq(cpu);
 
-		do_raw_spin_rq_unlock(rq);
+		raw_spin_rq_unlock(rq);
 	}
 	preempt_enable();
 }
@@ -496,7 +496,7 @@ static inline void unlock_all_rqs(void)
 /* Specially nest trylock an rq */
 static inline bool trylock_rq(struct rq *this_rq, struct rq *rq)
 {
-	if (unlikely(!do_raw_spin_trylock(rq->lock)))
+	if (unlikely(!raw_spin_rq_trylock(rq)))
 		return false;
 	spin_acquire(&rq->lock->dep_map, SINGLE_DEPTH_NESTING, 1, _RET_IP_);
 	synchronise_niffies(this_rq, rq);
@@ -507,7 +507,7 @@ static inline bool trylock_rq(struct rq *this_rq, struct rq *rq)
 static inline void unlock_rq(struct rq *rq)
 {
 	spin_release(&rq->lock->dep_map, _RET_IP_);
-	do_raw_spin_rq_unlock(rq);
+	raw_spin_rq_unlock(rq);
 }
 
 /*
@@ -1331,7 +1331,7 @@ static void activate_task(struct rq *rq, struct task_struct *p, int flags)
 	 * spent sleeping:
 	 */
 	if (unlikely(prof_on == SLEEP_PROFILING)) {
-		if (p->state == TASK_UNINTERRUPTIBLE)
+		if (READ_ONCE(p->__state) == TASK_UNINTERRUPTIBLE)
 			profile_hits(SLEEP_PROFILING, (void *)get_wchan(p),
 				     (rq->niffies - p->last_ran) >> 20);
 	}
@@ -1515,7 +1515,7 @@ unsigned long wait_task_inactive(struct task_struct *p, unsigned int match_state
 		 * running somewhere else!
 		 */
 		while (task_running(rq, p)) {
-			if (match_state && unlikely(READ_ONCE(p->state) != match_state))
+			if (match_state && unlikely(READ_ONCE(p->__state) != match_state))
 				return 0;
 			cpu_relax();
 		}
@@ -1783,7 +1783,7 @@ static void ttwu_do_wakeup(struct rq *rq, struct task_struct *p, int wake_flags)
 		resched_suitable_idle(p);
 	else
 		try_preempt(p, rq);
-	WRITE_ONCE(p->state = TASK_RUNNING);
+	WRITE_ONCE(p->__state, TASK_RUNNING);
 	trace_sched_wakeup(p);
 }
 
@@ -2108,7 +2108,7 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 
 		success = 1;
 		trace_sched_waking(p);
-		WRITE_ONCE(p->__state = TASK_RUNNING);
+		WRITE_ONCE(p->__state, TASK_RUNNING);
 		trace_sched_wakeup(p);
 		goto out;
 	}
@@ -2185,7 +2185,7 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 	 * TASK_WAKING such that we can unlock p->pi_lock before doing the
 	 * enqueue, such as ttwu_queue_wakelist().
 	 */
-	WRITE_ONCE(p->__state = TASK_WAKING);
+	WRITE_ONCE(p->__state, TASK_WAKING);
 
 	/*
 	 * If the owning (remote) CPU is still in the middle of schedule() with
@@ -2564,7 +2564,7 @@ void wake_up_new_task(struct task_struct *p)
 	parent = p->parent;
 
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
-	WRITE_ONCE(p->__state = TASK_RUNNING);
+	WRITE_ONCE(p->__state, TASK_RUNNING);
 	/* Task_rq can't change yet on a new task */
 	new_rq = rq = task_rq(p);
 	if (unlikely(needs_other_cpu(p, task_cpu(p)))) {
@@ -4284,7 +4284,7 @@ static void __sched notrace __schedule(bool preempt)
 	prev_state = READ_ONCE(prev->__state);
 	if (!preempt && prev_state) {
 		if (signal_pending_state(prev_state, prev)) {
-			WRITE_ONCE(prev->__state) = TASK_RUNNING;
+			WRITE_ONCE(prev->__state, TASK_RUNNING);
 		} else {
 			prev->sched_contributes_to_load =
 				(prev_state & TASK_UNINTERRUPTIBLE) &&
