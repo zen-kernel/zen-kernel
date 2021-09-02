@@ -4458,7 +4458,7 @@ static inline void sched_submit_work(struct task_struct *tsk)
 {
 	unsigned int task_flags;
 
-	if (!tsk->state)
+	if (task_is_running(tsk))
 		return;
 
 	task_flags = tsk->flags;
@@ -6251,7 +6251,7 @@ again:
 	 * If we're the only runnable task on the rq and target rq also
 	 * has only one task, there's absolutely no point in yielding.
 	 */
-	if (task_running(p_rq, p) || p->state) {
+	if (task_running(p_rq, p) || !task_is_running(p)) {
 		yielded = -ESRCH;
 		goto out_irq;
 	}
@@ -6463,7 +6463,7 @@ void sched_show_task(struct task_struct *p)
 
 	printk(KERN_INFO "%-15.15s %c", p->comm, task_state_to_char(p));
 
-	if (p->state == TASK_RUNNING)
+	if (task_is_running(p))
 		printk(KERN_CONT "  running task    ");
 #ifdef CONFIG_DEBUG_STACK_USAGE
 	free = stack_not_used(p);
