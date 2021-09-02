@@ -745,6 +745,23 @@ extern void flush_smp_call_function_from_idle(void);
 
 extern void set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_mask, u32 flags);
 
+/*
+ * double_rq_unlock - safely unlock two runqueues
+ *
+ * Note this does not restore interrupts like task_rq_unlock,
+ * you need to do so manually after calling.
+ */
+static inline void double_rq_unlock(struct rq *rq1, struct rq *rq2)
+	__releases(rq1->lock)
+	__releases(rq2->lock)
+{
+	if (__rq_lockp(rq1) != __rq_lockp(rq2))
+		raw_spin_rq_unlock(rq2);
+	else
+		__release(rq2->lock);
+	raw_spin_rq_unlock(rq1);
+}
+
 extern void set_rq_online (struct rq *rq);
 extern void set_rq_offline(struct rq *rq);
 extern bool sched_smp_initialized;
@@ -758,6 +775,37 @@ static inline void trigger_load_balance(struct rq *rq)
 }
 
 #else /* CONFIG_SMP */
+
+/*
+ * double_rq_lock - safely lock two runqueues
+ *
+ * Note this does not disable interrupts like task_rq_lock,
+ * you need to do so manually before calling.
+ */
+static inline void double_rq_lock(struct rq *rq1, struct rq *rq2)
+	__acquires(rq1->lock)
+	__acquires(rq2->lock)
+{
+	BUG_ON(!irqs_disabled());
+	BUG_ON(rq1 != rq2);
+	raw_spin_rq_lock(rq1);
+	__acquire(rq2->lock);	/* Fake it out ;) */
+}
+
+/*
+ * double_rq_unlock - safely unlock two runqueues
+ *
+ * Note this does not restore interrupts like task_rq_unlock,
+ * you need to do so manually after calling.
+ */
+static inline void double_rq_unlock(struct rq *rq1, struct rq *rq2)
+	__releases(rq1->lock)
+	__releases(rq2->lock)
+{
+	BUG_ON(rq1 != rq2);
+	raw_spin_rq_unlock(rq1);
+	__release(rq2->lock);
+}
 
 static inline void flush_smp_call_function_from_idle(void) { }
 

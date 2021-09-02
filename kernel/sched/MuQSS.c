@@ -309,7 +309,7 @@ void double_rq_lock(struct rq *rq1, struct rq *rq2)
 		swap(rq1, rq2);
 
 	raw_spin_rq_lock(rq1);
-	if (rq_lockp(rq1) == rq_lockp(rq2))
+	if (__rq_lockp(rq1) == __rq_lockp(rq2))
 		return;
 
 	raw_spin_rq_lock_nested(rq2, SINGLE_DEPTH_NESTING);
@@ -501,23 +501,6 @@ static inline void double_rq_lock(struct rq *rq1, struct rq *rq2)
 	} else
 		__double_rq_lock(rq1, rq2);
 	synchronise_niffies(rq1, rq2);
-}
-
-/*
- * double_rq_unlock - safely unlock two runqueues
- *
- * Note this does not restore interrupts like task_rq_unlock,
- * you need to do so manually after calling.
- */
-static inline void double_rq_unlock(struct rq *rq1, struct rq *rq2)
-	__releases(rq1->lock)
-	__releases(rq2->lock)
-{
-	raw_spin_unlock(rq1->lock);
-	if (rq1->lock != rq2->lock)
-		raw_spin_unlock(rq2->lock);
-	else
-		__release(rq2->lock);
 }
 
 static inline void lock_all_rqs(void)
