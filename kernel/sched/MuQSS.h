@@ -428,7 +428,45 @@ static inline int task_on_rq_migrating(struct task_struct *p)
 	return READ_ONCE(p->on_rq) == TASK_ON_RQ_MIGRATING;
 }
 
+extern void raw_spin_rq_lock_nested(struct rq *rq, int subclass);
+extern bool raw_spin_rq_trylock(struct rq *rq);
+extern void raw_spin_rq_unlock(struct rq *rq);
 
+static inline void raw_spin_rq_lock(struct rq *rq)
+{
+	raw_spin_rq_lock_nested(rq, 0);
+}
+
+static inline void raw_spin_rq_lock_irq(struct rq *rq)
+{
+	local_irq_disable();
+	raw_spin_rq_lock(rq);
+}
+
+static inline void raw_spin_rq_unlock_irq(struct rq *rq)
+{
+	raw_spin_rq_unlock(rq);
+	local_irq_enable();
+}
+
+static inline unsigned long _raw_spin_rq_lock_irqsave(struct rq *rq)
+{
+	unsigned long flags;
+	local_irq_save(flags);
+	raw_spin_rq_lock(rq);
+	return flags;
+}
+
+static inline void raw_spin_rq_unlock_irqrestore(struct rq *rq, unsigned long flags)
+{
+	raw_spin_rq_unlock(rq);
+	local_irq_restore(flags);
+}
+
+#define raw_spin_rq_lock_irqsave(rq, flags)	\
+do {						\
+	flags = _raw_spin_rq_lock_irqsave(rq);	\
+} while (0)
 
 static inline void rq_lock(struct rq *rq)
 	__acquires(rq->lock)
@@ -475,47 +513,6 @@ static inline bool sched_core_disabled(void)
 {
 	return true;
 }
-
-extern void raw_spin_rq_lock_nested(struct rq *rq, int subclass);
-extern bool raw_spin_rq_trylock(struct rq *rq);
-extern void raw_spin_rq_unlock(struct rq *rq);
-
-static inline void raw_spin_rq_lock(struct rq *rq)
-{
-	raw_spin_rq_lock_nested(rq, 0);
-}
-
-static inline void raw_spin_rq_lock_irq(struct rq *rq)
-{
-	local_irq_disable();
-	raw_spin_rq_lock(rq);
-}
-
-static inline void raw_spin_rq_unlock_irq(struct rq *rq)
-{
-	raw_spin_rq_unlock(rq);
-	local_irq_enable();
-}
-
-static inline unsigned long _raw_spin_rq_lock_irqsave(struct rq *rq)
-{
-	unsigned long flags;
-	local_irq_save(flags);
-	raw_spin_rq_lock(rq);
-	return flags;
-}
-
-static inline void raw_spin_rq_unlock_irqrestore(struct rq *rq, unsigned long flags)
-{
-	raw_spin_rq_unlock(rq);
-	local_irq_restore(flags);
-}
-
-#define raw_spin_rq_lock_irqsave(rq, flags)	\
-do {						\
-	flags = _raw_spin_rq_lock_irqsave(rq);	\
-} while (0)
-
 
 struct rq *__task_rq_lock(struct task_struct *p, struct rq_flags *rf)
 	__acquires(rq->lock);
