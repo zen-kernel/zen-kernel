@@ -451,6 +451,11 @@ static inline void rq_unlock_irqrestore(struct rq *rq, struct rq_flags *rf)
 	raw_spin_rq_unlock_irqrestore(rq, rf->flags);
 }
 
+static inline bool sched_core_enabled(struct rq *rq)
+{
+	return false;
+}
+
 static inline bool sched_core_disabled(void)
 {
 	return true;

@@ -279,37 +279,12 @@ struct rq *uprq;
 
 void raw_spin_rq_lock_nested(struct rq *rq, int subclass)
 {
-	raw_spinlock_t *lock;
-
-	if (sched_core_disabled()) {
-		raw_spin_lock_nested(rq->__lock, subclass);
-		return;
-	}
-
-	for (;;) {
-		lock = rq_lockp(rq);
-		raw_spin_lock_nested(lock, subclass);
-		if (likely(lock == rq_lockp(rq)))
-			return;
-		raw_spin_unlock(lock);
-	}
+	raw_spin_lock_nested(rq->__lock, subclass);
 }
 
 bool raw_spin_rq_trylock(struct rq *rq)
 {
-	raw_spinlock_t *lock;
-	bool ret;
-
-	if (sched_core_disabled())
-		return raw_spin_trylock(rq->__lock);
-
-	for (;;) {
-		lock = rq_lockp(rq);
-		ret = raw_spin_trylock(lock);
-		if (!ret || (likely(lock == rq_lockp(rq))))
-			return ret;
-		raw_spin_unlock(lock);
-	}
+	return raw_spin_trylock(rq->__lock);
 }
 
 void raw_spin_rq_unlock(struct rq *rq)
