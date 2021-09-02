@@ -7587,10 +7587,10 @@ static void __init share_and_free_rq(struct rq *leader, struct rq *rq)
 
 	kfree(rq->node);
 	kfree(rq->sl);
-	kfree(rq->lock);
+	kfree(rq->__lock);
 	rq->node = leader->node;
 	rq->sl = leader->sl;
-	rq->lock = leader->lock;
+	rq->__lock = leader->__lock;
 	rq->is_leader = false;
 	barrier();
 	/* To make up for not unlocking the freed runlock */
