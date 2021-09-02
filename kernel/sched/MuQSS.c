@@ -2766,7 +2766,7 @@ prepare_lock_switch(struct rq *rq, struct task_struct *next)
 #endif
 }
 
-static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
+static inline void finish_lock_switch(struct rq *rq)
 {
 	/*
 	 * If we are tracking spinlock dependencies then we have to
