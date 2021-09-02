@@ -443,6 +443,36 @@ this_rq_lock_irq(struct rq_flags *rf)
 	return rq;
 }
 
+extern void raw_spin_rq_lock_nested(struct rq *rq, int subclass);
+extern void raw_spin_rq_unlock(struct rq *rq);
+
+static inline raw_spinlock_t *__rq_lockp(struct rq *rq)
+{
+	return &rq->lock;
+}
+
+static inline raw_spinlock_t *rq_lockp(struct rq *rq)
+{
+	return __rq_lockp(rq);
+}
+
+static inline void raw_spin_rq_lock(struct rq *rq)
+{
+	raw_spin_rq_lock_nested(rq, 0);
+}
+
+static inline void raw_spin_rq_lock_irq(struct rq *rq)
+{
+	local_irq_disable();
+	raw_spin_rq_lock(rq);
+}
+
+static inline void raw_spin_rq_unlock_irq(struct rq *rq)
+{
+	raw_spin_rq_unlock(rq);
+	local_irq_enable();
+}
+
 static inline int task_current(struct rq *rq, struct task_struct *p)
 {
 	return rq->curr == p;
