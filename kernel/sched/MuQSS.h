@@ -335,7 +335,7 @@ static inline u64 __rq_clock_broken(struct rq *rq)
 
 static inline void lockdep_assert_rq_held(struct rq *rq)
 {
-	lockdep_assert_held(rq_lockp(rq));
+	lockdep_assert_held(__rq_lockp(rq));
 }
 
 static inline u64 rq_clock(struct rq *rq)
