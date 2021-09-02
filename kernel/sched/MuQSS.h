@@ -433,7 +433,7 @@ static inline int task_on_rq_migrating(struct task_struct *p)
 static inline void rq_lock(struct rq *rq)
 	__acquires(rq->lock)
 {
-	raw_spin_lock(rq->lock);
+	raw_spin_rq_lock(rq);
 }
 
 static inline void rq_unlock(struct rq *rq)
