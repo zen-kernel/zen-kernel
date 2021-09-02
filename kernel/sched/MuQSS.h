@@ -189,7 +189,7 @@ static inline int cpupri_init(void __maybe_unused *cpupri)
  * This data should only be modified by the local cpu.
  */
 struct rq {
-	raw_spinlock_t *lock;
+	raw_spinlock_t *__lock;
 	raw_spinlock_t *orig_lock;
 
 	struct task_struct __rcu	*curr;
@@ -335,14 +335,14 @@ static inline u64 __rq_clock_broken(struct rq *rq)
 
 static inline u64 rq_clock(struct rq *rq)
 {
-	lockdep_assert_held(rq->lock);
+	lockdep_assert_rq_held(rq);
 
 	return rq->clock;
 }
 
 static inline u64 rq_clock_task(struct rq *rq)
 {
-	lockdep_assert_held(rq->lock);
+	lockdep_assert_rq_held(rq);
 
 	return rq->clock_task;
 }
@@ -422,36 +422,36 @@ static inline void rq_lock(struct rq *rq)
 static inline void rq_unlock(struct rq *rq)
 	__releases(rq->lock)
 {
-	raw_spin_unlock(rq->lock);
+	raw_spin_rq_unlock(rq);
 }
 
 static inline void rq_lock_irq(struct rq *rq)
 	__acquires(rq->lock)
 {
-	raw_spin_lock_irq(rq->lock);
+	raw_spin_rq_lock_irq(rq);
 }
 
 static inline void rq_unlock_irq(struct rq *rq, struct rq_flags __always_unused *rf)
 	__releases(rq->lock)
 {
-	raw_spin_unlock_irq(rq->lock);
+	raw_spin_rq_unlock_irq(rq);
 }
 
 static inline void rq_lock_irqsave(struct rq *rq, struct rq_flags *rf)
 	__acquires(rq->lock)
 {
-	raw_spin_lock_irqsave(rq->lock, rf->flags);
+	raw_spin_rq_lock_irqsave(rq, rf->flags);
 }
 
 static inline void rq_unlock_irqrestore(struct rq *rq, struct rq_flags *rf)
 	__releases(rq->lock)
 {
-	raw_spin_unlock_irqrestore(rq->lock, rf->flags);
+	raw_spin_rq_unlock_irqrestore(rq, rf->flags);
 }
 
 static inline raw_spinlock_t *rq_lockp(struct rq *rq)
 {
-	return rq->lock;
+	return rq->__lock;
 }
 
 static inline void lockdep_assert_rq_held(struct rq *rq)
