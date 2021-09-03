@@ -759,6 +759,7 @@ struct task_struct {
 	const struct sched_class	*sched_class;
 	struct sched_entity		se;
 	struct sched_rt_entity		rt;
+	struct sched_dl_entity		dl;
 #endif
 
 #ifdef CONFIG_SCHED_CORE
