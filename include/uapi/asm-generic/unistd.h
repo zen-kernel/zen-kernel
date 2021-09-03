@@ -878,8 +878,20 @@ __SYSCALL(__NR_landlock_restrict_self, sys_landlock_restrict_self)
 __SYSCALL(__NR_memfd_secret, sys_memfd_secret)
 #endif
 
+#define __NR_futex_wait 448
+__SYSCALL(__NR_futex_wait, sys_futex_wait)
+
+#define __NR_futex_wake 449
+__SYSCALL(__NR_futex_wake, sys_futex_wake)
+
+#define __NR_futex_waitv 450
+__SC_COMP(__NR_futex_waitv, sys_futex_waitv, compat_sys_futex_waitv)
+
+#define __NR_futex_requeue 451
+__SC_COMP(__NR_futex_requeue, sys_futex_requeue, compat_sys_futex_requeue)
+
 #undef __NR_syscalls
-#define __NR_syscalls 448
+#define __NR_syscalls 452
 
 /*
  * 32 bit systems traditionally used different
