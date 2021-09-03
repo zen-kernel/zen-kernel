@@ -265,7 +265,9 @@ static void do_idle(void)
 	/*
 	 * Check if we need to update blocked load
 	 */
+#ifndef CONFIG_SCHED_MUQSS
 	nohz_run_idle_balance(cpu);
+#endif
 
 	/*
 	 * If the arch has a polling bit, we maintain an invariant:
@@ -403,6 +405,7 @@ void cpu_startup_entry(enum cpuhp_state state)
 		do_idle();
 }
 
+#ifndef CONFIG_SCHED_MUQSS
 /*
  * idle-task scheduling class.
  */
@@ -525,3 +528,4 @@ DEFINE_SCHED_CLASS(idle) = {
 	.switched_to		= switched_to_idle,
 	.update_curr		= update_curr_idle,
 };
+#endif /* CONFIG_SCHED_MUQSS */

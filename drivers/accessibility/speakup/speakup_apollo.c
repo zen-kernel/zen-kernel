@@ -165,7 +165,7 @@ static void do_catch_up(struct spk_synth *synth)
 		if (!synth->io_ops->synth_out(synth, ch)) {
 			synth->io_ops->tiocmset(synth, 0, UART_MCR_RTS);
 			synth->io_ops->tiocmset(synth, UART_MCR_RTS, 0);
-			schedule_timeout(msecs_to_jiffies(full_time_val));
+			schedule_msec_hrtimeout(full_time_val);
 			continue;
 		}
 		if (time_after_eq(jiffies, jiff_max) && (ch == SPACE)) {

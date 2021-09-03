@@ -226,8 +226,13 @@ static __always_inline bool unlock_rt_mutex_safe(struct rt_mutex *lock,
 /*
  * Only use with rt_mutex_waiter_{less,equal}()
  */
+#ifdef CONFIG_SCHED_MUQSS
+#define task_to_waiter(p)	\
+	&(struct rt_mutex_waiter){ .prio = (p)->prio }
+#else
 #define task_to_waiter(p)	\
 	&(struct rt_mutex_waiter){ .prio = (p)->prio, .deadline = (p)->dl.deadline }
+#endif
 
 static __always_inline int rt_mutex_waiter_less(struct rt_mutex_waiter *left,
 						struct rt_mutex_waiter *right)
@@ -241,8 +246,10 @@ static __always_inline int rt_mutex_waiter_less(struct rt_mutex_waiter *left,
 	 * If left waiter has a dl_prio(), and we didn't return 1 above,
 	 * then right waiter has a dl_prio() too.
 	 */
+#ifndef CONFIG_SCHED_MUQSS
 	if (dl_prio(left->prio))
 		return dl_time_before(left->deadline, right->deadline);
+#endif
 
 	return 0;
 }
@@ -259,8 +266,10 @@ static __always_inline int rt_mutex_waiter_equal(struct rt_mutex_waiter *left,
 	 * If left waiter has a dl_prio(), and we didn't return 0 above,
 	 * then right waiter has a dl_prio() too.
 	 */
+#ifndef CONFIG_SCHED_MUQSS
 	if (dl_prio(left->prio))
 		return left->deadline == right->deadline;
+#endif
 
 	return 1;
 }
@@ -654,7 +663,9 @@ static int __sched rt_mutex_adjust_prio_chain(struct task_struct *task,
 	 * the values of the node being removed.
 	 */
 	waiter->prio = task->prio;
+#ifndef CONFIG_SCHED_MUQSS
 	waiter->deadline = task->dl.deadline;
+#endif
 
 	rt_mutex_enqueue(lock, waiter);
 
@@ -925,7 +936,9 @@ static int __sched task_blocks_on_rt_mutex(struct rt_mutex *lock,
 	waiter->task = task;
 	waiter->lock = lock;
 	waiter->prio = task->prio;
+#ifndef CONFIG_SCHED_MUQSS
 	waiter->deadline = task->dl.deadline;
+#endif
 
 	/* Get the top priority waiter on the lock */
 	if (rt_mutex_has_waiters(lock))
