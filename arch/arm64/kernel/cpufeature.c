@@ -1650,6 +1650,14 @@ static bool has_hw_dbm(const struct arm64_cpu_capabilities *cap,
 	return true;
 }
 
+static void cpu_enable_hw_af(struct arm64_cpu_capabilities const *cap)
+{
+	u64 val = read_sysreg(tcr_el1);
+
+	write_sysreg(val | TCR_HA, tcr_el1);
+	isb();
+	local_flush_tlb_all();
+}
 #endif
 
 #ifdef CONFIG_ARM64_AMU_EXTN
@@ -2125,6 +2133,17 @@ static const struct arm64_cpu_capabilities arm64_features[] = {
 		.min_field_value = 2,
 		.matches = has_hw_dbm,
 		.cpu_enable = cpu_enable_hw_dbm,
+	},
+	{
+		.desc = "Hardware update of the Access flag",
+		.type = ARM64_CPUCAP_SYSTEM_FEATURE,
+		.capability = ARM64_HW_AF,
+		.sys_reg = SYS_ID_AA64MMFR1_EL1,
+		.sign = FTR_UNSIGNED,
+		.field_pos = ID_AA64MMFR1_HADBS_SHIFT,
+		.min_field_value = 1,
+		.matches = has_cpuid_feature,
+		.cpu_enable = cpu_enable_hw_af,
 	},
 #endif
 	{

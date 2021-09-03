@@ -2688,6 +2688,7 @@ SYSCALL_DEFINE1(swapoff, const char __user *, specialfile)
 	err = 0;
 	atomic_inc(&proc_poll_event);
 	wake_up_interruptible(&proc_poll_wait);
+	lru_gen_set_state(false, false, true);
 
 out_dput:
 	filp_close(victim, NULL);
@@ -3343,6 +3344,7 @@ SYSCALL_DEFINE2(swapon, const char __user *, specialfile, int, swap_flags)
 	mutex_unlock(&swapon_mutex);
 	atomic_inc(&proc_poll_event);
 	wake_up_interruptible(&proc_poll_wait);
+	lru_gen_set_state(true, false, true);
 
 	error = 0;
 	goto out;

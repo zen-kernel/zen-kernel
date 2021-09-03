@@ -89,6 +89,69 @@ config SPARSEMEM_VMEMMAP
 	  pfn_to_page and page_to_pfn operations.  This is the most
 	  efficient option when sufficient kernel resources are available.
 
+config ANON_MIN_KBYTES
+	int "Default value for vm.anon_min_kbytes"
+	depends on SYSCTL
+	range 0 4294967295
+	default 0
+	help
+	  This option sets the default value for vm.anon_min_kbytes sysctl knob.
+
+	  The vm.anon_min_kbytes sysctl knob provides *hard* protection of
+	  anonymous pages. The anonymous pages on the current node won't be
+	  reclaimed under any conditions when their amount is below
+	  vm.anon_min_kbytes. This knob may be used to prevent excessive swap
+	  thrashing when anonymous memory is low (for example, when memory is
+	  going to be overfilled by compressed data of zram module).
+
+	  Setting this value too high (close to MemTotal) can result in
+	  inability to swap and can lead to early OOM under memory pressure.
+
+config CLEAN_LOW_KBYTES
+	int "Default value for vm.clean_low_kbytes"
+	depends on SYSCTL
+	range 0 4294967295
+	default "262144"
+	help
+	  This option sets the default value for vm.clean_low_kbytes sysctl knob.
+
+	  The vm.clean_low_kbytes sysctl knob provides *best-effort*
+	  protection of clean file pages. The file pages on the current node
+	  won't be reclaimed under memory pressure when the amount of clean file
+	  pages is below vm.clean_low_kbytes *unless* we threaten to OOM.
+	  Protection of clean file pages using this knob may be used when
+	  swapping is still possible to
+	    - prevent disk I/O thrashing under memory pressure;
+	    - improve performance in disk cache-bound tasks under memory
+	      pressure.
+
+	  Setting it to a high value may result in a early eviction of anonymous
+	  pages into the swap space by attempting to hold the protected amount
+	  of clean file pages in memory.
+
+config CLEAN_MIN_KBYTES
+	int "Default value for vm.clean_min_kbytes"
+	depends on SYSCTL
+	range 0 4294967295
+	default 0
+	help
+	  This option sets the default value for vm.clean_min_kbytes sysctl knob.
+
+	  The vm.clean_min_kbytes sysctl knob provides *hard* protection of
+	  clean file pages. The file pages on the current node won't be
+	  reclaimed under memory pressure when the amount of clean file pages is
+	  below vm.clean_min_kbytes. Hard protection of clean file pages using
+	  this knob may be used to
+	    - prevent disk I/O thrashing under memory pressure even with no free
+	      swap space;
+	    - improve performance in disk cache-bound tasks under memory
+	      pressure;
+	    - avoid high latency and prevent livelock in near-OOM conditions.
+
+	  Setting it to a high value may result in a early out-of-memory condition
+	  due to the inability to reclaim the protected amount of clean file pages
+	  when other types of pages cannot be reclaimed.
+
 config HAVE_MEMBLOCK_PHYS_MAP
 	bool
 
@@ -888,5 +951,64 @@ config IO_MAPPING
 
 config SECRETMEM
 	def_bool ARCH_HAS_SET_DIRECT_MAP && !EMBEDDED
+
+# the multigenerational lru {
+config LRU_GEN
+	bool "Multigenerational LRU"
+	depends on MMU
+	# the following options may leave not enough spare bits in page->flags
+	depends on !MAXSMP && (64BIT || !SPARSEMEM || SPARSEMEM_VMEMMAP)
+	help
+	  A high performance LRU implementation to heavily overcommit workloads
+	  that are not IO bound. See Documentation/vm/multigen_lru.rst for
+	  details.
+
+	  Warning: do not enable this option unless you plan to use it because
+	  it introduces a small per-process and per-memcg and per-node memory
+	  overhead.
+
+config LRU_GEN_ENABLED
+	bool "Turn on by default"
+	depends on LRU_GEN
+	help
+	  The default value of /sys/kernel/mm/lru_gen/enabled is 0. This option
+	  changes it to 1.
+
+	  Warning: the default value is the fast path. See
+	  Documentation/static-keys.txt for details.
+
+config LRU_GEN_STATS
+	bool "Full stats for debugging"
+	depends on LRU_GEN
+	help
+	  This option keeps full stats for each generation, which can be read
+	  from /sys/kernel/debug/lru_gen_full.
+
+	  Warning: do not enable this option unless you plan to use it because
+	  it introduces an additional small per-process and per-memcg and
+	  per-node memory overhead.
+
+config NR_LRU_GENS
+	int "Max number of generations"
+	depends on LRU_GEN
+	range 4 31
+	default 7
+	help
+	  This will use order_base_2(N+1) spare bits from page flags.
+
+	  Warning: do not use numbers larger than necessary because each
+	  generation introduces a small per-node and per-memcg memory overhead.
+
+config TIERS_PER_GEN
+	int "Number of tiers per generation"
+	depends on LRU_GEN
+	range 2 5
+	default 4
+	help
+	  This will use N-2 spare bits from page flags.
+
+	  Larger values generally offer better protection to active pages under
+	  heavy buffered I/O workloads.
+# }
 
 endmenu

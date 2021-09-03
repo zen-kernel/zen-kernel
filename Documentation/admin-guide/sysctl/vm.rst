@@ -25,6 +25,9 @@ files can be found in mm/swap.c.
 Currently, these files are in /proc/sys/vm:
 
 - admin_reserve_kbytes
+- anon_min_kbytes
+- clean_low_kbytes
+- clean_min_kbytes
 - compact_memory
 - compaction_proactiveness
 - compact_unevictable_allowed
@@ -103,6 +106,61 @@ and add the sum of their RSS.
 On x86_64 this is about 128MB.
 
 Changing this takes effect whenever an application requests memory.
+
+
+anon_min_kbytes
+===============
+
+This knob provides *hard* protection of anonymous pages. The anonymous pages
+on the current node won't be reclaimed under any conditions when their amount
+is below vm.anon_min_kbytes.
+
+This knob may be used to prevent excessive swap thrashing when anonymous
+memory is low (for example, when memory is going to be overfilled by
+compressed data of zram module).
+
+Setting this value too high (close to MemTotal) can result in inability to
+swap and can lead to early OOM under memory pressure.
+
+The default value is defined by CONFIG_ANON_MIN_KBYTES.
+
+
+clean_low_kbytes
+================
+
+This knob provides *best-effort* protection of clean file pages. The file pages
+on the current node won't be reclaimed under memory pressure when the amount of
+clean file pages is below vm.clean_low_kbytes *unless* we threaten to OOM.
+
+Protection of clean file pages using this knob may be used when swapping is
+still possible to
+  - prevent disk I/O thrashing under memory pressure;
+  - improve performance in disk cache-bound tasks under memory pressure.
+
+Setting it to a high value may result in a early eviction of anonymous pages
+into the swap space by attempting to hold the protected amount of clean file
+pages in memory.
+
+The default value is defined by CONFIG_CLEAN_LOW_KBYTES.
+
+
+clean_min_kbytes
+================
+
+This knob provides *hard* protection of clean file pages. The file pages on the
+current node won't be reclaimed under memory pressure when the amount of clean
+file pages is below vm.clean_min_kbytes.
+
+Hard protection of clean file pages using this knob may be used to
+  - prevent disk I/O thrashing under memory pressure even with no free swap space;
+  - improve performance in disk cache-bound tasks under memory pressure;
+  - avoid high latency and prevent livelock in near-OOM conditions.
+
+Setting it to a high value may result in a early out-of-memory condition due to
+the inability to reclaim the protected amount of clean file pages when other
+types of pages cannot be reclaimed.
+
+The default value is defined by CONFIG_CLEAN_MIN_KBYTES.
 
 
 compact_memory
@@ -862,6 +920,14 @@ be 133 (x + 2x = 200, 2x = 133.33).
 
 At 0, the kernel will not initiate swap until the amount of free and
 file-backed pages is less than the high watermark in a zone.
+
+This knob has no effect if the amount of clean file pages on the current
+node is below vm.clean_low_kbytes or vm.clean_min_kbytes. In this case,
+only anonymous pages can be reclaimed.
+
+If the number of anonymous pages on the current node is below
+vm.anon_min_kbytes, then only file pages can be reclaimed with
+any vm.swappiness value.
 
 
 unprivileged_userfaultfd
