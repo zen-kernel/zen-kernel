@@ -1140,10 +1140,10 @@ static inline void hrtick_rq_init(struct rq *rq)
 }
 #endif	/* CONFIG_SCHED_HRTICK */
 
-static inline int __normal_prio(int policy, int rt_prio, int nice)
+static inline int __normal_prio(int policy, int rt_prio, int static_prio)
 {
 	return rt_policy(policy) ? (MAX_RT_PRIO - 1 - rt_prio) :
-		NICE_TO_PRIO(nice) + MAX_PRIORITY_ADJ;
+		static_prio + MAX_PRIORITY_ADJ;
 }
 
 /*
@@ -1155,7 +1155,7 @@ static inline int __normal_prio(int policy, int rt_prio, int nice)
  */
 static inline int normal_prio(struct task_struct *p)
 {
-	return __normal_prio(p->policy, p->rt_priority, PRIO_TO_NICE(p->static_prio));
+	return __normal_prio(p->policy, p->rt_priority, p->static_prio);
 }
 
 /*
@@ -5079,7 +5079,7 @@ change:
 
 	p->sched_reset_on_fork = reset_on_fork;
 
-	newprio = __normal_prio(policy, attr->sched_priority, attr->sched_nice);
+	newprio = __normal_prio(policy, attr->sched_priority, NICE_TO_PRIO(attr->sched_nice));
 	if (pi) {
 		/*
 		 * Take priority boosted tasks into account. If the new
