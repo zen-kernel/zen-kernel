@@ -4343,8 +4343,6 @@ static int scan_pages(struct lruvec *lruvec, struct scan_control *sc, long *nr_t
 	}
 
 	success = try_to_inc_min_seq(lruvec, type);
-	if (memcg && !mem_cgroup_is_root(memcg) && !cgroup_reclaim(sc) && success && type)
-		atomic_add_unless(&lrugen->priority, -1, 0);
 
 	*nr_to_scan -= scanned;
 
@@ -4546,10 +4544,6 @@ static long get_nr_to_scan(struct lruvec *lruvec, struct scan_control *sc, int s
 	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
 	DEFINE_MAX_SEQ(lruvec);
 	DEFINE_MIN_SEQ(lruvec);
-	/* only proceed with memcgs at the front of the priority queue */
-	if (!cgroup_reclaim(sc) && atomic_read(&lrugen->priority) != DEF_PRIORITY)
-		return 0;
-
 
 	for (type = !swappiness; type < ANON_AND_FILE; type++) {
 		unsigned long seq;
@@ -4630,10 +4624,6 @@ static void lru_gen_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc
 }
 
 /******************************************************************************
-		struct lrugen *lrugen = &lruvec->evictable;
-		if (memcg && !mem_cgroup_is_root(memcg) && sc->priority != DEF_PRIORITY)
-			atomic_add_unless(&lrugen->priority, 1, DEF_PRIORITY);
-
  *                          state change
  ******************************************************************************/
 
@@ -5036,7 +5026,7 @@ static int lru_gen_seq_show(struct seq_file *m, void *v)
 		seq_printf(m, "memcg %5hu %s\n", mem_cgroup_id(memcg), path);
 	}
 
-	seq_printf(m, " node %5d %10d\n", nid, atomic_read(&lrugen->priority));
+	seq_printf(m, " node %5d\n", nid);
 
 	if (!full)
 		seq = min(min_seq[0], min_seq[1]);
@@ -5267,8 +5257,6 @@ void lru_gen_init_lrugen(struct lruvec *lruvec)
 	lrugen->max_seq = MIN_NR_GENS + 1;
 	lrugen->enabled[0] = lru_gen_enabled() && lru_gen_nr_swapfiles;
 	lrugen->enabled[1] = lru_gen_enabled();
-
-	atomic_set(&lrugen->priority, DEF_PRIORITY);
 
 	for (i = 0; i <= MIN_NR_GENS + 1; i++)
 		lrugen->timestamps[i] = jiffies;
