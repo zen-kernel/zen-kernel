@@ -5088,11 +5088,7 @@ change:
 		 * the runqueue. This will be done when the task deboost
 		 * itself.
 		 */
-		if (rt_effective_prio(p, newprio) == p->prio) {
-			__setscheduler_params(p, attr);
-			retval = 0;
-			goto unlock;
-		}
+		newprio = rt_effective_prio(p, newprio);
 	}
 
 	if (!(attr->sched_flags & SCHED_FLAG_KEEP_PARAMS)) {
