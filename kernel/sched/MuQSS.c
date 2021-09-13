@@ -2863,7 +2863,7 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
  * past. prev == current is still correct but we need to recalculate this_rq
  * because prev may have moved to another CPU.
  */
-static void finish_task_switch(struct task_struct *prev)
+static struct rq *finish_task_switch(struct task_struct *prev)
 	__releases(rq->lock)
 {
 	struct rq *rq = this_rq();
@@ -2945,6 +2945,8 @@ static void finish_task_switch(struct task_struct *prev)
 
 		put_task_struct_rcu_user(prev);
 	}
+
+	return rq;
 }
 
 /**
