@@ -4369,7 +4369,9 @@ static void __sched notrace __schedule(bool preempt)
 		psi_sched_switch(prev, next, !task_on_rq_queued(prev));
 
 		trace_sched_switch(preempt, prev, next);
-		context_switch(rq, prev, next); /* unlocks the rq */
+
+		/* Also unlocks the rq: */
+		rq = context_switch(rq, prev, next);
 	} else {
 		check_siblings(rq);
 		rq_unlock(rq);
