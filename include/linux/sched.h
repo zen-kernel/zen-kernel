@@ -462,10 +462,23 @@ struct sched_statistics {
 #endif
 };
 
+#ifdef CONFIG_CACULE_SCHED
+struct cacule_node {
+	struct cacule_node* 		next;
+	struct cacule_node* 		prev;
+	u64				cacule_start_time;
+	u64				last_run;
+	u64				vruntime;
+};
+#endif
+
 struct sched_entity {
 	/* For load-balancing: */
 	struct load_weight		load;
 	struct rb_node			run_node;
+#ifdef CONFIG_CACULE_SCHED
+	struct cacule_node		cacule_node;
+#endif
 	struct list_head		group_node;
 	unsigned int			on_rq;
 
