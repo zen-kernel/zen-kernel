@@ -1084,6 +1084,10 @@ reboot-cmd (SPARC only)
 ROM/Flash boot loader. Maybe to tell it what to do after
 rebooting. ???
 
+sched_interactivity_factor (CacULE scheduler only)
+==================================================
+Sets the value *m* for interactivity score calculations. See
+Figure 1 in https://web.cs.ucdavis.edu/~roper/ecs150/ULE.pdf
 
 sched_energy_aware
 ==================
