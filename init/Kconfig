@@ -839,13 +839,13 @@ endmenu
 
 config CACULE_SCHED
 	bool "CacULE CPU scheduler"
-	default y
+	default N
 	help
 	  The CacULE CPU scheduler is based on interactivity score mechanism.
 	  The interactivity score is inspired by the ULE scheduler (FreeBSD
 	  scheduler).
 
-	  If unsure, say Y here.
+	  If unsure, say N here.
 
 config CACULE_RDB
 	bool "RDB (Response Driven Balancer)"
