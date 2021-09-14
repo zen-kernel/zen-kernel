@@ -4959,6 +4959,12 @@
 
 	sbni=		[NET] Granch SBNI12 leased line adapter
 
+	sched_timeslice=
+			[KNL] Time slice in ms for Project C BMQ/PDS scheduler.
+			Format: integer 2, 4
+			Default: 4
+			See Documentation/scheduler/sched-BMQ.txt
+
 	sched_verbose	[KNL] Enables verbose scheduler debug messages.
 
 	schedstats=	[KNL,X86] Enable or disable scheduled statistics.

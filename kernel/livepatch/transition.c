@@ -307,7 +307,11 @@ static bool klp_try_switch_task(struct task_struct *task)
 	 */
 	rq = task_rq_lock(task, &flags);
 
+#ifdef	CONFIG_SCHED_ALT
+	if (task_running(task) && task != current) {
+#else
 	if (task_running(rq, task) && task != current) {
+#endif
 		snprintf(err_buf, STACK_ERR_BUF_SIZE,
 			 "%s: %s:%d is running\n", __func__, task->comm,
 			 task->pid);

@@ -75,9 +75,15 @@ struct task_struct init_task
 	.stack		= init_stack,
 	.usage		= REFCOUNT_INIT(2),
 	.flags		= PF_KTHREAD,
+#ifdef CONFIG_SCHED_ALT
+	.prio		= DEFAULT_PRIO + MAX_PRIORITY_ADJ,
+	.static_prio	= DEFAULT_PRIO,
+	.normal_prio	= DEFAULT_PRIO + MAX_PRIORITY_ADJ,
+#else
 	.prio		= MAX_PRIO - 20,
 	.static_prio	= MAX_PRIO - 20,
 	.normal_prio	= MAX_PRIO - 20,
+#endif
 	.policy		= SCHED_NORMAL,
 	.cpus_ptr	= &init_task.cpus_mask,
 	.cpus_mask	= CPU_MASK_ALL,
@@ -87,6 +93,17 @@ struct task_struct init_task
 	.restart_block	= {
 		.fn = do_no_restart_syscall,
 	},
+#ifdef CONFIG_SCHED_ALT
+	.sq_node	= LIST_HEAD_INIT(init_task.sq_node),
+#ifdef CONFIG_SCHED_BMQ
+	.boost_prio	= 0,
+	.sq_idx		= 15,
+#endif
+#ifdef CONFIG_SCHED_PDS
+	.deadline	= 0,
+#endif
+	.time_slice	= HZ,
+#else
 	.se		= {
 		.group_node 	= LIST_HEAD_INIT(init_task.se.group_node),
 	},
@@ -94,6 +111,7 @@ struct task_struct init_task
 		.run_list	= LIST_HEAD_INIT(init_task.rt.run_list),
 		.time_slice	= RR_TIMESLICE,
 	},
+#endif
 	.tasks		= LIST_HEAD_INIT(init_task.tasks),
 #ifdef CONFIG_SMP
 	.pushable_tasks	= PLIST_NODE_INIT(init_task.pushable_tasks, MAX_PRIO),

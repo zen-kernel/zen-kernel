@@ -270,6 +270,7 @@ ___update_load_avg(struct sched_avg *sa, unsigned long load)
 	WRITE_ONCE(sa->util_avg, sa->util_sum / divider);
 }
 
+#ifndef CONFIG_SCHED_ALT
 /*
  * sched_entity:
  *
@@ -387,8 +388,9 @@ int update_dl_rq_load_avg(u64 now, struct rq *rq, int running)
 
 	return 0;
 }
+#endif
 
-#ifdef CONFIG_SCHED_THERMAL_PRESSURE
+#if defined(CONFIG_SCHED_THERMAL_PRESSURE) && !defined(CONFIG_SCHED_ALT)
 /*
  * thermal:
  *
