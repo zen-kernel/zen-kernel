@@ -96,12 +96,14 @@ unsigned int sysctl_sched_child_runs_first __read_mostly;
 #ifdef CONFIG_ZEN_INTERACTIVE
 unsigned int sysctl_sched_wakeup_granularity			= 500000UL;
 static unsigned int normalized_sysctl_sched_wakeup_granularity	= 500000UL;
-
-const_debug unsigned int sysctl_sched_migration_cost	= 250000UL;
 #else
 unsigned int sysctl_sched_wakeup_granularity			= 1000000UL;
 static unsigned int normalized_sysctl_sched_wakeup_granularity	= 1000000UL;
+#endif
 
+#ifdef CONFIG_ZEN_INTERACTIVE
+const_debug unsigned int sysctl_sched_migration_cost	= 250000UL;
+#else
 const_debug unsigned int sysctl_sched_migration_cost	= 500000UL;
 #endif
 
