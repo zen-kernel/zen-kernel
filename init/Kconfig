@@ -129,12 +129,13 @@ config ZEN_INTERACTIVE
 	    Wakeup granularity.............:   1    ->   0.5  ms
 	    CPU migration cost.............:   0.5  ->   0.25 ms
 	    Bandwidth slice size...........:   5    ->   3    ms
-	    Task rebalancing threshold.....:   32   ->   128
+	    Task rebalancing threshold.....:  32    -> 128
 
-	 --- CPUFreq Settings ------------------------------------
+	  --- CPUFreq Settings -----------------------------------
+
 	    Ondemand sampling down factor..:   1    ->   5
-	    Ondemand default up threshold..:  80    ->   55
-	    ondemand micro up threshold....:  95    ->   60
+	    Ondemand default up threshold..:  80    ->  55
+	    Ondemand micro up threshold....:  95    ->  60
 
 config BROKEN
 	bool
