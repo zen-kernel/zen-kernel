@@ -532,12 +532,6 @@ struct cfs_rq {
 	unsigned int		idle_h_nr_running; /* SCHED_IDLE */
 
 	u64			exec_clock;
-
-#ifdef CONFIG_CACULE_SCHED
-#ifdef CONFIG_SCHED_CORE
-	unsigned int		forceidle_seq;
-#endif
-#else
 	u64			min_vruntime;
 #ifdef CONFIG_SCHED_CORE
 	unsigned int		forceidle_seq;
@@ -547,7 +541,6 @@ struct cfs_rq {
 #ifndef CONFIG_64BIT
 	u64			min_vruntime_copy;
 #endif
-#endif /* CONFIG_CACULE_SCHED */
 
 	struct rb_root_cached	tasks_timeline;
 
@@ -556,13 +549,9 @@ struct cfs_rq {
 	 * It is set to NULL otherwise (i.e when none are currently running).
 	 */
 	struct sched_entity	*curr;
-#ifdef CONFIG_CACULE_SCHED
-	struct cacule_node	*head;
-#else
 	struct sched_entity	*next;
 	struct sched_entity	*last;
 	struct sched_entity	*skip;
-#endif // CONFIG_CACULE_SCHED
 
 #ifdef	CONFIG_SCHED_DEBUG
 	unsigned int		nr_spread_over;

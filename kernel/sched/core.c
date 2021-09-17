@@ -3960,11 +3960,6 @@ static void __sched_fork(unsigned long clone_flags, struct task_struct *p)
 	p->se.prev_sum_exec_runtime	= 0;
 	p->se.nr_migrations		= 0;
 	p->se.vruntime			= 0;
-
-#ifdef CONFIG_CACULE_SCHED
-	p->se.cacule_node.vruntime	= 0;
-#endif
-
 	INIT_LIST_HEAD(&p->se.group_node);
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
@@ -4236,10 +4231,6 @@ void wake_up_new_task(struct task_struct *p)
 	rq = __task_rq_lock(p, &rf);
 	update_rq_clock(rq);
 	post_init_entity_util_avg(p);
-
-#ifdef CONFIG_CACULE_SCHED
-	p->se.cacule_node.cacule_start_time = sched_clock();
-#endif
 
 	activate_task(rq, p, ENQUEUE_NOCLOCK);
 	trace_sched_wakeup_new(p);
@@ -5053,9 +5044,7 @@ static void sched_tick_remote(struct work_struct *work)
 	struct rq *rq = cpu_rq(cpu);
 	struct task_struct *curr;
 	struct rq_flags rf;
-#if !defined(CONFIG_CACULE_SCHED)
 	u64 delta;
-#endif
 	int os;
 
 	/*
@@ -5075,7 +5064,6 @@ static void sched_tick_remote(struct work_struct *work)
 
 	update_rq_clock(rq);
 
-#if !defined(CONFIG_CACULE_SCHED)
 	if (!is_idle_task(curr)) {
 		/*
 		 * Make sure the next tick runs within a reasonable
@@ -5084,8 +5072,6 @@ static void sched_tick_remote(struct work_struct *work)
 		delta = rq_clock_task(rq) - curr->se.exec_start;
 		WARN_ON_ONCE(delta > (u64)NSEC_PER_SEC * 3);
 	}
-#endif
-
 	curr->sched_class->task_tick(rq, curr, 0);
 
 	calc_load_nohz_remote(rq);
@@ -9011,10 +8997,6 @@ void __init sched_init(void)
 	       &rt_sched_class + 1   != &dl_sched_class);
 #ifdef CONFIG_SMP
 	BUG_ON(&dl_sched_class + 1 != &stop_sched_class);
-#endif
-
-#ifdef CONFIG_CACULE_SCHED
-	printk(KERN_INFO "CacULE CPU scheduler v5.14 by Hamad Al Marri.");
 #endif
 
 	wait_bit_init();
