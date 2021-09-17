@@ -467,7 +467,6 @@ struct cacule_node {
 	struct cacule_node* 		next;
 	struct cacule_node* 		prev;
 	u64				cacule_start_time;
-	u64				last_run;
 	u64				vruntime;
 };
 #endif
