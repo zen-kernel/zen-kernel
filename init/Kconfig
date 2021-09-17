@@ -907,41 +907,6 @@ config CACULE_SCHED
 
 	  If unsure, say N here.
 
-config CACULE_RDB
-	bool "RDB (Response Driven Balancer)"
-	default y
-	depends on CACULE_SCHED
-	help
-	  This is an experimental load balancer for CacULE. It is a lightweight
-	  load balancer which is a replacement of CFS load balancer. It migrates
-	  tasks based on their interactivity scores.
-
-	  If unsure, say Y here.
-
-config RDB_INTERVAL
-	int "RDB load balancer interval"
-	default 19
-	depends on CACULE_RDB
-	help
-	  This is an interval to control load balance time period.
-	  The trigger_load_balance runs in every tick. For High HZ values, the
-	  load balance could be overwhelming. RDB load balance includes rq locking
-	  which can reduce the performance. The balance interval can help to avoid
-	  running load balance on every tick. For example, RDB_INTERVAL=3 will
-	  only run load balance every 3ms. Setting RDB_INTERVAL depends on HZ.
-	  If you want load balancer run every 2ms while HZ=500 then it is not
-	  needed and better to set RDB_INTERVAL=0 since 500HZ already (1000ms
-	  / 500HZ = 2ms). However, if you have 1000HZ and want to avoid load
-	  balancer from running every 1ms, you could set RDB_INTERVAL=4ms for
-	  example to make load balancer run every 4ms. Less RDB_INTERVAL values
-	  (or 0 to disable) could make sure tasks are balanced ASAP, but with
-	  the cost of locking/blocking time. High RDB_INTERVAL values can relax
-	  balancing locking but with the cost of imbalanced workload for that
-	  period of time (i.e. if RDB_INTERVAL=100ms) there will be no balancing
-	  for 100ms (except for newidle_balance which is not effected by RDB_INTERVAL).
-
-	  If in doubt, use the default value.
-
 #
 # For architectures that want to enable the support for NUMA-affine scheduler
 # balancing logic:
