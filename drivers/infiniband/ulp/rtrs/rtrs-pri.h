@@ -96,6 +96,8 @@ struct rtrs_con {
 	struct rdma_cm_id	*cm_id;
 	unsigned int		cid;
 	int                     nr_cqe;
+	atomic_t		wr_cnt;
+	atomic_t		sq_wr_avail;
 };
 
 struct rtrs_sess {
@@ -108,6 +110,7 @@ struct rtrs_sess {
 	unsigned int		con_num;
 	unsigned int		irq_con_num;
 	unsigned int		recon_cnt;
+	unsigned int		signal_interval;
 	struct rtrs_ib_dev	*dev;
 	int			dev_ref;
 	struct ib_cqe		*hb_cqe;

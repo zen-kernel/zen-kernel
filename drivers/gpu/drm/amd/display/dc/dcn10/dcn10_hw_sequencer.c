@@ -1502,25 +1502,22 @@ void dcn10_init_hw(struct dc *dc)
 void dcn10_power_down_on_boot(struct dc *dc)
 {
 	struct dc_link *edp_links[MAX_NUM_EDP];
-	struct dc_link *edp_link;
+	struct dc_link *edp_link = NULL;
 	int edp_num;
 	int i = 0;
 
 	get_edp_links(dc, edp_links, &edp_num);
+	if (edp_num)
+		edp_link = edp_links[0];
 
-	if (edp_num) {
-		for (i = 0; i < edp_num; i++) {
-			edp_link = edp_links[i];
-			if (edp_link->link_enc->funcs->is_dig_enabled &&
-					edp_link->link_enc->funcs->is_dig_enabled(edp_link->link_enc) &&
-					dc->hwseq->funcs.edp_backlight_control &&
-					dc->hwss.power_down &&
-					dc->hwss.edp_power_control) {
-				dc->hwseq->funcs.edp_backlight_control(edp_link, false);
-				dc->hwss.power_down(dc);
-				dc->hwss.edp_power_control(edp_link, false);
-			}
-		}
+	if (edp_link && edp_link->link_enc->funcs->is_dig_enabled &&
+			edp_link->link_enc->funcs->is_dig_enabled(edp_link->link_enc) &&
+			dc->hwseq->funcs.edp_backlight_control &&
+			dc->hwss.power_down &&
+			dc->hwss.edp_power_control) {
+		dc->hwseq->funcs.edp_backlight_control(edp_link, false);
+		dc->hwss.power_down(dc);
+		dc->hwss.edp_power_control(edp_link, false);
 	} else {
 		for (i = 0; i < dc->link_count; i++) {
 			struct dc_link *link = dc->links[i];
@@ -3631,12 +3628,11 @@ enum dc_status dcn10_set_clock(struct dc *dc,
 	struct dc_clock_config clock_cfg = {0};
 	struct dc_clocks *current_clocks = &context->bw_ctx.bw.dcn.clk;
 
-	if (dc->clk_mgr && dc->clk_mgr->funcs->get_clock)
-				dc->clk_mgr->funcs->get_clock(dc->clk_mgr,
-						context, clock_type, &clock_cfg);
-
-	if (!dc->clk_mgr->funcs->get_clock)
+	if (!dc->clk_mgr || !dc->clk_mgr->funcs->get_clock)
 		return DC_FAIL_UNSUPPORTED_1;
+
+	dc->clk_mgr->funcs->get_clock(dc->clk_mgr,
+		context, clock_type, &clock_cfg);
 
 	if (clk_khz > clock_cfg.max_clock_khz)
 		return DC_FAIL_CLK_EXCEED_MAX;
@@ -3655,7 +3651,7 @@ enum dc_status dcn10_set_clock(struct dc *dc,
 	else
 		return DC_ERROR_UNEXPECTED;
 
-	if (dc->clk_mgr && dc->clk_mgr->funcs->update_clocks)
+	if (dc->clk_mgr->funcs->update_clocks)
 				dc->clk_mgr->funcs->update_clocks(dc->clk_mgr,
 				context, true);
 	return DC_OK;
