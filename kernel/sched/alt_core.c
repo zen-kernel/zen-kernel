@@ -3216,6 +3216,9 @@ context_switch(struct rq *rq, struct task_struct *prev,
 		 * finish_task_switch()'s mmdrop().
 		 */
 		switch_mm_irqs_off(prev->active_mm, next->mm, next);
+#ifdef CONFIG_LRU_GEN
+		lru_gen_switch_mm(prev->active_mm, next->mm);
+#endif
 
 		if (!prev->mm) {                        // from kernel
 			/* will mmdrop() in finish_task_switch(). */
@@ -4786,6 +4789,7 @@ int can_nice(const struct task_struct *p, const int nice)
 	return (nice_rlim <= task_rlimit(p, RLIMIT_NICE) ||
 		capable(CAP_SYS_NICE));
 }
+EXPORT_SYMBOL_GPL(can_nice);
 
 #ifdef __ARCH_WANT_SYS_NICE
 
@@ -6262,6 +6266,9 @@ void idle_task_exit(void)
 
 	if (mm != &init_mm) {
 		switch_mm(mm, &init_mm, current);
+#ifdef CONFIG_LRU_GEN
+		lru_gen_switch_mm(mm, &init_mm);
+#endif
 		finish_arch_post_lock_switch();
 	}
 
