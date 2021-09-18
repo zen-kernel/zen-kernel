@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 5
 PATCHLEVEL = 13
-SUBLEVEL = 18
+SUBLEVEL = 19
 EXTRAVERSION = -zen
 NAME = The City on the Edge of Forever
 
@@ -402,6 +402,11 @@ ifeq ($(ARCH),sparc32)
 endif
 ifeq ($(ARCH),sparc64)
        SRCARCH := sparc
+endif
+
+# Additional ARCH settings for parisc
+ifeq ($(ARCH),parisc64)
+       SRCARCH := parisc
 endif
 
 export cross_compiling :=
