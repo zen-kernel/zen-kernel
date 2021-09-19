@@ -584,6 +584,101 @@ static inline void update_rq_clock(struct rq *rq)
 	update_rq_clock_task(rq, delta);
 }
 
+/*
+ * RQ Load update routine
+ */
+#define RQ_LOAD_HISTORY_BITS		(sizeof(s32) * 8ULL)
+#define RQ_UTIL_SHIFT			(8)
+#define RQ_LOAD_HISTORY_TO_UTIL(l)	(((l) >> (RQ_LOAD_HISTORY_BITS - 1 - RQ_UTIL_SHIFT)) & 0xff)
+
+#define LOAD_BLOCK(t)		((t) >> 17)
+#define LOAD_HALF_BLOCK(t)	((t) >> 16)
+#define BLOCK_MASK(t)		((t) & ((0x01 << 18) - 1))
+#define LOAD_BLOCK_BIT(b)	(1UL << (RQ_LOAD_HISTORY_BITS - 1 - (b)))
+#define CURRENT_LOAD_BIT	LOAD_BLOCK_BIT(0)
+
+static inline void rq_load_update(struct rq *rq)
+{
+	u64 time = rq->clock;
+	u64 delta = min(LOAD_BLOCK(time) - LOAD_BLOCK(rq->load_stamp),
+			RQ_LOAD_HISTORY_BITS - 1);
+	u64 prev = !!(rq->load_history & CURRENT_LOAD_BIT);
+	u64 curr = !!cpu_rq(rq->cpu)->nr_running;
+
+	if (delta) {
+		rq->load_history = rq->load_history >> delta;
+
+		if (delta < RQ_UTIL_SHIFT) {
+			rq->load_block += (~BLOCK_MASK(rq->load_stamp)) * prev;
+			if (!!LOAD_HALF_BLOCK(rq->load_block) ^ curr)
+				rq->load_history ^= LOAD_BLOCK_BIT(delta);
+		}
+
+		rq->load_block = BLOCK_MASK(time) * prev;
+	} else {
+		rq->load_block += (time - rq->load_stamp) * prev;
+	}
+	if (prev ^ curr)
+		rq->load_history ^= CURRENT_LOAD_BIT;
+	rq->load_stamp = time;
+}
+
+unsigned long rq_load_util(struct rq *rq, unsigned long max)
+{
+	return RQ_LOAD_HISTORY_TO_UTIL(rq->load_history) * (max >> RQ_UTIL_SHIFT);
+}
+
+#ifdef CONFIG_SMP
+unsigned long sched_cpu_util(int cpu, unsigned long max)
+{
+	return rq_load_util(cpu_rq(cpu), max);
+}
+#endif /* CONFIG_SMP */
+
+#ifdef CONFIG_CPU_FREQ
+/**
+ * cpufreq_update_util - Take a note about CPU utilization changes.
+ * @rq: Runqueue to carry out the update for.
+ * @flags: Update reason flags.
+ *
+ * This function is called by the scheduler on the CPU whose utilization is
+ * being updated.
+ *
+ * It can only be called from RCU-sched read-side critical sections.
+ *
+ * The way cpufreq is currently arranged requires it to evaluate the CPU
+ * performance state (frequency/voltage) on a regular basis to prevent it from
+ * being stuck in a completely inadequate performance level for too long.
+ * That is not guaranteed to happen if the updates are only triggered from CFS
+ * and DL, though, because they may not be coming in if only RT tasks are
+ * active all the time (or there are RT tasks only).
+ *
+ * As a workaround for that issue, this function is called periodically by the
+ * RT sched class to trigger extra cpufreq updates to prevent it from stalling,
+ * but that really is a band-aid.  Going forward it should be replaced with
+ * solutions targeted more specifically at RT tasks.
+ */
+static inline void cpufreq_update_util(struct rq *rq, unsigned int flags)
+{
+	struct update_util_data *data;
+
+#ifdef CONFIG_SMP
+	rq_load_update(rq);
+#endif
+	data = rcu_dereference_sched(*per_cpu_ptr(&cpufreq_update_util_data,
+						  cpu_of(rq)));
+	if (data)
+		data->func(data, rq_clock(rq), flags);
+}
+#else
+static inline void cpufreq_update_util(struct rq *rq, unsigned int flags)
+{
+#ifdef CONFIG_SMP
+	rq_load_update(rq);
+#endif
+}
+#endif /* CONFIG_CPU_FREQ */
+
 #ifdef CONFIG_NO_HZ_FULL
 /*
  * Tick may be needed by tasks in the runqueue depending on their policy and
