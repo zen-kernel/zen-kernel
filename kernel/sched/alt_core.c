@@ -77,7 +77,11 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 #define STOP_PRIO		(MAX_RT_PRIO - 1)
 
 /* Default time slice is 4 in ms, can be set via kernel parameter "sched_timeslice" */
+#ifdef CONFIG_ZEN_INTERACTIVE
+u64 sched_timeslice_ns __read_mostly = (2 << 20);
+#else
 u64 sched_timeslice_ns __read_mostly = (4 << 20);
+#endif
 
 static inline void requeue_task(struct task_struct *p, struct rq *rq);
 
