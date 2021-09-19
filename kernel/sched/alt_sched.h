@@ -197,6 +197,7 @@ struct rq {
 	struct rcuwait		hotplug_wait;
 #endif
 	unsigned int		nr_pinned;
+
 #endif /* CONFIG_SMP */
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
 	u64 prev_irq_time;
@@ -207,6 +208,11 @@ struct rq {
 #ifdef CONFIG_PARAVIRT_TIME_ACCOUNTING
 	u64 prev_steal_time_rq;
 #endif /* CONFIG_PARAVIRT_TIME_ACCOUNTING */
+
+	/* For genenal cpu load util */
+	s32 load_history;
+	u64 load_block;
+	u64 load_stamp;
 
 	/* calc_load related fields */
 	unsigned long calc_load_update;
@@ -259,6 +265,8 @@ struct rq {
 	atomic_t		nohz_flags;
 #endif /* CONFIG_NO_HZ_COMMON */
 };
+
+extern unsigned long rq_load_util(struct rq *rq, unsigned long max);
 
 extern unsigned long calc_load_update;
 extern atomic_long_t calc_load_tasks;
@@ -572,40 +580,6 @@ static inline u64 irq_time_read(int cpu)
 
 #ifdef CONFIG_CPU_FREQ
 DECLARE_PER_CPU(struct update_util_data __rcu *, cpufreq_update_util_data);
-
-/**
- * cpufreq_update_util - Take a note about CPU utilization changes.
- * @rq: Runqueue to carry out the update for.
- * @flags: Update reason flags.
- *
- * This function is called by the scheduler on the CPU whose utilization is
- * being updated.
- *
- * It can only be called from RCU-sched read-side critical sections.
- *
- * The way cpufreq is currently arranged requires it to evaluate the CPU
- * performance state (frequency/voltage) on a regular basis to prevent it from
- * being stuck in a completely inadequate performance level for too long.
- * That is not guaranteed to happen if the updates are only triggered from CFS
- * and DL, though, because they may not be coming in if only RT tasks are
- * active all the time (or there are RT tasks only).
- *
- * As a workaround for that issue, this function is called periodically by the
- * RT sched class to trigger extra cpufreq updates to prevent it from stalling,
- * but that really is a band-aid.  Going forward it should be replaced with
- * solutions targeted more specifically at RT tasks.
- */
-static inline void cpufreq_update_util(struct rq *rq, unsigned int flags)
-{
-	struct update_util_data *data;
-
-	data = rcu_dereference_sched(*per_cpu_ptr(&cpufreq_update_util_data,
-						  cpu_of(rq)));
-	if (data)
-		data->func(data, rq_clock(rq), flags);
-}
-#else
-static inline void cpufreq_update_util(struct rq *rq, unsigned int flags) {}
 #endif /* CONFIG_CPU_FREQ */
 
 #ifdef CONFIG_NO_HZ_FULL
