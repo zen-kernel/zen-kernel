@@ -131,6 +131,10 @@ config ZEN_INTERACTIVE
 	    Bandwidth slice size...........:   5    ->   3    ms
 	    Task rebalancing threshold.....:  32    -> 128
 
+	  --- PDS/BMQ CPU Scheduler
+
+	    Scheduling timeslice...........:   4    ->   2    ms
+
 	  --- CPUFreq Settings -----------------------------------
 
 	    Ondemand sampling down factor..:   1    ->   5
