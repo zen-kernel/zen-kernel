@@ -84,7 +84,11 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
  * Time slice
  * (default: 4 msec, units: nanoseconds)
  */
+#ifdef CONFIG_ZEN_INTERACTIVE
+unsigned int sysctl_sched_base_slice __read_mostly	= (2 << 20);
+#else
 unsigned int sysctl_sched_base_slice __read_mostly	= (4 << 20);
+#endif
 
 #include "alt_core.h"
 #include "alt_topology.h"
