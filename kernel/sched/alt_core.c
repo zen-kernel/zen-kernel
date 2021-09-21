@@ -3468,6 +3468,7 @@ static inline void update_curr(struct rq *rq, struct task_struct *p)
 	s64 ns = rq->clock_task - p->last_ran;
 
 	p->sched_time += ns;
+	cgroup_account_cputime(p, ns);
 	account_group_exec_runtime(p, ns);
 
 	p->time_slice -= ns;
