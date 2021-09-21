@@ -4030,6 +4030,7 @@ migrate_pending_tasks(struct rq *rq, struct rq *dest_rq, const int dest_cpu)
 		if (cpumask_test_cpu(dest_cpu, p->cpus_ptr)) {
 			__SCHED_DEQUEUE_TASK(p, rq, 0, );
 			set_task_cpu(p, dest_cpu);
+			sched_task_sanity_check(p, dest_rq);
 			__SCHED_ENQUEUE_TASK(p, dest_rq, 0);
 			nr_migrated++;
 		}
