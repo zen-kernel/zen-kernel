@@ -2,7 +2,7 @@
 VERSION = 5
 PATCHLEVEL = 14
 SUBLEVEL = 7
-EXTRAVERSION = -zen
+EXTRAVERSION = -lqx1
 NAME = The City on the Edge of Forever
 
 # *DOCUMENTATION*
