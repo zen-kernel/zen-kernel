@@ -2172,25 +2172,33 @@ static int bnxt_async_event_process(struct bnxt *bp,
 		if (!fw_health)
 			goto async_event_process_exit;
 
-		fw_health->enabled = EVENT_DATA1_RECOVERY_ENABLED(data1);
-		fw_health->master = EVENT_DATA1_RECOVERY_MASTER_FUNC(data1);
-		if (!fw_health->enabled) {
+		if (!EVENT_DATA1_RECOVERY_ENABLED(data1)) {
+			fw_health->enabled = false;
 			netif_info(bp, drv, bp->dev,
 				   "Error recovery info: error recovery[0]\n");
 			break;
 		}
+		fw_health->master = EVENT_DATA1_RECOVERY_MASTER_FUNC(data1);
 		fw_health->tmr_multiplier =
 			DIV_ROUND_UP(fw_health->polling_dsecs * HZ,
 				     bp->current_interval * 10);
 		fw_health->tmr_counter = fw_health->tmr_multiplier;
-		fw_health->last_fw_heartbeat =
-			bnxt_fw_health_readl(bp, BNXT_FW_HEARTBEAT_REG);
+		if (!fw_health->enabled)
+			fw_health->last_fw_heartbeat =
+				bnxt_fw_health_readl(bp, BNXT_FW_HEARTBEAT_REG);
 		fw_health->last_fw_reset_cnt =
 			bnxt_fw_health_readl(bp, BNXT_FW_RESET_CNT_REG);
 		netif_info(bp, drv, bp->dev,
 			   "Error recovery info: error recovery[1], master[%d], reset count[%u], health status: 0x%x\n",
 			   fw_health->master, fw_health->last_fw_reset_cnt,
 			   bnxt_fw_health_readl(bp, BNXT_FW_HEALTH_REG));
+		if (!fw_health->enabled) {
+			/* Make sure tmr_counter is set and visible to
+			 * bnxt_health_check() before setting enabled to true.
+			 */
+			smp_wmb();
+			fw_health->enabled = true;
+		}
 		goto async_event_process_exit;
 	}
 	case ASYNC_EVENT_CMPL_EVENT_ID_DEBUG_NOTIFICATION:
@@ -2680,6 +2688,9 @@ static void bnxt_free_tx_skbs(struct bnxt *bp)
 		struct bnxt_tx_ring_info *txr = &bp->tx_ring[i];
 		int j;
 
+		if (!txr->tx_buf_ring)
+			continue;
+
 		for (j = 0; j < max_idx;) {
 			struct bnxt_sw_tx_bd *tx_buf = &txr->tx_buf_ring[j];
 			struct sk_buff *skb;
@@ -2764,6 +2775,9 @@ static void bnxt_free_one_rx_ring_skbs(struct bnxt *bp, int ring_nr)
 	}
 
 skip_rx_tpa_free:
+	if (!rxr->rx_buf_ring)
+		goto skip_rx_buf_free;
+
 	for (i = 0; i < max_idx; i++) {
 		struct bnxt_sw_rx_bd *rx_buf = &rxr->rx_buf_ring[i];
 		dma_addr_t mapping = rx_buf->mapping;
@@ -2786,6 +2800,11 @@ skip_rx_tpa_free:
 			kfree(data);
 		}
 	}
+
+skip_rx_buf_free:
+	if (!rxr->rx_agg_ring)
+		goto skip_rx_agg_free;
+
 	for (i = 0; i < max_agg_idx; i++) {
 		struct bnxt_sw_rx_agg_bd *rx_agg_buf = &rxr->rx_agg_ring[i];
 		struct page *page = rx_agg_buf->page;
@@ -2802,6 +2821,8 @@ skip_rx_tpa_free:
 
 		__free_page(page);
 	}
+
+skip_rx_agg_free:
 	if (rxr->rx_page) {
 		__free_page(rxr->rx_page);
 		rxr->rx_page = NULL;
@@ -11237,6 +11258,8 @@ static void bnxt_fw_health_check(struct bnxt *bp)
 	if (!fw_health->enabled || test_bit(BNXT_STATE_IN_FW_RESET, &bp->state))
 		return;
 
+	/* Make sure it is enabled before checking the tmr_counter. */
+	smp_rmb();
 	if (fw_health->tmr_counter) {
 		fw_health->tmr_counter--;
 		return;
@@ -12169,6 +12192,11 @@ static void bnxt_fw_reset_task(struct work_struct *work)
 			return;
 		}
 
+		if ((bp->fw_cap & BNXT_FW_CAP_ERROR_RECOVERY) &&
+		    bp->fw_health->enabled) {
+			bp->fw_health->last_fw_reset_cnt =
+				bnxt_fw_health_readl(bp, BNXT_FW_RESET_CNT_REG);
+		}
 		bp->fw_reset_state = 0;
 		/* Make sure fw_reset_state is 0 before clearing the flag */
 		smp_mb__before_atomic();
