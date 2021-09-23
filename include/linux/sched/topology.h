@@ -231,7 +231,8 @@ static inline void sched_update_asym_prefer_cpu(int cpu, int old_prio, int new_p
 
 #endif	/* !CONFIG_SMP */
 
-#if defined(CONFIG_ENERGY_MODEL) && defined(CONFIG_CPU_FREQ_GOV_SCHEDUTIL)
+#if defined(CONFIG_ENERGY_MODEL) && defined(CONFIG_CPU_FREQ_GOV_SCHEDUTIL) && \
+	!defined(CONFIG_SCHED_ALT)
 extern void rebuild_sched_domains_energy(void);
 #else
 static inline void rebuild_sched_domains_energy(void)
