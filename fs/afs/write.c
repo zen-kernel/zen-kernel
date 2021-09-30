@@ -137,7 +137,7 @@ int afs_write_end(struct file *file, struct address_space *mapping,
 		write_seqlock(&vnode->cb_lock);
 		i_size = i_size_read(&vnode->vfs_inode);
 		if (maybe_i_size > i_size)
-			i_size_write(&vnode->vfs_inode, maybe_i_size);
+			afs_set_i_size(vnode, maybe_i_size);
 		write_sequnlock(&vnode->cb_lock);
 	}
 
@@ -471,13 +471,18 @@ static void afs_extend_writeback(struct address_space *mapping,
 			}
 
 			/* Has the page moved or been split? */
-			if (unlikely(page != xas_reload(&xas)))
+			if (unlikely(page != xas_reload(&xas))) {
+				put_page(page);
 				break;
+			}
 
-			if (!trylock_page(page))
+			if (!trylock_page(page)) {
+				put_page(page);
 				break;
+			}
 			if (!PageDirty(page) || PageWriteback(page)) {
 				unlock_page(page);
+				put_page(page);
 				break;
 			}
 
@@ -487,6 +492,7 @@ static void afs_extend_writeback(struct address_space *mapping,
 			t = afs_page_dirty_to(page, priv);
 			if (f != 0 && !new_content) {
 				unlock_page(page);
+				put_page(page);
 				break;
 			}
 
