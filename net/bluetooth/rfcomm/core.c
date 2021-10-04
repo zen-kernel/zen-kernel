@@ -289,6 +289,7 @@ static void rfcomm_dlc_clear_state(struct rfcomm_dlc *d)
 	d->flags      = 0;
 	d->mscex      = 0;
 	d->sec_level  = BT_SECURITY_LOW;
+	d->err        = 0;
 	d->mtu        = RFCOMM_DEFAULT_MTU;
 	d->v24_sig    = RFCOMM_V24_RTC | RFCOMM_V24_RTR | RFCOMM_V24_DV;
 
@@ -306,6 +307,7 @@ struct rfcomm_dlc *rfcomm_dlc_alloc(gfp_t prio)
 	timer_setup(&d->timer, rfcomm_dlc_timeout, 0);
 
 	skb_queue_head_init(&d->tx_queue);
+	INIT_WORK(&d->state_change_work, __rfcomm_sk_state_change);
 	mutex_init(&d->lock);
 	refcount_set(&d->refcnt, 1);
 

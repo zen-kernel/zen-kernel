@@ -171,6 +171,7 @@ struct rfcomm_dlc {
 	struct rfcomm_session *session;
 	struct sk_buff_head   tx_queue;
 	struct timer_list     timer;
+	struct work_struct    state_change_work;
 
 	struct mutex  lock;
 	unsigned long state;
@@ -186,6 +187,7 @@ struct rfcomm_dlc {
 	u8            sec_level;
 	u8            role_switch;
 	u32           defer_setup;
+	int           err;
 
 	uint          mtu;
 	uint          cfc;
@@ -310,6 +312,7 @@ struct rfcomm_pinfo {
 	u8     role_switch;
 };
 
+void __rfcomm_sk_state_change(struct work_struct *work);
 int  rfcomm_init_sockets(void);
 void rfcomm_cleanup_sockets(void);
 
