@@ -1579,3 +1579,28 @@ out:
 	return -ENOSYS;
 #endif /* CONFIG_KSM */
 }
+
+#ifdef CONFIG_KSM
+static ssize_t ksm_show(struct kobject *kobj, struct kobj_attribute *attr,
+			 char *buf)
+{
+	return sprintf(buf, "%u\n", __NR_pmadv_ksm);
+}
+static struct kobj_attribute pmadv_ksm_attr = __ATTR_RO(ksm);
+
+static struct attribute *pmadv_sysfs_attrs[] = {
+	&pmadv_ksm_attr.attr,
+	NULL,
+};
+
+static const struct attribute_group pmadv_sysfs_attr_group = {
+	.attrs = pmadv_sysfs_attrs,
+	.name = "pmadv",
+};
+
+static int __init pmadv_sysfs_init(void)
+{
+	return sysfs_create_group(kernel_kobj, &pmadv_sysfs_attr_group);
+}
+subsys_initcall(pmadv_sysfs_init);
+#endif /* CONFIG_KSM */
