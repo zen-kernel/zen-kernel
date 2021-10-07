@@ -603,7 +603,7 @@ static inline void rq_load_update(struct rq *rq)
 	u64 delta = min(LOAD_BLOCK(time) - LOAD_BLOCK(rq->load_stamp),
 			RQ_LOAD_HISTORY_BITS - 1);
 	u64 prev = !!(rq->load_history & CURRENT_LOAD_BIT);
-	u64 curr = !!cpu_rq(rq->cpu)->nr_running;
+	u64 curr = !!rq->nr_running;
 
 	if (delta) {
 		rq->load_history = rq->load_history >> delta;
