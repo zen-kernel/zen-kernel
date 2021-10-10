@@ -364,6 +364,8 @@ struct lrugen {
 	unsigned long avg_refaulted[ANON_AND_FILE][MAX_NR_TIERS];
 	/* the exponential moving average of evicted+protected */
 	unsigned long avg_total[ANON_AND_FILE][MAX_NR_TIERS];
+	/* the priority queue when choosing reclaimable memcgs */
+	atomic_t priority;
 	/* whether the multigenerational lru is enabled */
 	bool enabled[ANON_AND_FILE];
 };
