@@ -1005,6 +1005,7 @@ int get_nohz_timer_target(void)
 {
 	int i, cpu = smp_processor_id(), default_cpu = -1;
 	struct cpumask *mask;
+	const struct cpumask *hk_mask;
 
 	if (housekeeping_cpu(cpu, HK_FLAG_TIMER)) {
 		if (!idle_cpu(cpu))
@@ -1012,9 +1013,11 @@ int get_nohz_timer_target(void)
 		default_cpu = cpu;
 	}
 
+	hk_mask = housekeeping_cpumask(HK_FLAG_TIMER);
+
 	for (mask = per_cpu(sched_cpu_topo_masks, cpu) + 1;
 	     mask < per_cpu(sched_cpu_topo_end_mask, cpu); mask++)
-		for_each_cpu_and(i, mask, housekeeping_cpumask(HK_FLAG_TIMER))
+		for_each_cpu_and(i, mask, hk_mask)
 			if (!idle_cpu(i))
 				return i;
 
