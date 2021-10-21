@@ -170,6 +170,7 @@ config ZEN_INTERACTIVE
 	    Background-reclaim hugepages...:   no   ->   yes
 	    Compact unevictable............:   yes  ->   no
 	    Watermark boost factor.........:   1.5  ->   0
+	    Pageblock order................:  10    ->   3
 
 	  --- EEVDF CPU Scheduler --------------------------------
 
