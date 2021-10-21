@@ -152,6 +152,7 @@ config ZEN_INTERACTIVE
 	    Compact unevictable............:   yes  ->   no
 	    Compaction proactiveness.......:  20    ->   0
 	    Watermark boost factor.........:   1.5  ->   0
+	    Pageblock order................:  10    ->   3
 
 	  --- EEVDF CPU Scheduler --------------------------------
 
