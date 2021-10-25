@@ -142,6 +142,7 @@ static __always_inline bool futex_cmd_has_timeout(u32 cmd)
 	case FUTEX_LOCK_PI2:
 	case FUTEX_WAIT_BITSET:
 	case FUTEX_WAIT_REQUEUE_PI:
+	case FUTEX_WAIT_MULTIPLE:
 		return true;
 	}
 	return false;
@@ -154,11 +155,77 @@ futex_init_timeout(u32 cmd, u32 op, struct timespec64 *ts, ktime_t *t)
 		return -EINVAL;
 
 	*t = timespec64_to_ktime(*ts);
-	if (cmd == FUTEX_WAIT)
+	if (cmd == FUTEX_WAIT || cmd == FUTEX_WAIT_MULTIPLE)
 		*t = ktime_add_safe(ktime_get(), *t);
 	else if (cmd != FUTEX_LOCK_PI && !(op & FUTEX_CLOCK_REALTIME))
 		*t = timens_ktime_to_host(CLOCK_MONOTONIC, *t);
 	return 0;
+}
+
+/**
+ * futex_read_wait_block - Read an array of futex_wait_block from userspace
+ * @uaddr:	Userspace address of the block
+ * @count:	Number of blocks to be read
+ *
+ * This function creates and allocate an array of futex_q (we zero it to
+ * initialize the fields) and then, for each futex_wait_block element from
+ * userspace, fill a futex_q element with proper values.
+ */
+inline struct futex_vector *futex_read_wait_block(u32 __user *uaddr, u32 count)
+{
+	unsigned int i;
+	struct futex_vector *futexv;
+	struct futex_wait_block fwb;
+	struct futex_wait_block __user *entry =
+		(struct futex_wait_block __user *)uaddr;
+
+	if (!count || count > FUTEX_WAITV_MAX)
+		return ERR_PTR(-EINVAL);
+
+	futexv = kcalloc(count, sizeof(*futexv), GFP_KERNEL);
+	if (!futexv)
+		return ERR_PTR(-ENOMEM);
+
+	for (i = 0; i < count; i++) {
+		if (copy_from_user(&fwb, &entry[i], sizeof(fwb))) {
+			kfree(futexv);
+			return ERR_PTR(-EFAULT);
+		}
+
+		futexv[i].w.flags = FUTEX_32;
+		futexv[i].w.val = fwb.val;
+		futexv[i].w.uaddr = (uintptr_t) (fwb.uaddr);
+		futexv[i].q = futex_q_init;
+	}
+
+	return futexv;
+}
+
+int futex_wait_multiple(struct futex_vector *vs, unsigned int count,
+			struct hrtimer_sleeper *to);
+
+int futex_opcode_31(ktime_t *abs_time, u32 __user *uaddr, int count)
+{
+	int ret;
+	struct futex_vector *vs;
+	struct hrtimer_sleeper *to = NULL, timeout;
+
+	to = futex_setup_timer(abs_time, &timeout, 0, 0);
+
+	vs = futex_read_wait_block(uaddr, count);
+
+	if (IS_ERR(vs))
+		return PTR_ERR(vs);
+
+	ret = futex_wait_multiple(vs, count, abs_time ? to : NULL);
+	kfree(vs);
+
+	if (to) {
+		hrtimer_cancel(&to->timer);
+		destroy_hrtimer_on_stack(&to->timer);
+	}
+
+	return ret;
 }
 
 SYSCALL_DEFINE6(futex, u32 __user *, uaddr, int, op, u32, val,
@@ -179,6 +246,9 @@ SYSCALL_DEFINE6(futex, u32 __user *, uaddr, int, op, u32, val,
 			return ret;
 		tp = &t;
 	}
+
+	if (cmd == FUTEX_WAIT_MULTIPLE)
+		return futex_opcode_31(tp, uaddr, val);
 
 	return do_futex(uaddr, op, val, tp, uaddr2, (unsigned long)utime, val3);
 }
@@ -369,6 +439,9 @@ SYSCALL_DEFINE6(futex_time32, u32 __user *, uaddr, int, op, u32, val,
 			return ret;
 		tp = &t;
 	}
+
+	if (cmd == FUTEX_WAIT_MULTIPLE)
+		return futex_opcode_31(tp, uaddr, val);
 
 	return do_futex(uaddr, op, val, tp, uaddr2, (unsigned long)utime, val3);
 }

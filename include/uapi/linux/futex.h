@@ -22,6 +22,7 @@
 #define FUTEX_WAIT_REQUEUE_PI	11
 #define FUTEX_CMP_REQUEUE_PI	12
 #define FUTEX_LOCK_PI2		13
+#define FUTEX_WAIT_MULTIPLE	31
 
 #define FUTEX_PRIVATE_FLAG	128
 #define FUTEX_CLOCK_REALTIME	256
@@ -66,6 +67,18 @@ struct futex_waitv {
 	__u64 uaddr;
 	__u32 flags;
 	__u32 __reserved;
+};
+
+/**
+ * struct futex_wait_block - Block of futexes to be waited for
+ * @uaddr:	User address of the futex
+ * @val:	Futex value expected by userspace
+ * @bitset:	Bitset for the optional bitmasked wakeup
+ */
+struct futex_wait_block {
+	__u32 __user *uaddr;
+	__u32 val;
+	__u32 bitset;
 };
 
 /*
