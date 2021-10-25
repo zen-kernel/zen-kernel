@@ -203,7 +203,11 @@ int vhba_device_queue (struct vhba_device *vdev, struct scsi_cmnd *cmd)
     vcmd->cmd = cmd;
 
     spin_lock_irqsave(&vdev->cmd_lock, flags);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+    vcmd->metatag = scsi_cmd_to_rq(vcmd->cmd)->tag;
+#else
     vcmd->metatag = vcmd->cmd->request->tag;
+#endif
     list_add_tail(&vcmd->entry, &vdev->cmd_list);
     spin_unlock_irqrestore(&vdev->cmd_lock, flags);
 
@@ -473,7 +477,11 @@ int vhba_queuecommand (struct Scsi_Host *shost, struct scsi_cmnd *cmd)
     int retval;
     unsigned int devnum;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+    scmd_dbg(cmd, "queue %p tag %i\n", cmd, scsi_cmd_to_rq(cmd)->tag);
+#else
     scmd_dbg(cmd, "queue %p tag %i\n", cmd, cmd->request->tag);
+#endif
 
     devnum = bus_and_id_to_devnum(cmd->device->channel, cmd->device->id);
     vdev = vhba_lookup_device(devnum);
