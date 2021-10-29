@@ -5894,7 +5894,8 @@ static bool nested_vmx_l0_wants_exit(struct kvm_vcpu *vcpu,
 		 * PML is emulated for an L1 VMM and should never be enabled in
 		 * vmcs02, always "handle" PML_FULL by exiting to userspace.
 		 */
-		return true;
+        /* We don't expose PML support to L1. */
+		return false;
 	case EXIT_REASON_VMFUNC:
 		/* VM functions are emulated through L2->L0 vmexits. */
 		return true;
