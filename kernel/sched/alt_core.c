@@ -1333,6 +1333,7 @@ static inline bool is_migration_disabled(struct task_struct *p)
 }
 
 #define SCA_CHECK		0x01
+#define SCA_USER		0x08
 
 #ifdef CONFIG_SMP
 
@@ -1630,10 +1631,18 @@ int dup_user_cpus_ptr(struct task_struct *dst, struct task_struct *src,
 	return 0;
 }
 
+static inline struct cpumask *clear_user_cpus_ptr(struct task_struct *p)
+{
+	struct cpumask *user_mask = NULL;
+
+	swap(p->user_cpus_ptr, user_mask);
+
+	return user_mask;
+}
+
 void release_user_cpus_ptr(struct task_struct *p)
 {
-	kfree(p->user_cpus_ptr);
-	p->user_cpus_ptr = NULL;
+	kfree(clear_user_cpus_ptr(p));
 }
 
 #endif
@@ -1934,30 +1943,57 @@ void sched_set_stop_task(int cpu, struct task_struct *stop)
 	}
 }
 
-/*
- * Change a given task's CPU affinity. Migrate the thread to a
- * proper CPU and schedule it away if the CPU it's executing on
- * is removed from the allowed bitmask.
- *
- * NOTE: the caller must have a valid reference to the task, the
- * task must not exit() & deallocate itself prematurely. The
- * call is not atomic; no spinlocks may be held.
- */
-static int __set_cpus_allowed_ptr(struct task_struct *p,
-				  const struct cpumask *new_mask,
-				  u32 flags)
+static int affine_move_task(struct rq *rq, struct task_struct *p, int dest_cpu,
+			    raw_spinlock_t *lock, unsigned long irq_flags)
+{
+	/* Can the task run on the task's current CPU? If so, we're done */
+	if (!cpumask_test_cpu(task_cpu(p), &p->cpus_mask)) {
+		if (p->migration_disabled) {
+			if (likely(p->cpus_ptr != &p->cpus_mask))
+				__do_set_cpus_ptr(p, &p->cpus_mask);
+			p->migration_disabled = 0;
+			p->migration_flags |= MDF_FORCE_ENABLED;
+			/* When p is migrate_disabled, rq->lock should be held */
+			rq->nr_pinned--;
+		}
+
+		if (task_running(p) || READ_ONCE(p->__state) == TASK_WAKING) {
+			struct migration_arg arg = { p, dest_cpu };
+
+			/* Need help from migration thread: drop lock and wait. */
+			__task_access_unlock(p, lock);
+			raw_spin_unlock_irqrestore(&p->pi_lock, irq_flags);
+			stop_one_cpu(cpu_of(rq), migration_cpu_stop, &arg);
+			return 0;
+		}
+		if (task_on_rq_queued(p)) {
+			/*
+			 * OK, since we're going to drop the lock immediately
+			 * afterwards anyway.
+			 */
+			update_rq_clock(rq);
+			rq = move_queued_task(rq, p, dest_cpu);
+			lock = &rq->lock;
+		}
+	}
+	__task_access_unlock(p, lock);
+	raw_spin_unlock_irqrestore(&p->pi_lock, irq_flags);
+	return 0;
+}
+
+static int __set_cpus_allowed_ptr_locked(struct task_struct *p,
+					 const struct cpumask *new_mask,
+					 u32 flags,
+					 struct rq *rq,
+					 raw_spinlock_t *lock,
+					 unsigned long irq_flags)
 {
 	const struct cpumask *cpu_allowed_mask = task_cpu_possible_mask(p);
 	const struct cpumask *cpu_valid_mask = cpu_active_mask;
 	bool kthread = p->flags & PF_KTHREAD;
+	struct cpumask *user_mask = NULL;
 	int dest_cpu;
-	unsigned long irq_flags;
-	struct rq *rq;
-	raw_spinlock_t *lock;
 	int ret = 0;
-
-	raw_spin_lock_irqsave(&p->pi_lock, irq_flags);
-	rq = __task_access_lock(p, &lock);
 
 	if (kthread || is_migration_disabled(p)) {
 		/*
@@ -1998,37 +2034,14 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 
 	__do_set_cpus_allowed(p, new_mask);
 
-	/* Can the task run on the task's current CPU? If so, we're done */
-	if (cpumask_test_cpu(task_cpu(p), new_mask))
-		goto out;
+	if (flags & SCA_USER)
+		user_mask = clear_user_cpus_ptr(p);
 
-	if (p->migration_disabled) {
-		if (likely(p->cpus_ptr != &p->cpus_mask))
-			__do_set_cpus_ptr(p, &p->cpus_mask);
-		p->migration_disabled = 0;
-		p->migration_flags |= MDF_FORCE_ENABLED;
-		/* When p is migrate_disabled, rq->lock should be held */
-		rq->nr_pinned--;
-	}
+	ret = affine_move_task(rq, p, dest_cpu, lock, irq_flags);
 
-	if (task_running(p) || READ_ONCE(p->__state) == TASK_WAKING) {
-		struct migration_arg arg = { p, dest_cpu };
+	kfree(user_mask);
 
-		/* Need help from migration thread: drop lock and wait. */
-		__task_access_unlock(p, lock);
-		raw_spin_unlock_irqrestore(&p->pi_lock, irq_flags);
-		stop_one_cpu(cpu_of(rq), migration_cpu_stop, &arg);
-		return 0;
-	}
-	if (task_on_rq_queued(p)) {
-		/*
-		 * OK, since we're going to drop the lock immediately
-		 * afterwards anyway.
-		 */
-		update_rq_clock(rq);
-		rq = move_queued_task(rq, p, dest_cpu);
-		lock = &rq->lock;
-	}
+	return ret;
 
 out:
 	__task_access_unlock(p, lock);
@@ -2037,11 +2050,159 @@ out:
 	return ret;
 }
 
+/*
+ * Change a given task's CPU affinity. Migrate the thread to a
+ * proper CPU and schedule it away if the CPU it's executing on
+ * is removed from the allowed bitmask.
+ *
+ * NOTE: the caller must have a valid reference to the task, the
+ * task must not exit() & deallocate itself prematurely. The
+ * call is not atomic; no spinlocks may be held.
+ */
+static int __set_cpus_allowed_ptr(struct task_struct *p,
+				  const struct cpumask *new_mask, u32 flags)
+{
+	unsigned long irq_flags;
+	struct rq *rq;
+	raw_spinlock_t *lock;
+
+	raw_spin_lock_irqsave(&p->pi_lock, irq_flags);
+	rq = __task_access_lock(p, &lock);
+
+	return __set_cpus_allowed_ptr_locked(p, new_mask, flags, rq, lock, irq_flags);
+}
+
 int set_cpus_allowed_ptr(struct task_struct *p, const struct cpumask *new_mask)
 {
 	return __set_cpus_allowed_ptr(p, new_mask, 0);
 }
 EXPORT_SYMBOL_GPL(set_cpus_allowed_ptr);
+
+/*
+ * Change a given task's CPU affinity to the intersection of its current
+ * affinity mask and @subset_mask, writing the resulting mask to @new_mask
+ * and pointing @p->user_cpus_ptr to a copy of the old mask.
+ * If the resulting mask is empty, leave the affinity unchanged and return
+ * -EINVAL.
+ */
+static int restrict_cpus_allowed_ptr(struct task_struct *p,
+				     struct cpumask *new_mask,
+				     const struct cpumask *subset_mask)
+{
+	struct cpumask *user_mask = NULL;
+	unsigned long irq_flags;
+	raw_spinlock_t *lock;
+	struct rq *rq;
+	int err;
+
+	if (!p->user_cpus_ptr) {
+		user_mask = kmalloc(cpumask_size(), GFP_KERNEL);
+		if (!user_mask)
+			return -ENOMEM;
+	}
+
+	raw_spin_lock_irqsave(&p->pi_lock, irq_flags);
+	rq = __task_access_lock(p, &lock);
+
+	if (!cpumask_and(new_mask, &p->cpus_mask, subset_mask)) {
+		err = -EINVAL;
+		goto err_unlock;
+	}
+
+	/*
+	 * We're about to butcher the task affinity, so keep track of what
+	 * the user asked for in case we're able to restore it later on.
+	 */
+	if (user_mask) {
+		cpumask_copy(user_mask, p->cpus_ptr);
+		p->user_cpus_ptr = user_mask;
+	}
+
+	/*return __set_cpus_allowed_ptr_locked(p, new_mask, 0, rq, &rf);*/
+	return __set_cpus_allowed_ptr_locked(p, new_mask, 0, rq, lock, irq_flags);
+
+err_unlock:
+	__task_access_unlock(p, lock);
+	raw_spin_unlock_irqrestore(&p->pi_lock, irq_flags);
+	kfree(user_mask);
+	return err;
+}
+
+/*
+ * Restrict the CPU affinity of task @p so that it is a subset of
+ * task_cpu_possible_mask() and point @p->user_cpu_ptr to a copy of the
+ * old affinity mask. If the resulting mask is empty, we warn and walk
+ * up the cpuset hierarchy until we find a suitable mask.
+ */
+void force_compatible_cpus_allowed_ptr(struct task_struct *p)
+{
+	cpumask_var_t new_mask;
+	const struct cpumask *override_mask = task_cpu_possible_mask(p);
+
+	alloc_cpumask_var(&new_mask, GFP_KERNEL);
+
+	/*
+	 * __migrate_task() can fail silently in the face of concurrent
+	 * offlining of the chosen destination CPU, so take the hotplug
+	 * lock to ensure that the migration succeeds.
+	 */
+	cpus_read_lock();
+	if (!cpumask_available(new_mask))
+		goto out_set_mask;
+
+	if (!restrict_cpus_allowed_ptr(p, new_mask, override_mask))
+		goto out_free_mask;
+
+	/*
+	 * We failed to find a valid subset of the affinity mask for the
+	 * task, so override it based on its cpuset hierarchy.
+	 */
+	cpuset_cpus_allowed(p, new_mask);
+	override_mask = new_mask;
+
+out_set_mask:
+	if (printk_ratelimit()) {
+		printk_deferred("Overriding affinity for process %d (%s) to CPUs %*pbl\n",
+				task_pid_nr(p), p->comm,
+				cpumask_pr_args(override_mask));
+	}
+
+	WARN_ON(set_cpus_allowed_ptr(p, override_mask));
+out_free_mask:
+	cpus_read_unlock();
+	free_cpumask_var(new_mask);
+}
+
+static int
+__sched_setaffinity(struct task_struct *p, const struct cpumask *mask);
+
+/*
+ * Restore the affinity of a task @p which was previously restricted by a
+ * call to force_compatible_cpus_allowed_ptr(). This will clear (and free)
+ * @p->user_cpus_ptr.
+ *
+ * It is the caller's responsibility to serialise this with any calls to
+ * force_compatible_cpus_allowed_ptr(@p).
+ */
+void relax_compatible_cpus_allowed_ptr(struct task_struct *p)
+{
+	struct cpumask *user_mask = p->user_cpus_ptr;
+	unsigned long flags;
+
+	/*
+	 * Try to restore the old affinity mask. If this fails, then
+	 * we free the mask explicitly to avoid it being inherited across
+	 * a subsequent fork().
+	 */
+	if (!user_mask || !__sched_setaffinity(p, user_mask))
+		return;
+
+	raw_spin_lock_irqsave(&p->pi_lock, flags);
+	user_mask = clear_user_cpus_ptr(p);
+	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
+
+	kfree(user_mask);
+}
 
 #else /* CONFIG_SMP */
 
@@ -2052,8 +2213,7 @@ static inline int select_task_rq(struct task_struct *p)
 
 static inline int
 __set_cpus_allowed_ptr(struct task_struct *p,
-		       const struct cpumask *new_mask,
-		       u32 flags)
+		       const struct cpumask *new_mask, u32 flags)
 {
 	return set_cpus_allowed_ptr(p, new_mask);
 }
@@ -5674,7 +5834,7 @@ __sched_setaffinity(struct task_struct *p, const struct cpumask *mask)
 	cpuset_cpus_allowed(p, cpus_allowed);
 	cpumask_and(new_mask, mask, cpus_allowed);
 again:
-	retval = __set_cpus_allowed_ptr(p, new_mask, SCA_CHECK);
+	retval = __set_cpus_allowed_ptr(p, new_mask, SCA_CHECK | SCA_USER);
 	if (retval)
 		goto out_free_new_mask;
 
