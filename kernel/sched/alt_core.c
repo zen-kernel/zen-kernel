@@ -4396,7 +4396,13 @@ choose_next_task(struct rq *rq, int cpu, struct task_struct *prev)
  */
 #define SM_NONE			0x0
 #define SM_PREEMPT		0x1
-#define SM_MASK_PREEMPT		(~0U)
+#define SM_RTLOCK_WAIT		0x2
+
+#ifndef CONFIG_PREEMPT_RT
+# define SM_MASK_PREEMPT	(~0U)
+#else
+# define SM_MASK_PREEMPT	SM_PREEMPT
+#endif
 
 /*
  * schedule() is the main scheduler function.
@@ -4702,6 +4708,18 @@ void __sched schedule_preempt_disabled(void)
 	schedule();
 	preempt_disable();
 }
+
+#ifdef CONFIG_PREEMPT_RT
+void __sched notrace schedule_rtlock(void)
+{
+	do {
+		preempt_disable();
+		__schedule(SM_RTLOCK_WAIT);
+		sched_preempt_enable_no_resched();
+	} while (need_resched());
+}
+NOKPROBE_SYMBOL(schedule_rtlock);
+#endif
 
 static void __sched notrace preempt_schedule_common(void)
 {
