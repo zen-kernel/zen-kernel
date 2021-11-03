@@ -2,8 +2,8 @@
 VERSION = 5
 PATCHLEVEL = 15
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Trick or Treat
+EXTRAVERSION = -zen
+NAME = Return of the Potato Wizard
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
