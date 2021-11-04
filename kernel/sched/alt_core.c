@@ -67,7 +67,7 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 #define sched_feat(x)	(0)
 #endif /* CONFIG_SCHED_DEBUG */
 
-#define ALT_SCHED_VERSION "v5.14-r3"
+#define ALT_SCHED_VERSION "v5.14-r4"
 
 /* rt_prio(prio) defined in include/linux/sched/rt.h */
 #define rt_task(p)		rt_prio((p)->prio)
@@ -607,7 +607,7 @@ static inline void rq_load_update(struct rq *rq)
 	u64 delta = min(LOAD_BLOCK(time) - LOAD_BLOCK(rq->load_stamp),
 			RQ_LOAD_HISTORY_BITS - 1);
 	u64 prev = !!(rq->load_history & CURRENT_LOAD_BIT);
-	u64 curr = !!cpu_rq(rq->cpu)->nr_running;
+	u64 curr = !!rq->nr_running;
 
 	if (delta) {
 		rq->load_history = rq->load_history >> delta;
