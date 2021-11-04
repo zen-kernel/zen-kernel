@@ -462,7 +462,3 @@
 446	common	landlock_restrict_self		sys_landlock_restrict_self
 # 447 reserved for memfd_secret
 448	common	process_mrelease		sys_process_mrelease
-449	common	futex_wait			sys_futex_wait
-450	common	futex_wake			sys_futex_wake
-451	common	futex_waitv			sys_futex_waitv
-452	common	futex_requeue			sys_futex_requeue
