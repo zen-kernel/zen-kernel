@@ -57,6 +57,22 @@ struct oom_control {
 extern struct mutex oom_lock;
 extern struct mutex oom_adj_mutex;
 
+#ifdef CONFIG_MMU
+extern struct task_struct *oom_reaper_list;
+extern struct wait_queue_head oom_reaper_wait;
+
+static inline bool oom_reaping_in_progress(void)
+{
+	/* racy check to see if oom reaping could be in progress */
+	return READ_ONCE(oom_reaper_list) || !waitqueue_active(&oom_reaper_wait);
+}
+#else
+static inline bool oom_reaping_in_progress(void)
+{
+	return false;
+}
+#endif
+
 static inline void set_current_oom_origin(void)
 {
 	current->signal->oom_flag_origin = true;

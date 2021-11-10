@@ -211,7 +211,7 @@ static inline int ptep_test_and_clear_young(struct vm_area_struct *vma,
 #endif
 
 #ifndef __HAVE_ARCH_PMDP_TEST_AND_CLEAR_YOUNG
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+#if defined(CONFIG_TRANSPARENT_HUGEPAGE) || defined(CONFIG_ARCH_HAS_NONLEAF_PMD_YOUNG)
 static inline int pmdp_test_and_clear_young(struct vm_area_struct *vma,
 					    unsigned long address,
 					    pmd_t *pmdp)
@@ -232,7 +232,7 @@ static inline int pmdp_test_and_clear_young(struct vm_area_struct *vma,
 	BUILD_BUG();
 	return 0;
 }
-#endif /* CONFIG_TRANSPARENT_HUGEPAGE */
+#endif /* CONFIG_TRANSPARENT_HUGEPAGE || CONFIG_ARCH_HAS_NONLEAF_PMD_YOUNG */
 #endif
 
 #ifndef __HAVE_ARCH_PTEP_CLEAR_YOUNG_FLUSH
@@ -256,6 +256,19 @@ static inline int pmdp_clear_flush_young(struct vm_area_struct *vma,
 	return 0;
 }
 #endif /* CONFIG_TRANSPARENT_HUGEPAGE */
+#endif
+
+#ifndef arch_has_hw_pte_young
+/*
+ * Return whether the accessed bit is supported by the local CPU or all CPUs.
+ *
+ * Those arches which have hw access flag feature need to implement their own
+ * helper. By default, "false" means pagefault will be hit on old pte.
+ */
+static inline bool arch_has_hw_pte_young(bool local)
+{
+	return false;
+}
 #endif
 
 #ifndef __HAVE_ARCH_PTEP_GET_AND_CLEAR
