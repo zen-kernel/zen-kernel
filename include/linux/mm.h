@@ -203,6 +203,10 @@ static inline void __mm_zero_struct_page(struct page *page)
 
 extern int sysctl_max_map_count;
 
+extern unsigned long sysctl_anon_min_kbytes;
+extern unsigned long sysctl_clean_low_kbytes;
+extern unsigned long sysctl_clean_min_kbytes;
+
 extern unsigned long sysctl_user_reserve_kbytes;
 extern unsigned long sysctl_admin_reserve_kbytes;
 
@@ -1093,6 +1097,8 @@ vm_fault_t finish_mkwrite_fault(struct vm_fault *vmf);
 #define ZONES_PGOFF		(NODES_PGOFF - ZONES_WIDTH)
 #define LAST_CPUPID_PGOFF	(ZONES_PGOFF - LAST_CPUPID_WIDTH)
 #define KASAN_TAG_PGOFF		(LAST_CPUPID_PGOFF - KASAN_TAG_WIDTH)
+#define LRU_GEN_PGOFF		(KASAN_TAG_PGOFF - LRU_GEN_WIDTH)
+#define LRU_REFS_PGOFF		(LRU_GEN_PGOFF - LRU_REFS_WIDTH)
 
 /*
  * Define the bit shifts to access each section.  For non-existent
@@ -1799,6 +1805,40 @@ static inline void unmap_mapping_pages(struct address_space *mapping,
 static inline void unmap_mapping_range(struct address_space *mapping,
 		loff_t const holebegin, loff_t const holelen, int even_cows) { }
 #endif
+
+#ifdef CONFIG_LRU_GEN
+static inline void task_enter_nonseq_fault(void)
+{
+	WARN_ON(current->in_nonseq_fault);
+
+	current->in_nonseq_fault = 1;
+}
+
+static inline void task_exit_nonseq_fault(void)
+{
+	WARN_ON(!current->in_nonseq_fault);
+
+	current->in_nonseq_fault = 0;
+}
+
+static inline bool task_in_nonseq_fault(void)
+{
+	return current->in_nonseq_fault;
+}
+#else
+static inline void task_enter_nonseq_fault(void)
+{
+}
+
+static inline void task_exit_nonseq_fault(void)
+{
+}
+
+static inline bool task_in_nonseq_fault(void)
+{
+	return false;
+}
+#endif /* CONFIG_LRU_GEN */
 
 static inline void unmap_shared_mapping_range(struct address_space *mapping,
 		loff_t const holebegin, loff_t const holelen)

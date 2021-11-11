@@ -294,6 +294,172 @@ enum lruvec_flags {
 					 */
 };
 
+struct lruvec;
+struct page_vma_mapped_walk;
+
+#define LRU_GEN_MASK		((BIT(LRU_GEN_WIDTH) - 1) << LRU_GEN_PGOFF)
+#define LRU_REFS_MASK		((BIT(LRU_REFS_WIDTH) - 1) << LRU_REFS_PGOFF)
+
+#ifdef CONFIG_LRU_GEN
+
+/*
+ * For each lruvec, evictable pages are divided into multiple generations. The
+ * youngest and the oldest generation numbers, AKA max_seq and min_seq, are
+ * monotonically increasing. The sliding window technique is used to track at
+ * least MIN_NR_GENS and at most MAX_NR_GENS generations. An offset within the
+ * window, AKA gen, indexes an array of per-type and per-zone lists for the
+ * corresponding generation. The counter in page->flags stores gen+1 while a
+ * page is on one of the multigenerational lru lists. Otherwise, it stores 0.
+ *
+ * After a page is faulted in, the aging must check the accessed bit at least
+ * twice before the eviction would consider it. The first check clears the
+ * accessed bit set during the initial fault. The second check makes sure this
+ * page hasn't been used since then.
+ */
+#define MIN_NR_GENS		2
+#define MAX_NR_GENS		((unsigned int)CONFIG_NR_LRU_GENS)
+
+/*
+ * Each generation is divided into multiple tiers. Tiers represent different
+ * ranges of numbers of accesses from file descriptors, i.e.,
+ * mark_page_accessed(). In contrast to moving between generations which
+ * requires the lru lock, moving between tiers only involves an atomic
+ * operation on page->flags and therefore has a negligible cost.
+ *
+ * The purposes of tiers are to:
+ *   1) estimate whether pages accessed multiple times via file descriptors are
+ *   more active than pages accessed only via page tables by separating the two
+ *   access types into upper tiers and the base tier, and comparing refaulted %
+ *   across all tiers.
+ *   2) improve buffered io performance by deferring the protection of pages
+ *   accessed multiple times until the eviction. That is the protection happens
+ *   in the reclaim path, not the access path.
+ *
+ * Pages accessed N times via file descriptors belong to tier order_base_2(N).
+ * The base tier may be marked by PageReferenced(). All upper tiers are marked
+ * by PageReferenced() && PageWorkingset(). Additional bits from page->flags are
+ * used to support more than one upper tier.
+ */
+#define MAX_NR_TIERS		((unsigned int)CONFIG_TIERS_PER_GEN)
+#define LRU_REFS_FLAGS		(BIT(PG_referenced) | BIT(PG_workingset))
+
+/* Whether to keep stats for historical generations. */
+#ifdef CONFIG_LRU_GEN_STATS
+#define NR_HIST_GENS		((unsigned int)CONFIG_NR_LRU_GENS)
+#else
+#define NR_HIST_GENS		1U
+#endif
+
+struct lrugen {
+	/* the aging increments the max generation number */
+	unsigned long max_seq;
+	/* the eviction increments the min generation numbers */
+	unsigned long min_seq[ANON_AND_FILE];
+	/* the birth time of each generation in jiffies */
+	unsigned long timestamps[MAX_NR_GENS];
+	/* the multigenerational lru lists */
+	struct list_head lists[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
+	/* the sizes of the multigenerational lru lists in pages */
+	unsigned long sizes[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
+	/* the exponential moving average of refaulted */
+	unsigned long avg_refaulted[ANON_AND_FILE][MAX_NR_TIERS];
+	/* the exponential moving average of protected+evicted */
+	unsigned long avg_total[ANON_AND_FILE][MAX_NR_TIERS];
+	/* the base tier isn't protected, hence the minus one */
+	unsigned long protected[NR_HIST_GENS][ANON_AND_FILE][MAX_NR_TIERS - 1];
+	/* incremented without holding the lru lock */
+	atomic_long_t evicted[NR_HIST_GENS][ANON_AND_FILE][MAX_NR_TIERS];
+	atomic_long_t refaulted[NR_HIST_GENS][ANON_AND_FILE][MAX_NR_TIERS];
+	/* whether the multigenerational lru is enabled */
+	bool enabled[ANON_AND_FILE];
+};
+
+enum {
+	MM_LEAF_TOTAL,		/* total leaf entries */
+	MM_LEAF_OLD,		/* old leaf entries */
+	MM_LEAF_YOUNG,		/* young leaf entries */
+	MM_NONLEAF_TOTAL,	/* total non-leaf entries */
+	MM_NONLEAF_PREV,	/* previously worthy non-leaf entries */
+	MM_NONLEAF_CUR,		/* currently worthy non-leaf entries */
+	NR_MM_STATS
+};
+
+/* mnemonic codes for the stats above */
+#define MM_STAT_CODES		"toydpc"
+
+/* double buffering bloom filters */
+#define NR_BLOOM_FILTERS	2
+
+struct lru_gen_mm_walk {
+	/* set to max_seq after each round of walk */
+	unsigned long seq;
+	/* the next mm_struct on the list to walk */
+	struct list_head *head;
+	/* the first mm_struct never walked before */
+	struct list_head *tail;
+	/* to wait for the last walker to finish */
+	struct wait_queue_head wait;
+	/* bloom filters flip after each round of walk */
+	unsigned long *filters[NR_BLOOM_FILTERS];
+	/* page table stats for debugging */
+	unsigned long stats[NR_HIST_GENS][NR_MM_STATS];
+	/* the number of concurrent walkers */
+	int nr_walkers;
+};
+
+#define MIN_BATCH_SIZE		64
+#define MAX_BATCH_SIZE		8192
+
+struct mm_walk_args {
+	struct mem_cgroup *memcg;
+	unsigned long max_seq;
+	unsigned long start_pfn;
+	unsigned long end_pfn;
+	unsigned long next_addr;
+	unsigned long bitmap[BITS_TO_LONGS(MIN_BATCH_SIZE)];
+	int node_id;
+	int swappiness;
+	int batch_size;
+	int nr_pages[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
+	int mm_stats[NR_MM_STATS];
+	bool use_filter;
+};
+
+void lru_gen_init_state(struct mem_cgroup *memcg, struct lruvec *lruvec);
+void lru_gen_change_state(bool enable, bool main, bool swap);
+void lru_gen_look_around(struct page_vma_mapped_walk *pvmw);
+
+#ifdef CONFIG_MEMCG
+void lru_gen_init_memcg(struct mem_cgroup *memcg);
+void lru_gen_free_memcg(struct mem_cgroup *memcg);
+#endif
+
+#else /* !CONFIG_LRU_GEN */
+
+static inline void lru_gen_init_state(struct mem_cgroup *memcg, struct lruvec *lruvec)
+{
+}
+
+static inline void lru_gen_change_state(bool enable, bool main, bool swap)
+{
+}
+
+static inline void lru_gen_look_around(struct page_vma_mapped_walk *pvmw)
+{
+}
+
+#ifdef CONFIG_MEMCG
+static inline void lru_gen_init_memcg(struct mem_cgroup *memcg)
+{
+}
+
+static inline void lru_gen_free_memcg(struct mem_cgroup *memcg)
+{
+}
+#endif
+
+#endif /* CONFIG_LRU_GEN */
+
 struct lruvec {
 	struct list_head		lists[NR_LRU_LISTS];
 	/* per lruvec lru_lock for memcg */
@@ -311,6 +477,12 @@ struct lruvec {
 	unsigned long			refaults[ANON_AND_FILE];
 	/* Various lruvec state flags (enum lruvec_flags) */
 	unsigned long			flags;
+#ifdef CONFIG_LRU_GEN
+	/* unevictable pages are on LRU_UNEVICTABLE */
+	struct lrugen			evictable;
+	/* state for mm list and page table walks */
+	struct lru_gen_mm_walk		mm_walk;
+#endif
 #ifdef CONFIG_MEMCG
 	struct pglist_data *pgdat;
 #endif
@@ -895,6 +1067,9 @@ typedef struct pglist_data {
 
 	unsigned long		flags;
 
+#ifdef CONFIG_LRU_GEN
+	struct mm_walk_args	mm_walk_args;
+#endif
 	ZONE_PADDING(_pad2_)
 
 	/* Per-node vmstats */
