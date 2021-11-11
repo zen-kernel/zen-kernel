@@ -4230,7 +4230,7 @@ static bool age_lruvec(struct lruvec *lruvec, struct scan_control *sc,
 
 /* Protect the working set accessed within the last N milliseconds. */
 #ifdef CONFIG_ZEN_INTERACTIVE
-static unsigned long lru_gen_min_ttl = 1000;
+static unsigned long lru_gen_min_ttl = HZ;
 #else
 static unsigned long lru_gen_min_ttl __read_mostly;
 #endif
