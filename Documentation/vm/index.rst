@@ -17,7 +17,6 @@ various features of the Linux memory management
 
    swap_numa
    zswap
-   multigen_lru
 
 Kernel developers MM documentation
 ==================================
