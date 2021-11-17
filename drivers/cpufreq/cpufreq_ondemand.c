@@ -18,13 +18,7 @@
 #include "cpufreq_ondemand.h"
 
 /* On-demand governor macros */
-#if defined(CONFIG_ZEN_INTERACTIVE) && defined(CONFIG_SCHED_MUQSS)
-/* MuQSS is less likely to keep a single threaded task on the same core, so
-   have on-demand run at max speed from a much lower core utilization */
-#define DEF_FREQUENCY_UP_THRESHOLD		(40)
-#define MICRO_FREQUENCY_UP_THRESHOLD		(45)
-#define DEF_SAMPLING_DOWN_FACTOR		(5)
-#elif defined(CONFIG_ZEN_INTERACTIVE)
+#if defined(CONFIG_ZEN_INTERACTIVE)
 #define DEF_FREQUENCY_UP_THRESHOLD		(55)
 #define MICRO_FREQUENCY_UP_THRESHOLD		(60)
 #define DEF_SAMPLING_DOWN_FACTOR		(5)
