@@ -5090,6 +5090,8 @@ static size_t intel_iommu_unmap(struct iommu_domain *domain,
 	gather->freelist = domain_unmap(dmar_domain, start_pfn,
 					last_pfn, gather->freelist);
 
+	dma_pte_clear_range(dmar_domain, start_pfn, last_pfn);
+
 	if (dmar_domain->max_addr == iova + size)
 		dmar_domain->max_addr = iova;
 
