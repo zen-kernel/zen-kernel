@@ -2912,9 +2912,6 @@ static inline void __sched_fork(unsigned long clone_flags, struct task_struct *p
  */
 int sched_fork(unsigned long clone_flags, struct task_struct *p)
 {
-	unsigned long flags;
-	struct rq *rq;
-
 	__sched_fork(clone_flags, p);
 	/*
 	 * We mark the process as NEW here. This guarantees that
@@ -2947,6 +2944,20 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 		 */
 		p->sched_reset_on_fork = 0;
 	}
+
+#ifdef CONFIG_SCHED_INFO
+	if (unlikely(sched_info_on()))
+		memset(&p->sched_info, 0, sizeof(p->sched_info));
+#endif
+	init_task_preempt_count(p);
+
+	return 0;
+}
+
+void sched_post_fork(struct task_struct *p, struct kernel_clone_args *kargs)
+{
+	unsigned long flags;
+	struct rq *rq;
 
 	/*
 	 * The child is not yet in the pid-hash so no cgroup attach races,
@@ -2982,19 +2993,9 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 	 * We're setting the CPU for the first time, we don't migrate,
 	 * so use __set_task_cpu().
 	 */
-	__set_task_cpu(p, cpu_of(rq));
+	__set_task_cpu(p, smp_processor_id());
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
-
-#ifdef CONFIG_SCHED_INFO
-	if (unlikely(sched_info_on()))
-		memset(&p->sched_info, 0, sizeof(p->sched_info));
-#endif
-	init_task_preempt_count(p);
-
-	return 0;
 }
-
-void sched_post_fork(struct task_struct *p) {}
 
 #ifdef CONFIG_SCHEDSTATS
 
