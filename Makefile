@@ -2,7 +2,7 @@
 VERSION = 5
 PATCHLEVEL = 15
 SUBLEVEL = 3
-EXTRAVERSION = -lqx1
+EXTRAVERSION = -lqx2
 NAME = Return of the Potato Wizard
 
 # *DOCUMENTATION*
