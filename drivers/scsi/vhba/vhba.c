@@ -489,7 +489,11 @@ int vhba_queuecommand (struct Scsi_Host *shost, struct scsi_cmnd *cmd)
         scmd_dbg(cmd, "no such device\n");
 
         cmd->result = DID_NO_CONNECT << 16;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0)
+        scsi_done(cmd);
+#else
         cmd->scsi_done(cmd);
+#endif
 
         return 0;
     }
@@ -824,7 +828,11 @@ ssize_t vhba_ctl_write (struct file *file, const char __user *buf, size_t buf_le
 
     spin_lock_irqsave(&vdev->cmd_lock, flags);
     if (ret >= 0) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0)
+        scsi_done(vcmd->cmd);
+#else
         vcmd->cmd->scsi_done(vcmd->cmd);
+#endif
         ret += sizeof(res);
 
         /* don't compete with vhba_device_dequeue */
@@ -950,8 +958,11 @@ int vhba_ctl_release (struct inode *inode, struct file *file)
 
         scmd_dbg(vcmd->cmd, "device released with command %lu (%p)\n", vcmd->metatag, vcmd->cmd);
         vcmd->cmd->result = DID_NO_CONNECT << 16;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0)
+        scsi_done(vcmd->cmd);
+#else
         vcmd->cmd->scsi_done(vcmd->cmd);
-
+#endif
         vhba_free_command(vcmd);
     }
     INIT_LIST_HEAD(&vdev->cmd_list);
