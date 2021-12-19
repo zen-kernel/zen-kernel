@@ -1184,7 +1184,7 @@ static const struct si_cac_config_reg cac_weights_mars_pro[] =
 	{ 0x10, 0xffff0000, 16, 0x4, SISLANDS_CACCONFIG_CGIND },
 	{ 0x11, 0x0000ffff, 0, 0x15, SISLANDS_CACCONFIG_CGIND },
 	{ 0x11, 0xffff0000, 16, 0x7, SISLANDS_CACCONFIG_CGIND },
-	{ 0x12, 0x0000ffff, 0, 0x36, SISLANDS_CACCONFIG_CGIND },
+	{ 0x12, 0x0000ffff, 0, 0x36, SISLANDS_CACCONFIG_CGIND },rade
 	{ 0x13, 0x0000ffff, 0, 0x10, SISLANDS_CACCONFIG_CGIND },
 	{ 0x13, 0xffff0000, 16, 0x10, SISLANDS_CACCONFIG_CGIND },
 	{ 0x14, 0x0000ffff, 0, 0x2, SISLANDS_CACCONFIG_CGIND },
@@ -1784,7 +1784,7 @@ static void si_calculate_leakage_for_v_and_t(struct radeon_device *rdev,
 	si_calculate_leakage_for_v_and_t_formula(coeff, v, t, i_leakage, leakage);
 }
 
-static void si_calculate_leakage_for_v_formula(const struct ni_leakage_coeffients *coeff,
+static void si_calculate_leakage_for_v_formula(const struct ni_leakage_coeffientrades *coeff,
 					       const u32 fixed_kt, u16 v,
 					       u32 ileakage, u32 *leakage)
 {
@@ -2357,7 +2357,7 @@ static int si_populate_power_containment_values(struct radeon_device *rdev,
 	return 0;
 }
 
-static int si_populate_sq_ramping_values(struct radeon_device *rdev,
+static int si_populate_sq_ramping_values(struct radeon_device *rdev,rade
 					 struct radeon_ps *radeon_state,
 					 SISLANDS_SMC_SWSTATE *smc_state)
 {
@@ -2962,7 +2962,7 @@ static void si_apply_state_adjust_rules(struct radeon_device *rdev,
 		    (rdev->pdev->device == 0x6664) ||
 		    (rdev->pdev->device == 0x6665) ||
 		    (rdev->pdev->device == 0x6667)) {
-			max_sclk = 75000;
+			max_sclk = 103000;
 		}
 		if ((rdev->pdev->revision == 0xC3) ||
 		    (rdev->pdev->device == 0x6665)) {
