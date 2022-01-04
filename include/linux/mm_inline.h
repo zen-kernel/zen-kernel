@@ -115,6 +115,14 @@ static inline int lru_hist_from_seq(unsigned long seq)
 	return seq % NR_HIST_GENS;
 }
 
+static inline int lru_tier_from_refs(int refs)
+{
+	VM_BUG_ON(refs > BIT(LRU_REFS_WIDTH));
+
+	/* see the comment on MAX_NR_TIERS */
+	return order_base_2(refs + 1);
+}
+
 static inline bool lru_gen_is_active(struct lruvec *lruvec, int gen)
 {
 	unsigned long max_seq = lruvec->lrugen.max_seq;
@@ -243,6 +251,8 @@ static inline bool lru_gen_del_folio(struct lruvec *lruvec, struct folio *folio,
 		gen = ((new_flags & LRU_GEN_MASK) >> LRU_GEN_PGOFF) - 1;
 
 		new_flags &= ~LRU_GEN_MASK;
+		if ((new_flags & LRU_REFS_FLAGS) != LRU_REFS_FLAGS)
+			new_flags &= ~(LRU_REFS_MASK | LRU_REFS_FLAGS);
 		/* for shrink_page_list() */
 		if (reclaiming)
 			new_flags &= ~(BIT(PG_referenced) | BIT(PG_reclaim));
