@@ -900,6 +900,54 @@ config IO_MAPPING
 config SECRETMEM
 	def_bool ARCH_HAS_SET_DIRECT_MAP && !EMBEDDED
 
+# multigenerational lru {
+config LRU_GEN
+	bool "Multigenerational LRU"
+	depends on MMU
+	# the following options can use up the spare bits in page flags
+	depends on !MAXSMP && (64BIT || !SPARSEMEM || SPARSEMEM_VMEMMAP)
+	help
+	  A high performance LRU implementation for memory overcommit. See
+	  Documentation/vm/multigen_lru.rst for details.
+
+config LRU_GEN_ENABLED
+	bool "Enable by default"
+	depends on LRU_GEN
+	help
+	  This option enables the multigenerational lru by default.
+
+config NR_LRU_GENS
+	int "Max number of generations"
+	depends on LRU_GEN
+	range 4 31
+	default 4
+	help
+	  This option uses order_base_2(N+1) bits in page flags.
+
+	  Do not configure more generations than you plan to use. They have a
+	  per-memcg and per-node memory overhead.
+
+config TIERS_PER_GEN
+	int "Number of tiers per generation"
+	depends on LRU_GEN
+	range 2 5
+	default 4
+	help
+	  This option uses N-2 bits in page flags.
+
+	  Larger values generally provide better protection for page cache when
+	  under heavy buffered I/O workloads.
+
+config LRU_GEN_STATS
+	bool "Full stats for debugging"
+	depends on LRU_GEN
+	help
+	  This option keeps historical stats for evicted generations.
+
+	  Do not enable full stats unless you plan to look at them. They have a
+	  per-memcg and per-node memory overhead.
+# }
+
 source "mm/damon/Kconfig"
 
 endmenu

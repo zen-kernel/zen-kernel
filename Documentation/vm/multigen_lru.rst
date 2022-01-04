@@ -6,6 +6,13 @@ Multigenerational LRU
 
 Quick start
 ===========
+Build configurations
+--------------------
+:Required: Set ``CONFIG_LRU_GEN=y``.
+
+:Optional: Set ``CONFIG_LRU_GEN_ENABLED=y`` to enable this feature by
+ default.
+
 Runtime configurations
 ----------------------
 :Required: Write ``1`` to ``/sys/kernel/mm/lru_gen/enable`` if the
@@ -25,6 +32,17 @@ Personal computers
 
 Data centers
 ------------
+:Optional: Change ``CONFIG_NR_LRU_GENS`` to a larger value to support
+ more generations for ``Working set estimation`` and
+ ``Proactive reclaim``.
+
+:Optional: Change ``CONFIG_TIERS_PER_GEN`` to a larger value to
+ support more tiers, which generally provide better protection for
+ page cache when under heavy buffered I/O workloads.
+
+:Optional: Set ``CONFIG_LRU_GEN_STATS=y`` to enable full stats for
+ debugging. See ``Debugfs interface``.
+
 :Debugfs interface: ``/sys/kernel/debug/lru_gen`` has the following
  format:
  ::
