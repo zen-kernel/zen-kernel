@@ -303,6 +303,78 @@ enum lruvec_flags {
 					 */
 };
 
+struct lruvec;
+
+#define LRU_GEN_MASK		((BIT(LRU_GEN_WIDTH) - 1) << LRU_GEN_PGOFF)
+#define LRU_REFS_MASK		((BIT(LRU_REFS_WIDTH) - 1) << LRU_REFS_PGOFF)
+
+#ifdef CONFIG_LRU_GEN
+
+#define MIN_LRU_BATCH		BITS_PER_LONG
+#define MAX_LRU_BATCH		(MIN_LRU_BATCH * 128)
+
+/*
+ * Evictable pages are divided into multiple generations. The youngest and the
+ * oldest generation numbers, max_seq and min_seq, are monotonically increasing.
+ * They form a sliding window of a variable size [MIN_NR_GENS, MAX_NR_GENS]. An
+ * offset within MAX_NR_GENS, gen, indexes the lru list of the corresponding
+ * generation. The gen counter in folio->flags stores gen+1 while a page is on
+ * lrugen->lists[]. Otherwise, it stores 0.
+ *
+ * A page is added to the youngest generation on faulting. The aging needs to
+ * check the accessed bit at least twice before handing this page over to the
+ * eviction. The first check takes care of the accessed bit set on the initial
+ * fault; the second check makes sure this page hasn't been used since then.
+ * This process, AKA second chance, requires a minimum of two generations,
+ * hence MIN_NR_GENS. And to be compatible with the active/inactive lru, these
+ * two generations are mapped to the active; the rest of generations, if they
+ * exist, are mapped to the inactive. PG_active is always cleared while a page
+ * is on lrugen->lists[] so that demotion, which happens consequently when the
+ * aging creates a new generation, needs not to worry about it.
+ */
+#define MIN_NR_GENS		2U
+#define MAX_NR_GENS		((unsigned int)CONFIG_NR_LRU_GENS)
+
+struct lru_gen_struct {
+	/* the aging increments the youngest generation number */
+	unsigned long max_seq;
+	/* the eviction increments the oldest generation numbers */
+	unsigned long min_seq[ANON_AND_FILE];
+	/* the birth time of each generation in jiffies */
+	unsigned long timestamps[MAX_NR_GENS];
+	/* the multigenerational lru lists */
+	struct list_head lists[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
+	/* the sizes of the above lists */
+	unsigned long nr_pages[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
+	/* whether the multigenerational lru is enabled */
+	bool enabled;
+};
+
+void lru_gen_init_state(struct mem_cgroup *memcg, struct lruvec *lruvec);
+
+#ifdef CONFIG_MEMCG
+void lru_gen_init_memcg(struct mem_cgroup *memcg);
+void lru_gen_free_memcg(struct mem_cgroup *memcg);
+#endif
+
+#else /* !CONFIG_LRU_GEN */
+
+static inline void lru_gen_init_state(struct mem_cgroup *memcg, struct lruvec *lruvec)
+{
+}
+
+#ifdef CONFIG_MEMCG
+static inline void lru_gen_init_memcg(struct mem_cgroup *memcg)
+{
+}
+
+static inline void lru_gen_free_memcg(struct mem_cgroup *memcg)
+{
+}
+#endif
+
+#endif /* CONFIG_LRU_GEN */
+
 struct lruvec {
 	struct list_head		lists[NR_LRU_LISTS];
 	/* per lruvec lru_lock for memcg */
@@ -320,6 +392,10 @@ struct lruvec {
 	unsigned long			refaults[ANON_AND_FILE];
 	/* Various lruvec state flags (enum lruvec_flags) */
 	unsigned long			flags;
+#ifdef CONFIG_LRU_GEN
+	/* evictable pages divided into generations */
+	struct lru_gen_struct		lrugen;
+#endif
 #ifdef CONFIG_MEMCG
 	struct pglist_data *pgdat;
 #endif
