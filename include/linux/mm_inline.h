@@ -110,6 +110,11 @@ static inline int lru_gen_from_seq(unsigned long seq)
 	return seq % MAX_NR_GENS;
 }
 
+static inline int lru_hist_from_seq(unsigned long seq)
+{
+	return seq % NR_HIST_GENS;
+}
+
 static inline bool lru_gen_is_active(struct lruvec *lruvec, int gen)
 {
 	unsigned long max_seq = lruvec->lrugen.max_seq;
