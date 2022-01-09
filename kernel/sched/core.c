@@ -75,7 +75,7 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
  * Limited because this is done with IRQs disabled.
  */
 #ifdef CONFIG_ZEN_INTERACTIVE
-const_debug unsigned int sysctl_sched_nr_migrate = 128;
+const_debug unsigned int sysctl_sched_nr_migrate = 64;
 #else
 const_debug unsigned int sysctl_sched_nr_migrate = 32;
 #endif
