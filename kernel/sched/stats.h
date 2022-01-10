@@ -94,6 +94,7 @@ struct sched_entity_stats {
 } __no_randomize_layout;
 #endif
 
+#ifndef CONFIG_SCHED_ALT
 static inline struct sched_statistics *
 __schedstats_from_se(struct sched_entity *se)
 {
@@ -103,6 +104,7 @@ __schedstats_from_se(struct sched_entity *se)
 #endif
 	return &task_of(se)->stats;
 }
+#endif
 
 #ifdef CONFIG_PSI
 /*
