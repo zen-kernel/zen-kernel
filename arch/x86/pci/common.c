@@ -715,12 +715,15 @@ int pci_ext_cfg_avail(void)
 		return 0;
 }
 
-#if IS_ENABLED(CONFIG_VMD)
 struct pci_dev *pci_real_dma_dev(struct pci_dev *dev)
 {
+#if IS_ENABLED(CONFIG_VMD)
 	if (is_vmd(dev->bus))
 		return to_pci_sysdata(dev->bus)->vmd_dev;
+#endif
+
+	if (is_nvme_remap(dev->bus))
+		return to_pci_sysdata(dev->bus)->nvme_remap_dev;
 
 	return dev;
 }
-#endif
