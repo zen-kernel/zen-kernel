@@ -227,6 +227,7 @@ int overcommit_policy_handler(struct ctl_table *, int, void *, size_t *,
 #define PAGE_ALIGNED(addr)	IS_ALIGNED((unsigned long)(addr), PAGE_SIZE)
 
 #define lru_to_page(head) (list_entry((head)->prev, struct page, lru))
+#define lru_to_folio(head) (list_entry((head)->prev, struct folio, lru))
 
 void setup_initial_init_mm(void *start_code, void *end_code,
 			   void *end_data, void *brk);
@@ -1070,6 +1071,8 @@ vm_fault_t finish_mkwrite_fault(struct vm_fault *vmf);
 #define ZONES_PGOFF		(NODES_PGOFF - ZONES_WIDTH)
 #define LAST_CPUPID_PGOFF	(ZONES_PGOFF - LAST_CPUPID_WIDTH)
 #define KASAN_TAG_PGOFF		(LAST_CPUPID_PGOFF - KASAN_TAG_WIDTH)
+#define LRU_GEN_PGOFF		(KASAN_TAG_PGOFF - LRU_GEN_WIDTH)
+#define LRU_REFS_PGOFF		(LRU_GEN_PGOFF - LRU_REFS_WIDTH)
 
 /*
  * Define the bit shifts to access each section.  For non-existent
@@ -1596,6 +1599,11 @@ static inline unsigned long folio_pfn(struct folio *folio)
 	return page_to_pfn(&folio->page);
 }
 
+static inline struct folio *pfn_folio(unsigned long pfn)
+{
+	return page_folio(pfn_to_page(pfn));
+}
+
 /* MIGRATE_CMA and ZONE_MOVABLE do not allow pin pages */
 #ifdef CONFIG_MIGRATION
 static inline bool is_pinnable_page(struct page *page)
@@ -1919,6 +1927,40 @@ static inline void unmap_mapping_pages(struct address_space *mapping,
 static inline void unmap_mapping_range(struct address_space *mapping,
 		loff_t const holebegin, loff_t const holelen, int even_cows) { }
 #endif
+
+#ifdef CONFIG_LRU_GEN
+static inline void task_enter_lru_fault(void)
+{
+	WARN_ON_ONCE(current->in_lru_fault);
+
+	current->in_lru_fault = 1;
+}
+
+static inline void task_exit_lru_fault(void)
+{
+	WARN_ON_ONCE(!current->in_lru_fault);
+
+	current->in_lru_fault = 0;
+}
+
+static inline bool task_in_lru_fault(void)
+{
+	return current->in_lru_fault;
+}
+#else
+static inline void task_enter_lru_fault(void)
+{
+}
+
+static inline void task_exit_lru_fault(void)
+{
+}
+
+static inline bool task_in_lru_fault(void)
+{
+	return false;
+}
+#endif /* CONFIG_LRU_GEN */
 
 static inline void unmap_shared_mapping_range(struct address_space *mapping,
 		loff_t const holebegin, loff_t const holelen)
