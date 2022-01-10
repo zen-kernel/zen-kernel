@@ -2,8 +2,8 @@
 VERSION = 5
 PATCHLEVEL = 16
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Gobble Gobble
+EXTRAVERSION = -zen
+NAME = Super Popcorn Galaxy
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
