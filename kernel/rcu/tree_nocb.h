@@ -1184,6 +1184,7 @@ static void rcu_spawn_one_nocb_kthread(int cpu)
 	struct rcu_data *rdp = per_cpu_ptr(&rcu_data, cpu);
 	struct rcu_data *rdp_gp;
 	struct task_struct *t;
+	struct sched_param sp;
 
 	/*
 	 * If this isn't a no-CBs CPU or if it already has an rcuo kthread,
@@ -1193,6 +1194,7 @@ static void rcu_spawn_one_nocb_kthread(int cpu)
 		return;
 
 	/* If we didn't spawn the GP kthread first, reorganize! */
+	sp.sched_priority = kthread_prio;
 	rdp_gp = rdp->nocb_gp_rdp;
 	mutex_lock(&rdp_gp->nocb_gp_kthread_mutex);
 	if (!rdp_gp->nocb_gp_kthread) {
@@ -1203,6 +1205,8 @@ static void rcu_spawn_one_nocb_kthread(int cpu)
 			return;
 		}
 		WRITE_ONCE(rdp_gp->nocb_gp_kthread, t);
+		if (kthread_prio)
+			sched_setscheduler_nocheck(t, SCHED_FIFO, &sp);
 	}
 	mutex_unlock(&rdp_gp->nocb_gp_kthread_mutex);
 
