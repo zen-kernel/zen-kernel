@@ -176,6 +176,8 @@ static ssize_t force_wakeup_write(struct file *file,
 	if (data->wakeup == enable)
 		return -EALREADY;
 
+	data->wakeup = enable;
+
 	return count;
 }
 
@@ -236,6 +238,8 @@ static int __vhci_create_device(struct vhci_data *data, __u8 opcode)
 	/* bit 7 is for raw device */
 	if (opcode & 0x80)
 		set_bit(HCI_QUIRK_RAW_DEVICE, &hdev->quirks);
+
+	set_bit(HCI_QUIRK_VALID_LE_STATES, &hdev->quirks);
 
 	if (hci_register_dev(hdev) < 0) {
 		BT_ERR("Can't register HCI device");

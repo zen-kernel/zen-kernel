@@ -266,14 +266,24 @@ static void cxl_nvb_update_state(struct work_struct *work)
 	put_device(&cxl_nvb->dev);
 }
 
+static void cxl_nvdimm_bridge_state_work(struct cxl_nvdimm_bridge *cxl_nvb)
+{
+	/*
+	 * Take a reference that the workqueue will drop if new work
+	 * gets queued.
+	 */
+	get_device(&cxl_nvb->dev);
+	if (!queue_work(cxl_pmem_wq, &cxl_nvb->state_work))
+		put_device(&cxl_nvb->dev);
+}
+
 static void cxl_nvdimm_bridge_remove(struct device *dev)
 {
 	struct cxl_nvdimm_bridge *cxl_nvb = to_cxl_nvdimm_bridge(dev);
 
 	if (cxl_nvb->state == CXL_NVB_ONLINE)
 		cxl_nvb->state = CXL_NVB_OFFLINE;
-	if (queue_work(cxl_pmem_wq, &cxl_nvb->state_work))
-		get_device(&cxl_nvb->dev);
+	cxl_nvdimm_bridge_state_work(cxl_nvb);
 }
 
 static int cxl_nvdimm_bridge_probe(struct device *dev)
@@ -294,8 +304,7 @@ static int cxl_nvdimm_bridge_probe(struct device *dev)
 	}
 
 	cxl_nvb->state = CXL_NVB_ONLINE;
-	if (queue_work(cxl_pmem_wq, &cxl_nvb->state_work))
-		get_device(&cxl_nvb->dev);
+	cxl_nvdimm_bridge_state_work(cxl_nvb);
 
 	return 0;
 }
@@ -306,6 +315,31 @@ static struct cxl_driver cxl_nvdimm_bridge_driver = {
 	.remove = cxl_nvdimm_bridge_remove,
 	.id = CXL_DEVICE_NVDIMM_BRIDGE,
 };
+
+/*
+ * Return all bridges to the CXL_NVB_NEW state to invalidate any
+ * ->state_work referring to the now destroyed cxl_pmem_wq.
+ */
+static int cxl_nvdimm_bridge_reset(struct device *dev, void *data)
+{
+	struct cxl_nvdimm_bridge *cxl_nvb;
+
+	if (!is_cxl_nvdimm_bridge(dev))
+		return 0;
+
+	cxl_nvb = to_cxl_nvdimm_bridge(dev);
+	device_lock(dev);
+	cxl_nvb->state = CXL_NVB_NEW;
+	device_unlock(dev);
+
+	return 0;
+}
+
+static void destroy_cxl_pmem_wq(void)
+{
+	destroy_workqueue(cxl_pmem_wq);
+	bus_for_each_dev(&cxl_bus_type, NULL, NULL, cxl_nvdimm_bridge_reset);
+}
 
 static __init int cxl_pmem_init(void)
 {
@@ -332,7 +366,7 @@ static __init int cxl_pmem_init(void)
 err_nvdimm:
 	cxl_driver_unregister(&cxl_nvdimm_bridge_driver);
 err_bridge:
-	destroy_workqueue(cxl_pmem_wq);
+	destroy_cxl_pmem_wq();
 	return rc;
 }
 
@@ -340,7 +374,7 @@ static __exit void cxl_pmem_exit(void)
 {
 	cxl_driver_unregister(&cxl_nvdimm_driver);
 	cxl_driver_unregister(&cxl_nvdimm_bridge_driver);
-	destroy_workqueue(cxl_pmem_wq);
+	destroy_cxl_pmem_wq();
 }
 
 MODULE_LICENSE("GPL v2");

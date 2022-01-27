@@ -3399,6 +3399,7 @@ void hisi_qm_uninit(struct hisi_qm *qm)
 		dma_free_coherent(dev, qm->qdma.size,
 				  qm->qdma.va, qm->qdma.dma);
 	}
+	up_write(&qm->qps_lock);
 
 	qm_irq_unregister(qm);
 	hisi_qm_pci_uninit(qm);
@@ -3406,8 +3407,6 @@ void hisi_qm_uninit(struct hisi_qm *qm)
 		uacce_remove(qm->uacce);
 		qm->uacce = NULL;
 	}
-
-	up_write(&qm->qps_lock);
 }
 EXPORT_SYMBOL_GPL(hisi_qm_uninit);
 
@@ -6038,7 +6037,7 @@ int hisi_qm_resume(struct device *dev)
 	if (ret)
 		pci_err(pdev, "failed to start qm(%d)\n", ret);
 
-	return 0;
+	return ret;
 }
 EXPORT_SYMBOL_GPL(hisi_qm_resume);
 
