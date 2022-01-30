@@ -167,9 +167,14 @@ static void sugov_get_util(struct sugov_cpu *sg_cpu)
 	unsigned long max = arch_scale_cpu_capacity(sg_cpu->cpu);
 
 	sg_cpu->max = max;
+#ifndef CONFIG_SCHED_ALT
 	sg_cpu->bw_dl = cpu_bw_dl(rq);
 	sg_cpu->util = effective_cpu_util(sg_cpu->cpu, cpu_util_cfs(rq), max,
 					  FREQUENCY_UTIL, NULL);
+#else
+	sg_cpu->bw_dl = 0;
+	sg_cpu->util = rq_load_util(rq, max);
+#endif /* CONFIG_SCHED_ALT */
 }
 
 /**
@@ -312,8 +317,10 @@ static inline bool sugov_cpu_is_busy(struct sugov_cpu *sg_cpu) { return false; }
  */
 static inline void ignore_dl_rate_limit(struct sugov_cpu *sg_cpu)
 {
+#ifndef CONFIG_SCHED_ALT
 	if (cpu_bw_dl(cpu_rq(sg_cpu->cpu)) > sg_cpu->bw_dl)
 		sg_cpu->sg_policy->limits_changed = true;
+#endif
 }
 
 static inline bool sugov_update_single_common(struct sugov_cpu *sg_cpu,
@@ -607,6 +614,7 @@ static int sugov_kthread_create(struct sugov_policy *sg_policy)
 	}
 
 	ret = sched_setattr_nocheck(thread, &attr);
+
 	if (ret) {
 		kthread_stop(thread);
 		pr_warn("%s: failed to set SCHED_DEADLINE\n", __func__);
@@ -839,7 +847,9 @@ cpufreq_governor_init(schedutil_gov);
 #ifdef CONFIG_ENERGY_MODEL
 static void rebuild_sd_workfn(struct work_struct *work)
 {
+#ifndef CONFIG_SCHED_ALT
 	rebuild_sched_domains_energy();
+#endif /* CONFIG_SCHED_ALT */
 }
 static DECLARE_WORK(rebuild_sd_work, rebuild_sd_workfn);
 

@@ -116,7 +116,7 @@ config PREEMPT_DYNAMIC
 
 config SCHED_CORE
 	bool "Core Scheduling for SMT"
-	depends on SCHED_SMT
+	depends on SCHED_SMT && !SCHED_ALT
 	help
 	  This option permits Core Scheduling, a means of coordinated task
 	  selection across SMT siblings. When enabled -- see
