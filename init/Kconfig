@@ -121,6 +121,7 @@ config ZEN_INTERACTIVE
 
 	    Background-reclaim hugepages...:   no   ->   yes
 	    MG-LRU minimum cache TTL.......:   0    ->   1000 ms
+	    Compact Unevictable............:   1    ->   0
 
 	  --- CFS CPU Scheduler ----------------------------------
 
