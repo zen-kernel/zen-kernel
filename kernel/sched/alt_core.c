@@ -2986,7 +2986,7 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 	return 0;
 }
 
-void sched_post_fork(struct task_struct *p, struct kernel_clone_args *kargs)
+void sched_cgroup_fork(struct task_struct *p, struct kernel_clone_args *kargs)
 {
 	unsigned long flags;
 	struct rq *rq;
@@ -3027,6 +3027,13 @@ void sched_post_fork(struct task_struct *p, struct kernel_clone_args *kargs)
 	 */
 	__set_task_cpu(p, smp_processor_id());
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
+}
+
+void sched_post_fork(struct task_struct *p)
+{
+#ifdef CONFIG_UCLAMP_TASK
+       uclamp_post_fork(p);
+#endif
 }
 
 #ifdef CONFIG_SCHEDSTATS
