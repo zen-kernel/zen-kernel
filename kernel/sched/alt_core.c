@@ -160,10 +160,12 @@ static sched_bitmask_t sched_rq_watermark[NR_CPUS] ____cacheline_aligned_in_smp;
 
 #define x(p, set, mask)                                \
 	do {                                           \
+		smp_mb__before_atomic();               \
 		if (set)                               \
 			atomic_long_or((mask), (p));   \
 		else                                   \
 			atomic_long_and(~(mask), (p)); \
+		smp_mb__after_atomic();                \
 	} while (0)
 
 static __always_inline void sched_rq_watermark_fill_downwards(int cpu, unsigned int end,
@@ -195,7 +197,9 @@ static __always_inline void sched_rq_watermark_fill_downwards(int cpu, unsigned 
 	}
 
 	while (end_idx != start_idx) {
+		smp_mb__before_atomic();
 		atomic_long_set(p, set ? ~0UL : 0);
+		smp_mb__after_atomic();
 		p -= 1;
 		end_idx -= 1;
 	}
