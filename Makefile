@@ -2,8 +2,8 @@
 VERSION = 5
 PATCHLEVEL = 17
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Superb Owl
+EXTRAVERSION = -zen
+NAME = Do Not Use Without Belt
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
