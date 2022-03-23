@@ -48,7 +48,7 @@ struct elevator_mq_ops {
 	void (*exit_icq)(struct io_cq *);
 };
 
-#define ELV_NAME_MAX	(16)
+#define ELV_NAME_MAX	(24)
 
 struct elv_fs_entry {
 	struct attribute attr;

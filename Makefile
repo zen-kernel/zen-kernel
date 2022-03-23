@@ -2,8 +2,8 @@
 VERSION = 5
 PATCHLEVEL = 17
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Superb Owl
+EXTRAVERSION = -zen
+NAME = Do Not Use Without Belt
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
@@ -983,11 +983,6 @@ KBUILD_CFLAGS	+= -fno-strict-overflow
 
 # Make sure -fstack-check isn't enabled (like gentoo apparently did)
 KBUILD_CFLAGS  += -fno-stack-check
-
-# conserve stack if available
-ifdef CONFIG_CC_IS_GCC
-KBUILD_CFLAGS   += -fconserve-stack
-endif
 
 # Prohibit date/time macros, which would make the build non-deterministic
 KBUILD_CFLAGS   += -Werror=date-time

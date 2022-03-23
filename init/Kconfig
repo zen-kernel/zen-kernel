@@ -107,6 +107,41 @@ config THREAD_INFO_IN_TASK
 
 menu "General setup"
 
+config ZEN_INTERACTIVE
+	bool "Tune kernel for interactivity"
+	default y
+	help
+	  Tunes the kernel for responsiveness at the cost of throughput and power usage.
+
+	  --- Block Layer ----------------------------------------
+
+	    Default scheduler.........: mq-deadline -> bfq
+
+	  --- Virtual Memory Subsystem ---------------------------
+
+	    Background-reclaim hugepages...:   no   ->   yes
+	    MG-LRU minimum cache TTL.......:   0    ->   1000 ms
+	    Compact Unevictable............:   1    ->   0
+	    Proactive Compaction...........:  20    ->   0
+
+	  --- CFS CPU Scheduler ----------------------------------
+
+	    Scheduling latency.............:   6    ->   4    ms
+	    Minimal granularity............:   0.75 ->   0.4  ms
+	    Wakeup granularity.............:   1    ->   0.5  ms
+	    Bandwidth slice size...........:   5    ->   3    ms
+	    Task rebalancing threshold.....:  32    ->  64
+
+	  --- PDS/BMQ CPU Scheduler ------------------------------
+
+	    Scheduling timeslice...........:   4    ->   2    ms
+
+	  --- CPUFreq Settings -----------------------------------
+
+	    Ondemand sampling down factor..:   1    ->   5
+	    Ondemand default up threshold..:  80    ->  55
+	    Ondemand micro up threshold....:  95    ->  60
+
 config BROKEN
 	bool
 
@@ -1231,6 +1266,22 @@ config USER_NS
 
 	  If unsure, say N.
 
+config USER_NS_UNPRIVILEGED
+	bool "Allow unprivileged users to create namespaces"
+	default y
+	depends on USER_NS
+	help
+	  When disabled, unprivileged users will not be able to create
+	  new namespaces. Allowing users to create their own namespaces
+	  has been part of several recent local privilege escalation
+	  exploits, so if you need user namespaces but are
+	  paranoid^Wsecurity-conscious you want to disable this.
+
+	  This setting can be overridden at runtime via the
+	  kernel.unprivileged_userns_clone sysctl.
+
+	  If unsure, say Y.
+
 config PID_NS
 	bool "PID Namespaces"
 	default y
@@ -1370,7 +1421,6 @@ config CC_OPTIMIZE_FOR_PERFORMANCE
 
 config CC_OPTIMIZE_FOR_PERFORMANCE_O3
 	bool "Optimize more for performance (-O3)"
-	depends on ARC
 	help
 	  Choosing this option will pass "-O3" to your compiler to optimize
 	  the kernel yet more for performance.

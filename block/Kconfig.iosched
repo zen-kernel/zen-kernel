@@ -7,6 +7,15 @@ config MQ_IOSCHED_DEADLINE
 	help
 	  MQ version of the deadline IO scheduler.
 
+config MQ_IOSCHED_DEADLINE_NODEFAULT
+	bool "Rename mq-deadline scheduler to mq-deadline-nodefault"
+	depends on MQ_IOSCHED_DEADLINE
+	default n
+	help
+	  This renames the mq-deadline scheduler to "mq-deadline-nodefault" and
+	  also drops its alias of "deadline". This can prevent existing
+	  userspace from forcing this scheduler over the kernel's choice.
+
 config MQ_IOSCHED_KYBER
 	tristate "Kyber I/O scheduler"
 	default y
