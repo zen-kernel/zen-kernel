@@ -3468,12 +3468,6 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 		mmdrop_sched(mm);
 	}
 	if (unlikely(prev_state == TASK_DEAD)) {
-		/*
-		 * Remove function-return probe instances associated with this
-		 * task and put them back on the free list.
-		 */
-		kprobe_flush_task(prev);
-
 		/* Task is done with its stack. */
 		put_task_stack(prev);
 
