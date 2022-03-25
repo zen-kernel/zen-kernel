@@ -28,7 +28,6 @@
 #include <linux/kprobes.h>
 #include <linux/mmu_context.h>
 #include <linux/nmi.h>
-#include <linux/profile.h>
 #include <linux/rcupdate_wait.h>
 #include <linux/security.h>
 #include <linux/syscalls.h>
@@ -2236,9 +2235,10 @@ ttwu_stat(struct task_struct *p, int cpu, int wake_flags)
 	rq = this_rq();
 
 #ifdef CONFIG_SMP
-	if (cpu == rq->cpu)
+	if (cpu == rq->cpu) {
 		__schedstat_inc(rq->ttwu_local);
-	else {
+		__schedstat_inc(p->stats.nr_wakeups_local);
+	} else {
 		/** Alt schedule FW ToDo:
 		 * How to do ttwu_wake_remote
 		 */
@@ -2246,6 +2246,7 @@ ttwu_stat(struct task_struct *p, int cpu, int wake_flags)
 #endif /* CONFIG_SMP */
 
 	__schedstat_inc(rq->ttwu_count);
+	__schedstat_inc(p->stats.nr_wakeups);
 }
 
 /*
@@ -2894,6 +2895,11 @@ static inline void __sched_fork(unsigned long clone_flags, struct task_struct *p
 	p->utime			= 0;
 	p->stime			= 0;
 	p->sched_time			= 0;
+
+#ifdef CONFIG_SCHEDSTATS
+	/* Even if schedstat is disabled, there should not be garbage */
+	memset(&p->stats, 0, sizeof(p->stats));
+#endif
 
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	INIT_HLIST_HEAD(&p->preempt_notifiers);
@@ -7396,6 +7402,10 @@ void normalize_rt_tasks(void)
 		 */
 		if (p->flags & PF_KTHREAD)
 			continue;
+
+		schedstat_set(p->stats.wait_start,  0);
+		schedstat_set(p->stats.sleep_start, 0);
+		schedstat_set(p->stats.block_start, 0);
 
 		if (!rt_task(p)) {
 			/*

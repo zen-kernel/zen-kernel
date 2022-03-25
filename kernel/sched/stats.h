@@ -89,6 +89,7 @@ static inline void rq_sched_info_depart  (struct rq *rq, unsigned long long delt
 
 #endif /* CONFIG_SCHEDSTATS */
 
+#ifndef CONFIG_SCHED_ALT
 static inline struct sched_statistics *
 __schedstats_from_se(struct sched_entity *se)
 {
@@ -98,6 +99,7 @@ __schedstats_from_se(struct sched_entity *se)
 #endif
 	return &task_of(se)->stats;
 }
+#endif /* CONFIG_SCHED_ALT */
 
 #ifdef CONFIG_PSI
 void psi_task_change(struct task_struct *task, int clear, int set);
