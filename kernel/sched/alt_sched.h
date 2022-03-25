@@ -31,6 +31,7 @@
 #include <linux/livepatch.h>
 #include <linux/membarrier.h>
 #include <linux/proc_fs.h>
+#include <linux/profile.h>
 #include <linux/psi.h>
 #include <linux/slab.h>
 #include <linux/stop_machine.h>
