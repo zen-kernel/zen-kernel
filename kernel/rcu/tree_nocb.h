@@ -1171,6 +1171,7 @@ static void __init rcu_boot_init_nocb_percpu_data(struct rcu_data *rdp)
 	raw_spin_lock_init(&rdp->nocb_gp_lock);
 	timer_setup(&rdp->nocb_timer, do_nocb_deferred_wakeup_timer, 0);
 	rcu_cblist_init(&rdp->nocb_bypass);
+	mutex_init(&rdp->nocb_gp_kthread_mutex);
 }
 
 /*
@@ -1183,6 +1184,7 @@ static void rcu_spawn_one_nocb_kthread(int cpu)
 	struct rcu_data *rdp = per_cpu_ptr(&rcu_data, cpu);
 	struct rcu_data *rdp_gp;
 	struct task_struct *t;
+	struct sched_param sp;
 
 	/*
 	 * If this isn't a no-CBs CPU or if it already has an rcuo kthread,
@@ -1192,20 +1194,30 @@ static void rcu_spawn_one_nocb_kthread(int cpu)
 		return;
 
 	/* If we didn't spawn the GP kthread first, reorganize! */
+	sp.sched_priority = kthread_prio;
 	rdp_gp = rdp->nocb_gp_rdp;
+	mutex_lock(&rdp_gp->nocb_gp_kthread_mutex);
 	if (!rdp_gp->nocb_gp_kthread) {
 		t = kthread_run(rcu_nocb_gp_kthread, rdp_gp,
 				"rcuog/%d", rdp_gp->cpu);
-		if (WARN_ONCE(IS_ERR(t), "%s: Could not start rcuo GP kthread, OOM is now expected behavior\n", __func__))
+		if (WARN_ONCE(IS_ERR(t), "%s: Could not start rcuo GP kthread, OOM is now expected behavior\n", __func__)) {
+			mutex_unlock(&rdp_gp->nocb_gp_kthread_mutex);
 			return;
+		}
 		WRITE_ONCE(rdp_gp->nocb_gp_kthread, t);
+		if (kthread_prio)
+			sched_setscheduler_nocheck(t, SCHED_FIFO, &sp);
 	}
+	mutex_unlock(&rdp_gp->nocb_gp_kthread_mutex);
 
 	/* Spawn the kthread for this CPU. */
 	t = kthread_run(rcu_nocb_cb_kthread, rdp,
 			"rcuo%c/%d", rcu_state.abbr, cpu);
 	if (WARN_ONCE(IS_ERR(t), "%s: Could not start rcuo CB kthread, OOM is now expected behavior\n", __func__))
 		return;
+
+	if (kthread_prio)
+		sched_setscheduler_nocheck(t, SCHED_FIFO, &sp);
 	WRITE_ONCE(rdp->nocb_cb_kthread, t);
 	WRITE_ONCE(rdp->nocb_gp_kthread, rdp_gp->nocb_gp_kthread);
 }
