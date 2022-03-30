@@ -298,25 +298,21 @@ static __always_inline void
 waiter_update_prio(struct rt_mutex_waiter *waiter, struct task_struct *task)
 {
 	waiter->prio = __waiter_prio(task);
-	waiter->deadline = __tsk_deadline(task);
+	waiter->deadline = task->dl.deadline;
 }
 
 /*
  * Only use with rt_mutex_waiter_{less,equal}()
  */
 #define task_to_waiter(p)	\
-	&(struct rt_mutex_waiter){ .prio = __waiter_prio(p), .deadline = __tsk_deadline(p) }
+	&(struct rt_mutex_waiter){ .prio = __waiter_prio(p), .deadline = (p)->dl.deadline }
 
 static __always_inline int rt_mutex_waiter_less(struct rt_mutex_waiter *left,
 						struct rt_mutex_waiter *right)
 {
-#ifdef CONFIG_SCHED_PDS
-	return (left->deadline < right->deadline);
-#else
 	if (left->prio < right->prio)
 		return 1;
 
-#ifndef CONFIG_SCHED_BMQ
 	/*
 	 * If both waiters have dl_prio(), we check the deadlines of the
 	 * associated tasks.
@@ -325,22 +321,16 @@ static __always_inline int rt_mutex_waiter_less(struct rt_mutex_waiter *left,
 	 */
 	if (dl_prio(left->prio))
 		return dl_time_before(left->deadline, right->deadline);
-#endif
 
 	return 0;
-#endif
 }
 
 static __always_inline int rt_mutex_waiter_equal(struct rt_mutex_waiter *left,
 						 struct rt_mutex_waiter *right)
 {
-#ifdef CONFIG_SCHED_PDS
-	return (left->deadline == right->deadline);
-#else
 	if (left->prio != right->prio)
 		return 0;
 
-#ifndef CONFIG_SCHED_BMQ
 	/*
 	 * If both waiters have dl_prio(), we check the deadlines of the
 	 * associated tasks.
@@ -349,10 +339,8 @@ static __always_inline int rt_mutex_waiter_equal(struct rt_mutex_waiter *left,
 	 */
 	if (dl_prio(left->prio))
 		return left->deadline == right->deadline;
-#endif
 
 	return 1;
-#endif
 }
 
 static inline bool rt_mutex_steal(struct rt_mutex_waiter *waiter,
