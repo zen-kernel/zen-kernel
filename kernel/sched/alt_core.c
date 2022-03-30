@@ -2989,17 +2989,14 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 	return 0;
 }
 
-void sched_post_fork(struct task_struct *p, struct kernel_clone_args *kargs)
+void sched_cgroup_fork(struct task_struct *p, struct kernel_clone_args *kargs)
 {
 	unsigned long flags;
 	struct rq *rq;
 
 	/*
-	 * The child is not yet in the pid-hash so no cgroup attach races,
-	 * and the cgroup is pinned to this child due to cgroup_fork()
-	 * is ran before sched_fork().
-	 *
-	 * Silence PROVE_RCU.
+	 * Because we're not yet on the pid-hash, p->pi_lock isn't strictly
+	 * required yet, but lockdep gets upset if rules are violated.
 	 */
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
 	/*
@@ -3030,6 +3027,10 @@ void sched_post_fork(struct task_struct *p, struct kernel_clone_args *kargs)
 	 */
 	__set_task_cpu(p, smp_processor_id());
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
+}
+
+void sched_post_fork(struct task_struct *p)
+{
 }
 
 #ifdef CONFIG_SCHEDSTATS
