@@ -2751,8 +2751,6 @@ void partition_sched_domains(int ndoms_new, cpumask_var_t doms_new[],
 {}
 
 #ifdef CONFIG_NUMA
-int __read_mostly		node_reclaim_distance = RECLAIM_DISTANCE;
-
 int sched_numa_find_closest(const struct cpumask *cpus, int cpu)
 {
 	return best_mask_cpu(cpu, cpus);
