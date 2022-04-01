@@ -790,35 +790,6 @@ config GENERIC_SCHED_CLOCK
 
 menu "Scheduler features"
 
-menuconfig SCHED_ALT
-	bool "Alternative CPU Schedulers"
-	default y
-	help
-	  This feature enable alternative CPU scheduler"
-
-if SCHED_ALT
-
-choice
-	prompt "Alternative CPU Scheduler"
-	default SCHED_BMQ
-
-config SCHED_BMQ
-	bool "BMQ CPU scheduler"
-	help
-	  The BitMap Queue CPU scheduler for excellent interactivity and
-	  responsiveness on the desktop and solid scalability on normal
-	  hardware and commodity servers.
-
-config SCHED_PDS
-	bool "PDS CPU scheduler"
-	help
-	  The Priority and Deadline based Skip list multiple queue CPU
-	  Scheduler.
-
-endchoice
-
-endif
-
 config UCLAMP_TASK
 	bool "Enable utilization clamping for RT/FAIR tasks"
 	depends on CPU_FREQ_GOV_SCHEDUTIL
@@ -868,6 +839,35 @@ config UCLAMP_BUCKETS_COUNT
 	  precision.
 
 	  If in doubt, use the default value.
+
+menuconfig SCHED_ALT
+	bool "Alternative CPU Schedulers"
+	default y
+	help
+	  This feature enable alternative CPU scheduler"
+
+if SCHED_ALT
+
+choice
+	prompt "Alternative CPU Scheduler"
+	default SCHED_BMQ
+
+config SCHED_BMQ
+	bool "BMQ CPU scheduler"
+	help
+	  The BitMap Queue CPU scheduler for excellent interactivity and
+	  responsiveness on the desktop and solid scalability on normal
+	  hardware and commodity servers.
+
+config SCHED_PDS
+	bool "PDS CPU scheduler"
+	help
+	  The Priority and Deadline based Skip list multiple queue CPU
+	  Scheduler.
+
+endchoice
+
+endif
 
 endmenu
 
