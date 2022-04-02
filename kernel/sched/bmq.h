@@ -72,7 +72,7 @@ static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 	if (SCHED_FIFO != p->policy && task_on_rq_queued(p)) {
 		if (SCHED_RR != p->policy)
 			deboost_task(p);
-		requeue_task(p, rq);
+		requeue_task(p, rq, task_sched_prio_idx(p, rq));
 	}
 }
 
