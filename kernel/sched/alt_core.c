@@ -78,7 +78,7 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 /* Default time slice is 4 in ms, can be set via kernel parameter "sched_timeslice" */
 u64 sched_timeslice_ns __read_mostly = (4 << 20);
 
-static inline void requeue_task(struct task_struct *p, struct rq *rq);
+static inline void requeue_task(struct task_struct *p, struct rq *rq, int idx);
 
 #ifdef CONFIG_SCHED_BMQ
 #include "bmq.h"
@@ -784,16 +784,12 @@ static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
 	sched_update_tick_dependency(rq);
 }
 
-static inline void requeue_task(struct task_struct *p, struct rq *rq)
+static inline void requeue_task(struct task_struct *p, struct rq *rq, int idx)
 {
-	int idx;
-
 	lockdep_assert_held(&rq->lock);
 	/*printk(KERN_INFO "sched: requeue(%d) %px %016llx\n", cpu_of(rq), p, p->priodl);*/
 	WARN_ONCE(task_rq(p) != rq, "sched: cpu[%d] requeue task reside on cpu%d\n",
 		  cpu_of(rq), task_cpu(p));
-
-	idx = task_sched_prio_idx(p, rq);
 
 	list_del(&p->sq_node);
 	list_add_tail(&p->sq_node, &rq->queue.heads[idx]);
@@ -5034,9 +5030,11 @@ EXPORT_SYMBOL(default_wake_function);
 
 static inline void check_task_changed(struct task_struct *p, struct rq *rq)
 {
+	int idx;
+
 	/* Trigger resched if task sched_prio has been modified. */
-	if (task_on_rq_queued(p) && task_sched_prio_idx(p, rq) != p->sq_idx) {
-		requeue_task(p, rq);
+	if (task_on_rq_queued(p) && (idx = task_sched_prio_idx(p, rq)) != p->sq_idx) {
+		requeue_task(p, rq, idx);
 		check_preempt_curr(rq);
 	}
 }
