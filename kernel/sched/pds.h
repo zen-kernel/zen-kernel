@@ -101,7 +101,7 @@ static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 	p->time_slice = sched_timeslice_ns;
 	sched_renew_deadline(p, rq);
 	if (SCHED_FIFO != p->policy && task_on_rq_queued(p))
-		requeue_task(p, rq);
+		requeue_task(p, rq, task_sched_prio_idx(p, rq));
 }
 
 static inline void sched_task_sanity_check(struct task_struct *p, struct rq *rq)
