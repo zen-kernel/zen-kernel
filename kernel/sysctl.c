@@ -99,6 +99,10 @@
 
 /* Constants used for minimum and  maximum */
 
+#ifdef CONFIG_SCHED_ALT
+extern int sched_yield_type;
+#endif
+
 #ifdef CONFIG_PERF_EVENTS
 static const int six_hundred_forty_kb = 640 * 1024;
 #endif
@@ -1662,6 +1666,24 @@ int proc_do_static_key(struct ctl_table *table, int write,
 }
 
 static struct ctl_table kern_table[] = {
+#ifdef CONFIG_SCHED_ALT
+/* In ALT, only supported "sched_schedstats" */
+#ifdef CONFIG_SCHED_DEBUG
+#ifdef CONFIG_SMP
+#ifdef CONFIG_SCHEDSTATS
+	{
+		.procname	= "sched_schedstats",
+		.data		= NULL,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= sysctl_schedstats,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+#endif /* CONFIG_SCHEDSTATS */
+#endif /* CONFIG_SMP */
+#endif /* CONFIG_SCHED_DEBUG */
+#else  /* !CONFIG_SCHED_ALT */
 	{
 		.procname	= "sched_child_runs_first",
 		.data		= &sysctl_sched_child_runs_first,
@@ -1792,6 +1814,7 @@ static struct ctl_table kern_table[] = {
 		.extra2		= SYSCTL_ONE,
 	},
 #endif
+#endif /* !CONFIG_SCHED_ALT */
 #ifdef CONFIG_PROVE_LOCKING
 	{
 		.procname	= "prove_locking",
@@ -2184,6 +2207,17 @@ static struct ctl_table kern_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
+	},
+#endif
+#ifdef CONFIG_SCHED_ALT
+	{
+		.procname	= "yield_type",
+		.data		= &sched_yield_type,
+		.maxlen		= sizeof (int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_TWO,
 	},
 #endif
 #if defined(CONFIG_S390) && defined(CONFIG_SMP)

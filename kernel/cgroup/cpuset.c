@@ -704,7 +704,7 @@ out:
 	return ret;
 }
 
-#ifdef CONFIG_SMP
+#if defined(CONFIG_SMP) && !defined(CONFIG_SCHED_ALT)
 /*
  * Helper routine for generate_sched_domains().
  * Do cpusets a, b have overlapping effective cpus_allowed masks?
@@ -1100,7 +1100,7 @@ static void rebuild_sched_domains_locked(void)
 	/* Have scheduler rebuild the domains */
 	partition_and_rebuild_sched_domains(ndoms, doms, attr);
 }
-#else /* !CONFIG_SMP */
+#else /* !CONFIG_SMP || CONFIG_SCHED_ALT */
 static void rebuild_sched_domains_locked(void)
 {
 }
