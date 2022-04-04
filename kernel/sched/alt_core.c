@@ -728,16 +728,13 @@ unsigned long get_wchan(struct task_struct *p)
  * Add/Remove/Requeue task to/from the runqueue routines
  * Context: rq->lock
  */
-#define __SCHED_DEQUEUE_TASK(p, rq, flags, func)		\
-	psi_dequeue(p, flags & DEQUEUE_SLEEP);			\
-	sched_info_dequeue(rq, p);				\
-								\
-	list_del(&p->sq_node);					\
-	if (list_empty(&rq->queue.heads[p->sq_idx])) {		\
-		clear_bit(sched_idx2prio(p->sq_idx, rq),	\
-			  rq->queue.bitmap);			\
-		func;						\
-	}
+#define __SCHED_DEQUEUE_TASK(p, rq, flags)					\
+	psi_dequeue(p, flags & DEQUEUE_SLEEP);					\
+	sched_info_dequeue(rq, p);						\
+										\
+	list_del(&p->sq_node);							\
+	if (list_empty(&rq->queue.heads[p->sq_idx])) 				\
+		clear_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);
 
 #define __SCHED_ENQUEUE_TASK(p, rq, flags)				\
 	sched_info_enqueue(rq, p);					\
@@ -755,7 +752,7 @@ static inline void dequeue_task(struct task_struct *p, struct rq *rq, int flags)
 	WARN_ONCE(task_rq(p) != rq, "sched: dequeue task reside on cpu%d from cpu%d\n",
 		  task_cpu(p), cpu_of(rq));
 
-	__SCHED_DEQUEUE_TASK(p, rq, flags, update_sched_rq_watermark(rq));
+	__SCHED_DEQUEUE_TASK(p, rq, flags);
 	--rq->nr_running;
 #ifdef CONFIG_SMP
 	if (1 == rq->nr_running)
@@ -1532,6 +1529,7 @@ static struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int
 
 	WRITE_ONCE(p->on_rq, TASK_ON_RQ_MIGRATING);
 	dequeue_task(p, rq, 0);
+	update_sched_rq_watermark(rq);
 	set_task_cpu(p, new_cpu);
 	raw_spin_unlock(&rq->lock);
 
@@ -4291,7 +4289,7 @@ migrate_pending_tasks(struct rq *rq, struct rq *dest_rq, const int dest_cpu)
 	       (p = sched_rq_next_task(skip, rq)) != rq->idle) {
 		skip = sched_rq_next_task(p, rq);
 		if (cpumask_test_cpu(dest_cpu, p->cpus_ptr)) {
-			__SCHED_DEQUEUE_TASK(p, rq, 0, );
+			__SCHED_DEQUEUE_TASK(p, rq, 0);
 			set_task_cpu(p, dest_cpu);
 			sched_task_sanity_check(p, dest_rq);
 			__SCHED_ENQUEUE_TASK(p, dest_rq, 0);
@@ -4336,7 +4334,6 @@ static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 				if (rq->nr_running > 1)
 					cpumask_set_cpu(cpu, &sched_rq_pending_mask);
 
-				update_sched_rq_watermark(rq);
 				cpufreq_update_util(rq, 0);
 
 				spin_release(&src_rq->lock.dep_map, _RET_IP_);
@@ -4480,6 +4477,7 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 	unsigned long prev_state;
 	struct rq *rq;
 	int cpu;
+	int deactivated = 0;
 
 	cpu = smp_processor_id();
 	rq = cpu_rq(cpu);
@@ -4547,6 +4545,7 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 			 */
 			sched_task_deactivate(prev, rq);
 			deactivate_task(prev, rq);
+			deactivated = 1;
 
 			if (prev->in_iowait) {
 				atomic_inc(&rq->nr_iowait);
@@ -4566,6 +4565,8 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 #endif
 
 	if (likely(prev != next)) {
+		if (deactivated)
+			update_sched_rq_watermark(rq);
 		next->last_ran = rq->clock_task;
 		rq->last_ts_switch = rq->clock;
 
