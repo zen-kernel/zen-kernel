@@ -858,6 +858,9 @@ struct task_struct {
 	u8				__pad;
 
 	struct __call_single_node	wake_entry;
+#endif
+
+#ifndef CONFIG_SCHED_ALT
 	unsigned int			wakee_flips;
 	unsigned long			wakee_flip_decay_ts;
 	struct task_struct		*last_wakee;
@@ -871,6 +874,7 @@ struct task_struct {
 	 */
 	int				recent_used_cpu;
 	int				wake_cpu;
+#endif /* !CONFIG_SCHED_ALT */
 
 	int				prio;
 	int				static_prio;
