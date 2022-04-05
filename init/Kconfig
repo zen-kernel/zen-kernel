@@ -855,15 +855,15 @@ config UCLAMP_BUCKETS_COUNT
 
 menuconfig SCHED_ALT
 	bool "Alternative CPU Schedulers"
-	default y
+	default n
 	help
-	  This feature enable alternative CPU scheduler"
+	  This feature enables the ProjectC alternative CPU schedulers."
 
 if SCHED_ALT
 
 choice
-	prompt "Alternative CPU Scheduler"
-	default SCHED_BMQ
+	prompt "Alternative CPU schedulers"
+	default SCHED_PDS
 
 config SCHED_BMQ
 	bool "BMQ CPU scheduler"
