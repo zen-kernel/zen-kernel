@@ -1750,8 +1750,8 @@ static int ocelot_gpiochip_register(struct platform_device *pdev,
 	gc->base = -1;
 	gc->label = "ocelot-gpio";
 
-	irq = irq_of_parse_and_map(gc->of_node, 0);
-	if (irq) {
+	irq = platform_get_irq_optional(pdev, 0);
+	if (irq > 0) {
 		girq = &gc->irq;
 		girq->chip = &ocelot_irqchip;
 		girq->parent_handler = ocelot_irq_handler;
@@ -1788,9 +1788,10 @@ static struct regmap *ocelot_pinctrl_create_pincfg(struct platform_device *pdev)
 		.val_bits = 32,
 		.reg_stride = 4,
 		.max_register = 32,
+		.name = "pincfg",
 	};
 
-	base = devm_platform_ioremap_resource(pdev, 0);
+	base = devm_platform_ioremap_resource(pdev, 1);
 	if (IS_ERR(base)) {
 		dev_dbg(&pdev->dev, "Failed to ioremap config registers (no extended pinconf)\n");
 		return NULL;

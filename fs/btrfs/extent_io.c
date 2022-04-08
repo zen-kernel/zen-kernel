@@ -2639,7 +2639,6 @@ int btrfs_repair_one_sector(struct inode *inode,
 	const int icsum = bio_offset >> fs_info->sectorsize_bits;
 	struct bio *repair_bio;
 	struct btrfs_bio *repair_bbio;
-	blk_status_t status;
 
 	btrfs_debug(fs_info,
 		   "repair read error: read error at %llu", start);
@@ -2678,13 +2677,13 @@ int btrfs_repair_one_sector(struct inode *inode,
 		    "repair read error: submitting new read to mirror %d",
 		    failrec->this_mirror);
 
-	status = submit_bio_hook(inode, repair_bio, failrec->this_mirror,
-				 failrec->bio_flags);
-	if (status) {
-		free_io_failure(failure_tree, tree, failrec);
-		bio_put(repair_bio);
-	}
-	return blk_status_to_errno(status);
+	/*
+	 * At this point we have a bio, so any errors from submit_bio_hook()
+	 * will be handled by the endio on the repair_bio, so we can't return an
+	 * error here.
+	 */
+	submit_bio_hook(inode, repair_bio, failrec->this_mirror, failrec->bio_flags);
+	return BLK_STS_OK;
 }
 
 static void end_page_read(struct page *page, bool uptodate, u64 start, u32 len)
@@ -4780,11 +4779,12 @@ static int submit_eb_page(struct page *page, struct writeback_control *wbc,
 		return ret;
 	}
 	if (cache) {
-		/* Impiles write in zoned mode */
-		btrfs_put_block_group(cache);
-		/* Mark the last eb in a block group */
+		/*
+		 * Implies write in zoned mode. Mark the last eb in a block group.
+		 */
 		if (cache->seq_zone && eb->start + eb->len == cache->zone_capacity)
 			set_bit(EXTENT_BUFFER_ZONE_FINISH, &eb->bflags);
+		btrfs_put_block_group(cache);
 	}
 	ret = write_one_eb(eb, wbc, epd);
 	free_extent_buffer(eb);

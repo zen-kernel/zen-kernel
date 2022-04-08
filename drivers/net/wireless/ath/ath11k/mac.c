@@ -2319,6 +2319,9 @@ static void ath11k_peer_assoc_h_he_6ghz(struct ath11k *ar,
 	if (!arg->he_flag || band != NL80211_BAND_6GHZ || !sta->he_6ghz_capa.capa)
 		return;
 
+	if (sta->bandwidth == IEEE80211_STA_RX_BW_40)
+		arg->bw_40 = true;
+
 	if (sta->bandwidth == IEEE80211_STA_RX_BW_80)
 		arg->bw_80 = true;
 
@@ -4504,24 +4507,30 @@ static int ath11k_mac_op_sta_state(struct ieee80211_hw *hw,
 				    sta->addr, arvif->vdev_id);
 	} else if ((old_state == IEEE80211_STA_NONE &&
 		    new_state == IEEE80211_STA_NOTEXIST)) {
+		bool skip_peer_delete = ar->ab->hw_params.vdev_start_delay &&
+			vif->type == NL80211_IFTYPE_STATION;
+
 		ath11k_dp_peer_cleanup(ar, arvif->vdev_id, sta->addr);
 
-		if (ar->ab->hw_params.vdev_start_delay &&
-		    vif->type == NL80211_IFTYPE_STATION)
-			goto free;
-
-		ret = ath11k_peer_delete(ar, arvif->vdev_id, sta->addr);
-		if (ret)
-			ath11k_warn(ar->ab, "Failed to delete peer: %pM for VDEV: %d\n",
-				    sta->addr, arvif->vdev_id);
-		else
-			ath11k_dbg(ar->ab, ATH11K_DBG_MAC, "Removed peer: %pM for VDEV: %d\n",
-				   sta->addr, arvif->vdev_id);
+		if (!skip_peer_delete) {
+			ret = ath11k_peer_delete(ar, arvif->vdev_id, sta->addr);
+			if (ret)
+				ath11k_warn(ar->ab,
+					    "Failed to delete peer: %pM for VDEV: %d\n",
+					    sta->addr, arvif->vdev_id);
+			else
+				ath11k_dbg(ar->ab,
+					   ATH11K_DBG_MAC,
+					   "Removed peer: %pM for VDEV: %d\n",
+					   sta->addr, arvif->vdev_id);
+		}
 
 		ath11k_mac_dec_num_stations(arvif, sta);
 		spin_lock_bh(&ar->ab->base_lock);
 		peer = ath11k_peer_find(ar->ab, arvif->vdev_id, sta->addr);
-		if (peer && peer->sta == sta) {
+		if (skip_peer_delete && peer) {
+			peer->sta = NULL;
+		} else if (peer && peer->sta == sta) {
 			ath11k_warn(ar->ab, "Found peer entry %pM n vdev %i after it was supposedly removed\n",
 				    vif->addr, arvif->vdev_id);
 			peer->sta = NULL;
@@ -4531,7 +4540,6 @@ static int ath11k_mac_op_sta_state(struct ieee80211_hw *hw,
 		}
 		spin_unlock_bh(&ar->ab->base_lock);
 
-free:
 		kfree(arsta->tx_stats);
 		arsta->tx_stats = NULL;
 

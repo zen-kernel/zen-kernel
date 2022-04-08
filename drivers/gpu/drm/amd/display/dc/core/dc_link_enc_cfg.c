@@ -122,6 +122,7 @@ static void remove_link_enc_assignment(
 				stream->link_enc = NULL;
 				state->res_ctx.link_enc_cfg_ctx.link_enc_assignments[i].eng_id = ENGINE_ID_UNKNOWN;
 				state->res_ctx.link_enc_cfg_ctx.link_enc_assignments[i].stream = NULL;
+				dc_stream_release(stream);
 				break;
 			}
 		}
@@ -269,6 +270,13 @@ void link_enc_cfg_init(
 	clear_enc_assignments(dc, state);
 
 	state->res_ctx.link_enc_cfg_ctx.mode = LINK_ENC_CFG_STEADY;
+}
+
+void link_enc_cfg_copy(const struct dc_state *src_ctx, struct dc_state *dst_ctx)
+{
+	memcpy(&dst_ctx->res_ctx.link_enc_cfg_ctx,
+	       &src_ctx->res_ctx.link_enc_cfg_ctx,
+	       sizeof(dst_ctx->res_ctx.link_enc_cfg_ctx));
 }
 
 void link_enc_cfg_link_encs_assign(
