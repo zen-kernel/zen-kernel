@@ -654,6 +654,20 @@ static inline int sched_numa_find_closest(const struct cpumask *cpus, int cpu)
 }
 #endif
 
+static inline
+unsigned long uclamp_rq_util_with(struct rq *rq, unsigned long boost,
+				  struct task_struct *p)
+{
+	return boost;
+}
+
+static inline bool uclamp_rq_is_capped(struct rq *rq) { return false; }
+
+static inline bool uclamp_is_used(void)
+{
+	return false;
+}
+
 extern void swake_up_all_locked(struct swait_queue_head *q);
 extern void __prepare_to_swait(struct swait_queue_head *q, struct swait_queue *wait);
 
