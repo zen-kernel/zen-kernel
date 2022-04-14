@@ -567,7 +567,7 @@ void pm8001_ccb_task_free(struct pm8001_hba_info *pm8001_ha,
 
 	task->lldd_task = NULL;
 	ccb->task = NULL;
-	ccb->ccb_tag = 0xFFFFFFFF;
+	ccb->ccb_tag = PM8001_INVALID_TAG;
 	ccb->open_retry = 0;
 	pm8001_tag_free(pm8001_ha, ccb_idx);
 }
@@ -847,10 +847,10 @@ pm8001_exec_internal_task_abort(struct pm8001_hba_info *pm8001_ha,
 
 		res = PM8001_CHIP_DISP->task_abort(pm8001_ha,
 			pm8001_dev, flag, task_tag, ccb_tag);
-
 		if (res) {
 			del_timer(&task->slow_task->timer);
 			pm8001_dbg(pm8001_ha, FAIL, "Executing internal task failed\n");
+			pm8001_tag_free(pm8001_ha, ccb_tag);
 			goto ex_err;
 		}
 		wait_for_completion(&task->slow_task->completion);
@@ -952,8 +952,10 @@ void pm8001_open_reject_retry(
 		struct task_status_struct *ts;
 		struct pm8001_device *pm8001_dev;
 		unsigned long flags1;
-		u32 tag;
 		struct pm8001_ccb_info *ccb = &pm8001_ha->ccb_info[i];
+
+		if (ccb->ccb_tag == PM8001_INVALID_TAG)
+			continue;
 
 		pm8001_dev = ccb->device;
 		if (!pm8001_dev || (pm8001_dev->dev_type == SAS_PHY_UNUSED))
@@ -965,9 +967,6 @@ void pm8001_open_reject_retry(
 			 || ((d / sizeof(*pm8001_dev)) >= PM8001_MAX_DEVICES))
 				continue;
 		} else if (pm8001_dev != device_to_close)
-			continue;
-		tag = ccb->ccb_tag;
-		if (!tag || (tag == 0xFFFFFFFF))
 			continue;
 		task = ccb->task;
 		if (!task || !task->task_done)
@@ -989,11 +988,11 @@ void pm8001_open_reject_retry(
 				& SAS_TASK_STATE_ABORTED))) {
 			spin_unlock_irqrestore(&task->task_state_lock,
 				flags1);
-			pm8001_ccb_task_free(pm8001_ha, task, ccb, tag);
+			pm8001_ccb_task_free(pm8001_ha, task, ccb, ccb->ccb_tag);
 		} else {
 			spin_unlock_irqrestore(&task->task_state_lock,
 				flags1);
-			pm8001_ccb_task_free(pm8001_ha, task, ccb, tag);
+			pm8001_ccb_task_free(pm8001_ha, task, ccb, ccb->ccb_tag);
 			mb();/* in order to force CPU ordering */
 			spin_unlock_irqrestore(&pm8001_ha->lock, flags);
 			task->task_done(task);

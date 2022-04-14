@@ -498,6 +498,11 @@ static int mctp_route_output(struct mctp_route *route, struct sk_buff *skb)
 
 	if (cb->ifindex) {
 		/* direct route; use the hwaddr we stashed in sendmsg */
+		if (cb->halen != skb->dev->addr_len) {
+			/* sanity check, sendmsg should have already caught this */
+			kfree_skb(skb);
+			return -EMSGSIZE;
+		}
 		daddr = cb->haddr;
 	} else {
 		/* If lookup fails let the device handle daddr==NULL */
@@ -507,7 +512,7 @@ static int mctp_route_output(struct mctp_route *route, struct sk_buff *skb)
 
 	rc = dev_hard_header(skb, skb->dev, ntohs(skb->protocol),
 			     daddr, skb->dev->dev_addr, skb->len);
-	if (rc) {
+	if (rc < 0) {
 		kfree_skb(skb);
 		return -EHOSTUNREACH;
 	}
@@ -707,7 +712,7 @@ static int mctp_do_fragment_route(struct mctp_route *rt, struct sk_buff *skb,
 {
 	const unsigned int hlen = sizeof(struct mctp_hdr);
 	struct mctp_hdr *hdr, *hdr2;
-	unsigned int pos, size;
+	unsigned int pos, size, headroom;
 	struct sk_buff *skb2;
 	int rc;
 	u8 seq;
@@ -721,6 +726,9 @@ static int mctp_do_fragment_route(struct mctp_route *rt, struct sk_buff *skb,
 		return -EMSGSIZE;
 	}
 
+	/* keep same headroom as the original skb */
+	headroom = skb_headroom(skb);
+
 	/* we've got the header */
 	skb_pull(skb, hlen);
 
@@ -728,7 +736,7 @@ static int mctp_do_fragment_route(struct mctp_route *rt, struct sk_buff *skb,
 		/* size of message payload */
 		size = min(mtu - hlen, skb->len - pos);
 
-		skb2 = alloc_skb(MCTP_HEADER_MAXLEN + hlen + size, GFP_KERNEL);
+		skb2 = alloc_skb(headroom + hlen + size, GFP_KERNEL);
 		if (!skb2) {
 			rc = -ENOMEM;
 			break;
@@ -744,7 +752,7 @@ static int mctp_do_fragment_route(struct mctp_route *rt, struct sk_buff *skb,
 			skb_set_owner_w(skb2, skb->sk);
 
 		/* establish packet */
-		skb_reserve(skb2, MCTP_HEADER_MAXLEN);
+		skb_reserve(skb2, headroom);
 		skb_reset_network_header(skb2);
 		skb_put(skb2, hlen + size);
 		skb2->transport_header = skb2->network_header + hlen;
@@ -786,7 +794,7 @@ int mctp_local_output(struct sock *sk, struct mctp_route *rt,
 {
 	struct mctp_sock *msk = container_of(sk, struct mctp_sock, sk);
 	struct mctp_skb_cb *cb = mctp_cb(skb);
-	struct mctp_route tmp_rt;
+	struct mctp_route tmp_rt = {0};
 	struct mctp_sk_key *key;
 	struct net_device *dev;
 	struct mctp_hdr *hdr;
@@ -892,6 +900,7 @@ out_release:
 		mctp_route_release(rt);
 
 	dev_put(dev);
+	mctp_dev_put(tmp_rt.dev);
 
 	return rc;
 
@@ -1057,11 +1066,13 @@ static int mctp_pkttype_receive(struct sk_buff *skb, struct net_device *dev,
 
 	rt->output(rt, skb);
 	mctp_route_release(rt);
+	mctp_dev_put(mdev);
 
 	return NET_RX_SUCCESS;
 
 err_drop:
 	kfree_skb(skb);
+	mctp_dev_put(mdev);
 	return NET_RX_DROP;
 }
 
