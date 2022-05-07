@@ -664,4 +664,14 @@ extern void sched_dynamic_update(int mode);
 #endif
 
 static inline void nohz_run_idle_balance(int cpu) { }
+
+static inline
+unsigned long uclamp_rq_util_with(struct rq *rq, unsigned long util,
+				  struct task_struct *p)
+{
+	return util;
+}
+
+static inline bool uclamp_rq_is_capped(struct rq *rq) { return false; }
+
 #endif /* ALT_SCHED_H */
