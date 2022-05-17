@@ -312,7 +312,7 @@ static u32 bbr_tso_segs_generic(struct sock *sk, unsigned int mss_now,
 	bytes = sk->sk_pacing_rate >> sk->sk_pacing_shift;
 
 	bytes = min_t(u32, bytes, gso_max_size - 1 - MAX_TCP_HEADER);
-	segs = max_t(u32, bytes / mss_now, bbr_min_tso_segs(sk));
+	segs = max_t(u32, div_u64(bytes, mss_now), bbr_min_tso_segs(sk));
 	return segs;
 }
 
