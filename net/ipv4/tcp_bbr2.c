@@ -588,7 +588,7 @@ static void bbr_debug(struct sock *sk, u32 acked,
 		 bbr_rate_kbps(sk, bbr_max_bw(sk)), /* bw: max bw */
 		 0ULL,				    /* lb: [obsolete] */
 		 0ULL,				    /* ib: [obsolete] */
-		 (u64)sk->sk_pacing_rate * 8 / 1000,
+		 div_u64((u64)sk->sk_pacing_rate * 8, 1000),
 		 acked,
 		 tcp_packets_in_flight(tp),
 		 rs->is_ack_delayed ? 'd' : '.',
@@ -698,7 +698,7 @@ static u32 bbr_tso_segs_generic(struct sock *sk, unsigned int mss_now,
 	}
 
 	bytes = min_t(u32, bytes, gso_max_size - 1 - MAX_TCP_HEADER);
-	segs = max_t(u32, bytes / mss_now, bbr_min_tso_segs(sk));
+	segs = max_t(u32, div_u64(bytes, mss_now), bbr_min_tso_segs(sk));
 	return segs;
 }
 
