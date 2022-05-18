@@ -70,6 +70,7 @@ struct rtw8723d_efuse {
 	u8 country_code[2];
 	u8 res[3];
 	struct rtw8723de_efuse e;
+	struct rtw8723de_efuse u;
 };
 
 extern const struct rtw_chip_info rtw8723d_hw_spec;
