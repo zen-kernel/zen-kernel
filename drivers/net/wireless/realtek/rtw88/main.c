@@ -1781,6 +1781,10 @@ static int rtw_chip_parameter_setup(struct rtw_dev *rtwdev)
 		rtwdev->hci.rpwm_addr = 0x03d9;
 		rtwdev->hci.cpwm_addr = 0x03da;
 		break;
+	case RTW_HCI_TYPE_USB:
+		rtwdev->hci.rpwm_addr = 0xfe58;
+		rtwdev->hci.cpwm_addr = 0xfe57;
+		break;
 	default:
 		rtw_err(rtwdev, "unsupported hci type\n");
 		return -EINVAL;
@@ -2180,6 +2184,7 @@ int rtw_register_hw(struct rtw_dev *rtwdev, struct ieee80211_hw *hw)
 	hw->wiphy->available_antennas_rx = hal->antenna_rx;
 
 	hw->wiphy->flags |= WIPHY_FLAG_SUPPORTS_TDLS |
+			    WIPHY_FLAG_HAS_REMAIN_ON_CHANNEL |
 			    WIPHY_FLAG_TDLS_EXTERNAL_SETUP;
 
 	hw->wiphy->features |= NL80211_FEATURE_SCAN_RANDOM_MAC_ADDR;
