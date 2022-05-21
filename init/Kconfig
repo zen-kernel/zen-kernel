@@ -164,6 +164,7 @@ config ZEN_INTERACTIVE
 
 	    Default scheduler for SQ..: mq-deadline ->   bfq
 	    Default scheduler for MQ..:        none ->   kyber
+	    DM-Crypt workqueues.......:        yes  ->   no
 
 	  --- Virtual Memory Subsystem ---------------------------
 
