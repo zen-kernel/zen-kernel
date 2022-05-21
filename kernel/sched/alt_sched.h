@@ -48,6 +48,7 @@
 
 #include "cpupri.h"
 
+#include <trace/events/power.h>
 #include <trace/events/sched.h>
 
 #ifdef CONFIG_SCHED_BMQ
@@ -452,9 +453,6 @@ this_rq_lock_irq(struct rq_flags *rf)
 	return rq;
 }
 
-extern void raw_spin_rq_lock_nested(struct rq *rq, int subclass);
-extern void raw_spin_rq_unlock(struct rq *rq);
-
 static inline raw_spinlock_t *__rq_lockp(struct rq *rq)
 {
 	return &rq->lock;
@@ -464,6 +462,14 @@ static inline raw_spinlock_t *rq_lockp(struct rq *rq)
 {
 	return __rq_lockp(rq);
 }
+
+static inline void lockdep_assert_rq_held(struct rq *rq)
+{
+	lockdep_assert_held(__rq_lockp(rq));
+}
+
+extern void raw_spin_rq_lock_nested(struct rq *rq, int subclass);
+extern void raw_spin_rq_unlock(struct rq *rq);
 
 static inline void raw_spin_rq_lock(struct rq *rq)
 {
