@@ -11,40 +11,40 @@
  *		scheduler by Alfred Chen.
  *  2019-02-20	BMQ(BitMap Queue) kernel scheduler by Alfred Chen.
  */
+#include <linux/sched/cputime.h>
+#include <linux/sched/debug.h>
+#include <linux/sched/isolation.h>
+#include <linux/sched/loadavg.h>
+#include <linux/sched/mm.h>
+#include <linux/sched/nohz.h>
+#include <linux/sched/stat.h>
+#include <linux/sched/wake_q.h>
+
+#include <linux/blkdev.h>
+#include <linux/context_tracking.h>
+#include <linux/cpuset.h>
+#include <linux/delayacct.h>
+#include <linux/init_task.h>
+#include <linux/kcov.h>
+#include <linux/kprobes.h>
+#include <linux/profile.h>
+#include <linux/nmi.h>
+#include <linux/scs.h>
+
+#include <uapi/linux/sched/types.h>
+
+#include <asm/switch_to.h>
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/sched.h>
 #undef CREATE_TRACE_POINTS
 
 #include "sched.h"
 
-#include <linux/sched/rt.h>
+#include "pelt.h"
 
-#include <linux/context_tracking.h>
-#include <linux/compat.h>
-#include <linux/blkdev.h>
-#include <linux/delayacct.h>
-#include <linux/freezer.h>
-#include <linux/init_task.h>
-#include <linux/jump_label.h>
-#include <linux/kprobes.h>
-#include <linux/mmu_context.h>
-#include <linux/nmi.h>
-#include <linux/rcupdate_wait.h>
-#include <linux/security.h>
-#include <linux/syscalls.h>
-#include <linux/wait_bit.h>
-
-#include <linux/kcov.h>
-#include <linux/scs.h>
-
-#include <asm/switch_to.h>
-
-#include "../workqueue_internal.h"
 #include "../../fs/io-wq.h"
 #include "../smpboot.h"
-
-#include "pelt.h"
-#include "smp.h"
 
 /*
  * Export tracepoints that act as a bare tracehook (ie: have no trace event
