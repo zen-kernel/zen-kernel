@@ -2,8 +2,8 @@
 VERSION = 5
 PATCHLEVEL = 19
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Superb Owl
+EXTRAVERSION = -zen
+NAME = Eternal Return
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
