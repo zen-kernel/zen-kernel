@@ -3881,7 +3881,7 @@ void scheduler_tick(void)
 }
 
 #ifdef CONFIG_SCHED_SMT
-static inline int active_load_balance_cpu_stop(void *data)
+static inline int sg_balance_cpu_stop(void *data)
 {
 	struct rq *rq = this_rq();
 	struct task_struct *p = data;
@@ -3932,15 +3932,15 @@ static inline int sg_balance_trigger(const int cpu)
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
 
 	if (res)
-		stop_one_cpu_nowait(cpu, active_load_balance_cpu_stop,
-				    curr, &rq->active_balance_work);
+		stop_one_cpu_nowait(cpu, sg_balance_cpu_stop, curr,
+				    &rq->active_balance_work);
 	return res;
 }
 
 /*
- * sg_balance_check - slibing group balance check for run queue @rq
+ * sg_balance - slibing group balance check for run queue @rq
  */
-static inline void sg_balance_check(struct rq *rq)
+static inline void sg_balance(struct rq *rq)
 {
 	cpumask_t chk;
 	int cpu = cpu_of(rq);
@@ -4605,7 +4605,7 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 	}
 
 #ifdef CONFIG_SCHED_SMT
-	sg_balance_check(rq);
+	sg_balance(rq);
 #endif
 }
 
