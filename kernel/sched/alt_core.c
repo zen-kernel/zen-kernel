@@ -147,14 +147,14 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 #ifdef CONFIG_SCHED_SMT
 static cpumask_t sched_sg_idle_mask ____cacheline_aligned_in_smp;
 #endif
-static cpumask_t sched_rq_watermark[SCHED_BITS] ____cacheline_aligned_in_smp;
+static cpumask_t sched_rq_watermark[SCHED_QUEUE_BITS] ____cacheline_aligned_in_smp;
 
 /* sched_queue related functions */
 static inline void sched_queue_init(struct sched_queue *q)
 {
 	int i;
 
-	bitmap_zero(q->bitmap, SCHED_BITS);
+	bitmap_zero(q->bitmap, SCHED_QUEUE_BITS);
 	for(i = 0; i < SCHED_BITS; i++)
 		INIT_LIST_HEAD(&q->heads[i]);
 }
@@ -186,7 +186,7 @@ static inline void update_sched_rq_watermark(struct rq *rq)
 	cpu = cpu_of(rq);
 	if (watermark < last_wm) {
 		for (i = last_wm; i > watermark; i--)
-			cpumask_clear_cpu(cpu, sched_rq_watermark + SCHED_BITS - 1 - i);
+			cpumask_clear_cpu(cpu, sched_rq_watermark + SCHED_QUEUE_BITS - i);
 #ifdef CONFIG_SCHED_SMT
 		if (static_branch_likely(&sched_smt_present) &&
 		    IDLE_TASK_SCHED_PRIO == last_wm)
@@ -197,7 +197,7 @@ static inline void update_sched_rq_watermark(struct rq *rq)
 	}
 	/* last_wm < watermark */
 	for (i = watermark; i > last_wm; i--)
-		cpumask_set_cpu(cpu, sched_rq_watermark + SCHED_BITS - 1 - i);
+		cpumask_set_cpu(cpu, sched_rq_watermark + SCHED_QUEUE_BITS - i);
 #ifdef CONFIG_SCHED_SMT
 	if (static_branch_likely(&sched_smt_present) &&
 	    IDLE_TASK_SCHED_PRIO == watermark) {
@@ -1905,7 +1905,7 @@ static inline int select_task_rq(struct task_struct *p)
 #endif
 	    cpumask_and(&tmp, &chk_mask, sched_rq_watermark) ||
 	    cpumask_and(&tmp, &chk_mask,
-			sched_rq_watermark + SCHED_BITS - task_sched_prio(p)))
+			sched_rq_watermark + SCHED_QUEUE_BITS - 1 - task_sched_prio(p)))
 		return best_mask_cpu(task_cpu(p), &tmp);
 
 	return best_mask_cpu(task_cpu(p), &chk_mask);
@@ -3696,24 +3696,6 @@ unsigned int nr_iowait(void)
  */
 void sched_exec(void)
 {
-	struct task_struct *p = current;
-	unsigned long flags;
-	int dest_cpu;
-
-	raw_spin_lock_irqsave(&p->pi_lock, flags);
-	dest_cpu = cpumask_any(p->cpus_ptr);
-	if (dest_cpu == smp_processor_id())
-		goto unlock;
-
-	if (likely(cpu_active(dest_cpu))) {
-		struct migration_arg arg = { p, dest_cpu };
-
-		raw_spin_unlock_irqrestore(&p->pi_lock, flags);
-		stop_one_cpu(task_cpu(p), migration_cpu_stop, &arg);
-		return;
-	}
-unlock:
-	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 }
 
 #endif
@@ -7246,7 +7228,7 @@ void __init sched_init(void)
 	wait_bit_init();
 
 #ifdef CONFIG_SMP
-	for (i = 0; i < SCHED_BITS; i++)
+	for (i = 0; i < SCHED_QUEUE_BITS; i++)
 		cpumask_copy(sched_rq_watermark + i, cpu_present_mask);
 #endif
 
