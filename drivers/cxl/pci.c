@@ -462,16 +462,24 @@ static int wait_for_media_ready(struct cxl_dev_state *cxlds)
 	return 0;
 }
 
-static int cxl_dvsec_ranges(struct cxl_dev_state *cxlds)
+/*
+ * Return positive number of non-zero ranges on success and a negative
+ * error code on failure. The cxl_mem driver depends on ranges == 0 to
+ * init HDM operation.
+ */
+static int __cxl_dvsec_ranges(struct cxl_dev_state *cxlds,
+			      struct cxl_endpoint_dvsec_info *info)
 {
-	struct cxl_endpoint_dvsec_info *info = &cxlds->info;
 	struct pci_dev *pdev = to_pci_dev(cxlds->dev);
+	int hdm_count, rc, i, ranges = 0;
+	struct device *dev = &pdev->dev;
 	int d = cxlds->cxl_dvsec;
-	int hdm_count, rc, i;
 	u16 cap, ctrl;
 
-	if (!d)
+	if (!d) {
+		dev_dbg(dev, "No DVSEC Capability\n");
 		return -ENXIO;
+	}
 
 	rc = pci_read_config_word(pdev, d + CXL_DVSEC_CAP_OFFSET, &cap);
 	if (rc)
@@ -481,8 +489,10 @@ static int cxl_dvsec_ranges(struct cxl_dev_state *cxlds)
 	if (rc)
 		return rc;
 
-	if (!(cap & CXL_DVSEC_MEM_CAPABLE))
+	if (!(cap & CXL_DVSEC_MEM_CAPABLE)) {
+		dev_dbg(dev, "Not MEM Capable\n");
 		return -ENXIO;
+	}
 
 	/*
 	 * It is not allowed by spec for MEM.capable to be set and have 0 legacy
@@ -495,8 +505,10 @@ static int cxl_dvsec_ranges(struct cxl_dev_state *cxlds)
 		return -EINVAL;
 
 	rc = wait_for_valid(cxlds);
-	if (rc)
+	if (rc) {
+		dev_dbg(dev, "Failure awaiting MEM_INFO_VALID (%d)\n", rc);
 		return rc;
+	}
 
 	info->mem_enabled = FIELD_GET(CXL_DVSEC_MEM_ENABLE, ctrl);
 
@@ -538,10 +550,17 @@ static int cxl_dvsec_ranges(struct cxl_dev_state *cxlds)
 		};
 
 		if (size)
-			info->ranges++;
+			ranges++;
 	}
 
-	return 0;
+	return ranges;
+}
+
+static void cxl_dvsec_ranges(struct cxl_dev_state *cxlds)
+{
+	struct cxl_endpoint_dvsec_info *info = &cxlds->info;
+
+	info->ranges = __cxl_dvsec_ranges(cxlds, info);
 }
 
 static int cxl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
@@ -610,10 +629,7 @@ static int cxl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (rc)
 		return rc;
 
-	rc = cxl_dvsec_ranges(cxlds);
-	if (rc)
-		dev_warn(&pdev->dev,
-			 "Failed to get DVSEC range information (%d)\n", rc);
+	cxl_dvsec_ranges(cxlds);
 
 	cxlmd = devm_cxl_add_memdev(cxlds);
 	if (IS_ERR(cxlmd))
