@@ -95,7 +95,6 @@ sesInfoFree(struct cifs_ses *buf_to_free)
 	kfree_sensitive(buf_to_free->password);
 	kfree(buf_to_free->user_name);
 	kfree(buf_to_free->domainName);
-	kfree(buf_to_free->workstation_name);
 	kfree_sensitive(buf_to_free->auth_key.response);
 	kfree(buf_to_free->iface_list);
 	kfree_sensitive(buf_to_free);
@@ -1309,7 +1308,7 @@ int cifs_update_super_prepath(struct cifs_sb_info *cifs_sb, char *prefix)
  * for "\<server>\<dfsname>\<linkpath>" DFS reference,
  * where <dfsname> contains non-ASCII unicode symbols.
  *
- * Check such DFS reference and emulate -ENOENT if it is actual.
+ * Check such DFS reference.
  */
 int cifs_dfs_query_info_nonascii_quirk(const unsigned int xid,
 				       struct cifs_tcon *tcon,
@@ -1341,10 +1340,6 @@ int cifs_dfs_query_info_nonascii_quirk(const unsigned int xid,
 		cifs_dbg(FYI, "DFS ref '%s' is found, emulate -EREMOTE\n",
 			 dfspath);
 		rc = -EREMOTE;
-	} else if (rc == -EEXIST) {
-		cifs_dbg(FYI, "DFS ref '%s' is not found, emulate -ENOENT\n",
-			 dfspath);
-		rc = -ENOENT;
 	} else {
 		cifs_dbg(FYI, "%s: dfs_cache_find returned %d\n", __func__, rc);
 	}
