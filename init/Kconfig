@@ -125,7 +125,7 @@ config ZEN_INTERACTIVE
 	  --- Block Layer ----------------------------------------
 
 	    Default scheduler.........: mq-deadline -> bfq
-		DM-Crypt Workqueues.......:          on -> off
+	    DM-Crypt Workqueues.......:          on -> off
 
 	  --- Virtual Memory Subsystem ---------------------------
 
