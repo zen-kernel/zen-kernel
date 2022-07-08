@@ -29,6 +29,7 @@
 #include <linux/kprobes.h>
 #include <linux/profile.h>
 #include <linux/nmi.h>
+#include <linux/scs.h>
 
 #include <uapi/linux/sched/types.h>
 
@@ -39,6 +40,8 @@
 #undef CREATE_TRACE_POINTS
 
 #include "sched.h"
+
+#include "pelt.h"
 
 #include "../../fs/io-wq.h"
 #include "../smpboot.h"
