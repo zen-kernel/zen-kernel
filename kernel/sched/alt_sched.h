@@ -290,10 +290,10 @@ static inline int best_mask_cpu(int cpu, const cpumask_t *mask)
 	return __best_mask_cpu(mask, per_cpu(sched_cpu_topo_masks, cpu));
 }
 
-extern void flush_smp_call_function_from_idle(void);
+extern void flush_smp_call_function_queue(void);
 
 #else  /* !CONFIG_SMP */
-static inline void flush_smp_call_function_from_idle(void) { }
+static inline void flush_smp_call_function_queue(void) { }
 #endif
 
 #ifndef arch_scale_freq_tick
