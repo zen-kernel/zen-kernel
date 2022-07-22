@@ -14,7 +14,6 @@
 #include <net/netfilter/nf_conntrack_extend.h>
 
 enum nf_ct_ecache_state {
-	NFCT_ECACHE_UNKNOWN,		/* destroy event not sent */
 	NFCT_ECACHE_DESTROY_FAIL,	/* tried but failed to send destroy event */
 	NFCT_ECACHE_DESTROY_SENT,	/* sent destroy event after failure */
 };
@@ -23,7 +22,6 @@ struct nf_conntrack_ecache {
 	unsigned long cache;		/* bitops want long */
 	u16 ctmask;			/* bitmask of ct events to be delivered */
 	u16 expmask;			/* bitmask of expect events to be delivered */
-	enum nf_ct_ecache_state state:8;/* ecache state */
 	u32 missed;			/* missed events */
 	u32 portid;			/* netlink portid of destroyer */
 };
@@ -165,6 +163,8 @@ void nf_conntrack_ecache_work(struct net *net, enum nf_ct_ecache_state state);
 
 void nf_conntrack_ecache_pernet_init(struct net *net);
 void nf_conntrack_ecache_pernet_fini(struct net *net);
+
+struct nf_conntrack_net_ecache *nf_conn_pernet_ecache(const struct net *net);
 
 static inline bool nf_conntrack_ecache_dwork_pending(const struct net *net)
 {

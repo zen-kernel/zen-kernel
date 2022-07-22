@@ -526,21 +526,6 @@ clean_from_lists(struct nf_conn *ct)
 }
 
 /* must be called with local_bh_disable */
-static void nf_ct_add_to_dying_list(struct nf_conn *ct)
-{
-	struct ct_pcpu *pcpu;
-
-	/* add this conntrack to the (per cpu) dying list */
-	ct->cpu = smp_processor_id();
-	pcpu = per_cpu_ptr(nf_ct_net(ct)->ct.pcpu_lists, ct->cpu);
-
-	spin_lock(&pcpu->lock);
-	hlist_nulls_add_head(&ct->tuplehash[IP_CT_DIR_ORIGINAL].hnnode,
-			     &pcpu->dying);
-	spin_unlock(&pcpu->lock);
-}
-
-/* must be called with local_bh_disable */
 static void nf_ct_add_to_unconfirmed_list(struct nf_conn *ct)
 {
 	struct ct_pcpu *pcpu;
@@ -556,11 +541,11 @@ static void nf_ct_add_to_unconfirmed_list(struct nf_conn *ct)
 }
 
 /* must be called with local_bh_disable */
-static void nf_ct_del_from_dying_or_unconfirmed_list(struct nf_conn *ct)
+static void nf_ct_del_from_unconfirmed_list(struct nf_conn *ct)
 {
 	struct ct_pcpu *pcpu;
 
-	/* We overload first tuple to link into unconfirmed or dying list.*/
+	/* We overload first tuple to link into unconfirmed list.*/
 	pcpu = per_cpu_ptr(nf_ct_net(ct)->ct.pcpu_lists, ct->cpu);
 
 	spin_lock(&pcpu->lock);
@@ -648,7 +633,8 @@ void nf_ct_destroy(struct nf_conntrack *nfct)
 	 */
 	nf_ct_remove_expectations(ct);
 
-	nf_ct_del_from_dying_or_unconfirmed_list(ct);
+	if (unlikely(!nf_ct_is_confirmed(ct)))
+		nf_ct_del_from_unconfirmed_list(ct);
 
 	local_bh_enable();
 
@@ -660,15 +646,12 @@ void nf_ct_destroy(struct nf_conntrack *nfct)
 }
 EXPORT_SYMBOL(nf_ct_destroy);
 
-static void nf_ct_delete_from_lists(struct nf_conn *ct)
+static void __nf_ct_delete_from_lists(struct nf_conn *ct)
 {
 	struct net *net = nf_ct_net(ct);
 	unsigned int hash, reply_hash;
 	unsigned int sequence;
 
-	nf_ct_helper_destroy(ct);
-
-	local_bh_disable();
 	do {
 		sequence = read_seqcount_begin(&nf_conntrack_generation);
 		hash = hash_conntrack(net,
@@ -681,10 +664,28 @@ static void nf_ct_delete_from_lists(struct nf_conn *ct)
 
 	clean_from_lists(ct);
 	nf_conntrack_double_unlock(hash, reply_hash);
+}
 
-	nf_ct_add_to_dying_list(ct);
+static void nf_ct_delete_from_lists(struct nf_conn *ct)
+{
+	nf_ct_helper_destroy(ct);
+	local_bh_disable();
+
+	__nf_ct_delete_from_lists(ct);
 
 	local_bh_enable();
+}
+
+static void nf_ct_add_to_ecache_list(struct nf_conn *ct)
+{
+#ifdef CONFIG_NF_CONNTRACK_EVENTS
+	struct nf_conntrack_net *cnet = nf_ct_pernet(nf_ct_net(ct));
+
+	spin_lock(&cnet->ecache.dying_lock);
+	hlist_nulls_add_head_rcu(&ct->tuplehash[IP_CT_DIR_ORIGINAL].hnnode,
+				 &cnet->ecache.dying_list);
+	spin_unlock(&cnet->ecache.dying_lock);
+#endif
 }
 
 bool nf_ct_delete(struct nf_conn *ct, u32 portid, int report)
@@ -709,7 +710,12 @@ bool nf_ct_delete(struct nf_conn *ct, u32 portid, int report)
 		/* destroy event was not delivered. nf_ct_put will
 		 * be done by event cache worker on redelivery.
 		 */
-		nf_ct_delete_from_lists(ct);
+		nf_ct_helper_destroy(ct);
+		local_bh_disable();
+		__nf_ct_delete_from_lists(ct);
+		nf_ct_add_to_ecache_list(ct);
+		local_bh_enable();
+
 		nf_conntrack_ecache_work(nf_ct_net(ct), NFCT_ECACHE_DESTROY_FAIL);
 		return false;
 	}
@@ -757,6 +763,9 @@ static void nf_ct_gc_expired(struct nf_conn *ct)
 {
 	if (!refcount_inc_not_zero(&ct->ct_general.use))
 		return;
+
+	/* load ->status after refcount increase */
+	smp_acquire__after_ctrl_dep();
 
 	if (nf_ct_should_gc(ct))
 		nf_ct_kill(ct);
@@ -824,6 +833,9 @@ __nf_conntrack_find_get(struct net *net, const struct nf_conntrack_zone *zone,
 		 */
 		ct = nf_ct_tuplehash_to_ctrack(h);
 		if (likely(refcount_inc_not_zero(&ct->ct_general.use))) {
+			/* re-check key after refcount */
+			smp_acquire__after_ctrl_dep();
+
 			if (likely(nf_ct_key_equal(h, tuple, zone, net)))
 				goto found;
 
@@ -972,7 +984,6 @@ static void __nf_conntrack_insert_prepare(struct nf_conn *ct)
 	struct nf_conn_tstamp *tstamp;
 
 	refcount_inc(&ct->ct_general.use);
-	ct->status |= IPS_CONFIRMED;
 
 	/* set conntrack timestamp, if enabled. */
 	tstamp = nf_conn_tstamp_find(ct);
@@ -1001,7 +1012,6 @@ static int __nf_ct_resolve_clash(struct sk_buff *skb,
 		nf_conntrack_get(&ct->ct_general);
 
 		nf_ct_acct_merge(ct, ctinfo, loser_ct);
-		nf_ct_add_to_dying_list(loser_ct);
 		nf_ct_put(loser_ct);
 		nf_ct_set(skb, ct, ctinfo);
 
@@ -1134,7 +1144,6 @@ nf_ct_resolve_clash(struct sk_buff *skb, struct nf_conntrack_tuple_hash *h,
 		return ret;
 
 drop:
-	nf_ct_add_to_dying_list(loser_ct);
 	NF_CT_STAT_INC(net, drop);
 	NF_CT_STAT_INC(net, insert_failed);
 	return NF_DROP;
@@ -1201,10 +1210,10 @@ __nf_conntrack_confirm(struct sk_buff *skb)
 	 * user context, else we insert an already 'dead' hash, blocking
 	 * further use of that particular connection -JM.
 	 */
-	nf_ct_del_from_dying_or_unconfirmed_list(ct);
+	nf_ct_del_from_unconfirmed_list(ct);
+	ct->status |= IPS_CONFIRMED;
 
 	if (unlikely(nf_ct_is_dying(ct))) {
-		nf_ct_add_to_dying_list(ct);
 		NF_CT_STAT_INC(net, insert_failed);
 		goto dying;
 	}
@@ -1228,7 +1237,6 @@ __nf_conntrack_confirm(struct sk_buff *skb)
 			goto out;
 		if (chainlen++ > max_chainlen) {
 chaintoolong:
-			nf_ct_add_to_dying_list(ct);
 			NF_CT_STAT_INC(net, chaintoolong);
 			NF_CT_STAT_INC(net, insert_failed);
 			ret = NF_DROP;
@@ -1366,6 +1374,9 @@ static unsigned int early_drop_list(struct net *net,
 
 		if (!refcount_inc_not_zero(&tmp->ct_general.use))
 			continue;
+
+		/* load ->ct_net and ->status after refcount increase */
+		smp_acquire__after_ctrl_dep();
 
 		/* kill only if still in same netns -- might have moved due to
 		 * SLAB_TYPESAFE_BY_RCU rules.
@@ -1515,6 +1526,9 @@ static void gc_worker(struct work_struct *work)
 			/* need to take reference to avoid possible races */
 			if (!refcount_inc_not_zero(&tmp->ct_general.use))
 				continue;
+
+			/* load ->status after refcount increase */
+			smp_acquire__after_ctrl_dep();
 
 			if (gc_worker_skip_ct(tmp)) {
 				nf_ct_put(tmp);
@@ -1746,6 +1760,16 @@ init_conntrack(struct net *net, struct nf_conn *tmpl,
 	}
 	if (!exp)
 		__nf_ct_try_assign_helper(ct, tmpl, GFP_ATOMIC);
+
+	/* Other CPU might have obtained a pointer to this object before it was
+	 * released.  Because refcount is 0, refcount_inc_not_zero() will fail.
+	 *
+	 * After refcount_set(1) it will succeed; ensure that zeroing of
+	 * ct->status and the correct ct->net pointer are visible; else other
+	 * core might observe CONFIRMED bit which means the entry is valid and
+	 * in the hash table, but its not (anymore).
+	 */
+	smp_wmb();
 
 	/* Now it is inserted into the unconfirmed list, set refcount to 1. */
 	refcount_set(&ct->ct_general.use, 1);
@@ -2777,7 +2801,6 @@ void nf_conntrack_init_end(void)
  * We need to use special "null" values, not used in hash table
  */
 #define UNCONFIRMED_NULLS_VAL	((1<<30)+0)
-#define DYING_NULLS_VAL		((1<<30)+1)
 
 int nf_conntrack_init_net(struct net *net)
 {
@@ -2798,7 +2821,6 @@ int nf_conntrack_init_net(struct net *net)
 
 		spin_lock_init(&pcpu->lock);
 		INIT_HLIST_NULLS_HEAD(&pcpu->unconfirmed, UNCONFIRMED_NULLS_VAL);
-		INIT_HLIST_NULLS_HEAD(&pcpu->dying, DYING_NULLS_VAL);
 	}
 
 	net->ct.stat = alloc_percpu(struct ip_conntrack_stat);
