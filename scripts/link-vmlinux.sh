@@ -130,6 +130,9 @@ objtool_link()
 
 	if is_enabled CONFIG_VMLINUX_VALIDATION; then
 		objtoolopt="${objtoolopt} --noinstr"
+		if is_enabled CONFIG_CPU_UNRET_ENTRY; then
+			objtoolopt="${objtoolopt} --unret"
+		fi
 	fi
 
 	if [ -n "${objtoolopt}" ]; then
