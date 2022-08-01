@@ -85,8 +85,7 @@ inline int task_running_nice(struct task_struct *p)
 
 static void sched_task_fork(struct task_struct *p, struct rq *rq)
 {
-	p->boost_prio = (p->boost_prio < 0) ?
-		p->boost_prio + MAX_PRIORITY_ADJ : MAX_PRIORITY_ADJ;
+	p->boost_prio = MAX_PRIORITY_ADJ;
 }
 
 static inline void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
