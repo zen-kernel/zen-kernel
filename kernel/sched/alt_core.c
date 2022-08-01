@@ -67,7 +67,7 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 #define sched_feat(x)	(0)
 #endif /* CONFIG_SCHED_DEBUG */
 
-#define ALT_SCHED_VERSION "v5.18-r1"
+#define ALT_SCHED_VERSION "v5.18-r2"
 
 /* rt_prio(prio) defined in include/linux/sched/rt.h */
 #define rt_task(p)		rt_prio((p)->prio)
@@ -151,98 +151,14 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 #ifdef CONFIG_SCHED_SMT
 static cpumask_t sched_sg_idle_mask ____cacheline_aligned_in_smp;
 #endif
-
-#define BITS_PER_ATOMIC_LONG_T BITS_PER_LONG
-typedef struct sched_bitmask {
-	atomic_long_t bits[DIV_ROUND_UP(SCHED_BITS, BITS_PER_ATOMIC_LONG_T)];
-} sched_bitmask_t;
-static sched_bitmask_t sched_rq_watermark[NR_CPUS] ____cacheline_aligned_in_smp;
-
-#define x(p, set, mask)                                \
-	do {                                           \
-		smp_mb__before_atomic();               \
-		if (set)                               \
-			atomic_long_or((mask), (p));   \
-		else                                   \
-			atomic_long_and(~(mask), (p)); \
-		smp_mb__after_atomic();                \
-	} while (0)
-
-static __always_inline void sched_rq_watermark_fill_downwards(int cpu, unsigned int end,
-		unsigned int start, bool set)
-{
-	unsigned int start_idx, start_bit;
-	unsigned int end_idx, end_bit;
-	atomic_long_t *p;
-
-	if (end == start) {
-		return;
-	}
-
-	start_idx = start / BITS_PER_ATOMIC_LONG_T;
-	start_bit = start % BITS_PER_ATOMIC_LONG_T;
-	end_idx = (end - 1) / BITS_PER_ATOMIC_LONG_T;
-	end_bit = (end - 1) % BITS_PER_ATOMIC_LONG_T;
-	p = &sched_rq_watermark[cpu].bits[end_idx];
-
-	if (end_idx == start_idx) {
-		x(p, set, (~0UL >> (BITS_PER_ATOMIC_LONG_T - 1 - end_bit)) & (~0UL << start_bit));
-		return;
-	}
-
-	if (end_bit != BITS_PER_ATOMIC_LONG_T - 1) {
-		x(p, set, (~0UL >> (BITS_PER_ATOMIC_LONG_T - 1 - end_bit)));
-		p -= 1;
-		end_idx -= 1;
-	}
-
-	while (end_idx != start_idx) {
-		smp_mb__before_atomic();
-		atomic_long_set(p, set ? ~0UL : 0);
-		smp_mb__after_atomic();
-		p -= 1;
-		end_idx -= 1;
-	}
-
-	x(p, set, ~0UL << start_bit);
-}
-
-#undef x
-
-static __always_inline bool sched_rq_watermark_and(cpumask_t *dstp, const cpumask_t *cpus, int prio, bool not)
-{
-	int cpu;
-	bool ret = false;
-	int idx = prio / BITS_PER_ATOMIC_LONG_T;
-	int bit = prio % BITS_PER_ATOMIC_LONG_T;
-
-	cpumask_clear(dstp);
-	for_each_cpu(cpu, cpus)
-		if (test_bit(bit, (long*)&sched_rq_watermark[cpu].bits[idx].counter) == !not) {
-			__cpumask_set_cpu(cpu, dstp);
-			ret = true;
-		}
-	return ret;
-}
-
-static __always_inline bool sched_rq_watermark_test(const cpumask_t *cpus, int prio, bool not)
-{
-	int cpu;
-	int idx = prio / BITS_PER_ATOMIC_LONG_T;
-	int bit = prio % BITS_PER_ATOMIC_LONG_T;
-
-	for_each_cpu(cpu, cpus)
-		if (test_bit(bit, (long*)&sched_rq_watermark[cpu].bits[idx].counter) == !not)
-			return true;
-	return false;
-}
+static cpumask_t sched_rq_watermark[SCHED_QUEUE_BITS] ____cacheline_aligned_in_smp;
 
 /* sched_queue related functions */
 static inline void sched_queue_init(struct sched_queue *q)
 {
 	int i;
 
-	bitmap_zero(q->bitmap, SCHED_BITS);
+	bitmap_zero(q->bitmap, SCHED_QUEUE_BITS);
 	for(i = 0; i < SCHED_BITS; i++)
 		INIT_LIST_HEAD(&q->heads[i]);
 }
@@ -264,6 +180,7 @@ static inline void update_sched_rq_watermark(struct rq *rq)
 {
 	unsigned long watermark = find_first_bit(rq->queue.bitmap, SCHED_QUEUE_BITS);
 	unsigned long last_wm = rq->watermark;
+	unsigned long i;
 	int cpu;
 
 	if (watermark == last_wm)
@@ -272,25 +189,28 @@ static inline void update_sched_rq_watermark(struct rq *rq)
 	rq->watermark = watermark;
 	cpu = cpu_of(rq);
 	if (watermark < last_wm) {
-		sched_rq_watermark_fill_downwards(cpu, SCHED_BITS - 1 - watermark, SCHED_BITS - 1 - last_wm, false);
+		for (i = last_wm; i > watermark; i--)
+			cpumask_clear_cpu(cpu, sched_rq_watermark + SCHED_QUEUE_BITS - i);
 #ifdef CONFIG_SCHED_SMT
 		if (static_branch_likely(&sched_smt_present) &&
-		    unlikely(IDLE_TASK_SCHED_PRIO == last_wm))
+		    IDLE_TASK_SCHED_PRIO == last_wm)
 			cpumask_andnot(&sched_sg_idle_mask,
 				       &sched_sg_idle_mask, cpu_smt_mask(cpu));
 #endif
 		return;
 	}
 	/* last_wm < watermark */
-	sched_rq_watermark_fill_downwards(cpu, SCHED_BITS - 1 - last_wm, SCHED_BITS - 1 - watermark, true);
+	for (i = watermark; i > last_wm; i--)
+		cpumask_set_cpu(cpu, sched_rq_watermark + SCHED_QUEUE_BITS - i);
 #ifdef CONFIG_SCHED_SMT
 	if (static_branch_likely(&sched_smt_present) &&
-	    unlikely(IDLE_TASK_SCHED_PRIO == watermark)) {
-		const cpumask_t *smt_mask = cpu_smt_mask(cpu);
+	    IDLE_TASK_SCHED_PRIO == watermark) {
+		cpumask_t tmp;
 
-		if (!sched_rq_watermark_test(smt_mask, 0, true))
+		cpumask_and(&tmp, cpu_smt_mask(cpu), sched_rq_watermark);
+		if (cpumask_equal(&tmp, cpu_smt_mask(cpu)))
 			cpumask_or(&sched_sg_idle_mask,
-				   &sched_sg_idle_mask, smt_mask);
+				   &sched_sg_idle_mask, cpu_smt_mask(cpu));
 	}
 #endif
 }
@@ -1987,9 +1907,9 @@ static inline int select_task_rq(struct task_struct *p)
 #ifdef CONFIG_SCHED_SMT
 	    cpumask_and(&tmp, &chk_mask, &sched_sg_idle_mask) ||
 #endif
-	    sched_rq_watermark_and(&tmp, &chk_mask, 0, false) ||
-	    sched_rq_watermark_and(&tmp, &chk_mask,
-			SCHED_BITS - task_sched_prio(p) - 1, false))
+	    cpumask_and(&tmp, &chk_mask, sched_rq_watermark) ||
+	    cpumask_and(&tmp, &chk_mask,
+			sched_rq_watermark + SCHED_QUEUE_BITS - 1 - task_sched_prio(p)))
 		return best_mask_cpu(task_cpu(p), &tmp);
 
 	return best_mask_cpu(task_cpu(p), &chk_mask);
@@ -3783,24 +3703,6 @@ unsigned int nr_iowait(void)
  */
 void sched_exec(void)
 {
-	struct task_struct *p = current;
-	unsigned long flags;
-	int dest_cpu;
-
-	raw_spin_lock_irqsave(&p->pi_lock, flags);
-	dest_cpu = cpumask_any(p->cpus_ptr);
-	if (dest_cpu == smp_processor_id())
-		goto unlock;
-
-	if (likely(cpu_active(dest_cpu))) {
-		struct migration_arg arg = { p, dest_cpu };
-
-		raw_spin_unlock_irqrestore(&p->pi_lock, flags);
-		stop_one_cpu(task_cpu(p), migration_cpu_stop, &arg);
-		return;
-	}
-unlock:
-	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 }
 
 #endif
@@ -3968,7 +3870,7 @@ void scheduler_tick(void)
 }
 
 #ifdef CONFIG_SCHED_SMT
-static inline int active_load_balance_cpu_stop(void *data)
+static inline int sg_balance_cpu_stop(void *data)
 {
 	struct rq *rq = this_rq();
 	struct task_struct *p = data;
@@ -4019,15 +3921,15 @@ static inline int sg_balance_trigger(const int cpu)
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
 
 	if (res)
-		stop_one_cpu_nowait(cpu, active_load_balance_cpu_stop,
-				    curr, &rq->active_balance_work);
+		stop_one_cpu_nowait(cpu, sg_balance_cpu_stop, curr,
+				    &rq->active_balance_work);
 	return res;
 }
 
 /*
- * sg_balance_check - slibing group balance check for run queue @rq
+ * sg_balance - slibing group balance check for run queue @rq
  */
-static inline void sg_balance_check(struct rq *rq)
+static inline void sg_balance(struct rq *rq)
 {
 	cpumask_t chk;
 	int cpu = cpu_of(rq);
@@ -4041,7 +3943,7 @@ static inline void sg_balance_check(struct rq *rq)
 	 * find potential cpus which can migrate the current running task
 	 */
 	if (cpumask_test_cpu(cpu, &sched_sg_idle_mask) &&
-	    sched_rq_watermark_and(&chk, cpu_online_mask, 0, true) &&
+	    cpumask_andnot(&chk, cpu_online_mask, sched_rq_watermark) &&
 	    cpumask_andnot(&chk, &chk, &sched_rq_pending_mask)) {
 		int i;
 
@@ -4349,8 +4251,9 @@ static inline void schedule_debug(struct task_struct *prev, bool preempt)
 #ifdef ALT_SCHED_DEBUG
 void alt_sched_debug(void)
 {
-	printk(KERN_INFO "sched: pending: 0x%04lx, sg_idle: 0x%04lx\n",
+	printk(KERN_INFO "sched: pending: 0x%04lx, idle: 0x%04lx, sg_idle: 0x%04lx\n",
 	       sched_rq_pending_mask.bits[0],
+	       sched_rq_watermark[0].bits[0],
 	       sched_sg_idle_mask.bits[0]);
 }
 #else
@@ -4691,7 +4594,7 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 	}
 
 #ifdef CONFIG_SCHED_SMT
-	sg_balance_check(rq);
+	sg_balance(rq);
 #endif
 }
 
@@ -7332,17 +7235,8 @@ void __init sched_init(void)
 	wait_bit_init();
 
 #ifdef CONFIG_SMP
-	for (i = 0; i < nr_cpu_ids; i++) {
-		long val = cpumask_test_cpu(i, cpu_present_mask) ? -1L : 0;
-		int j;
-		for (j = 0; j < DIV_ROUND_UP(SCHED_BITS, BITS_PER_ATOMIC_LONG_T); j++)
-			atomic_long_set(&sched_rq_watermark[i].bits[j], val);
-	}
-	for (i = nr_cpu_ids; i < NR_CPUS; i++) {
-		int j;
-		for (j = 0; j < DIV_ROUND_UP(SCHED_BITS, BITS_PER_ATOMIC_LONG_T); j++)
-			atomic_long_set(&sched_rq_watermark[i].bits[j], 0);
-	}
+	for (i = 0; i < SCHED_QUEUE_BITS; i++)
+		cpumask_copy(sched_rq_watermark + i, cpu_present_mask);
 #endif
 
 #ifdef CONFIG_CGROUP_SCHED
