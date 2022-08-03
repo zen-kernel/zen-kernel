@@ -917,6 +917,7 @@ asmlinkage long sys_madvise(unsigned long start, size_t len, int behavior);
 asmlinkage long sys_process_madvise(int pidfd, const struct iovec __user *vec,
 			size_t vlen, int behavior, unsigned int flags);
 asmlinkage long sys_process_mrelease(int pidfd, unsigned int flags);
+asmlinkage long sys_pmadv_ksm(int pidfd, int behavior, unsigned int flags);
 asmlinkage long sys_remap_file_pages(unsigned long start, unsigned long size,
 			unsigned long prot, unsigned long pgoff,
 			unsigned long flags);
