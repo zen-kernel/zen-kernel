@@ -420,8 +420,8 @@ apply_microcode_early_amd(u32 cpuid_1_eax, void *ucode, size_t size, bool save_p
 	struct cont_desc desc = { 0 };
 	u8 (*patch)[PATCH_MAX_SIZE];
 	struct microcode_amd *mc;
-	u32 rev, dummy, *new_rev;
 	bool ret = false;
+	u32 *new_rev;
 
 #ifdef CONFIG_X86_32
 	new_rev = (u32 *)__pa_nodebug(&ucode_new_rev);
@@ -437,10 +437,6 @@ apply_microcode_early_amd(u32 cpuid_1_eax, void *ucode, size_t size, bool save_p
 
 	mc = desc.mc;
 	if (!mc)
-		return ret;
-
-	native_rdmsr(MSR_AMD64_PATCH_LEVEL, rev, dummy);
-	if (rev >= mc->hdr.patch_id)
 		return ret;
 
 	if (!__apply_microcode_amd(mc)) {
@@ -516,7 +512,7 @@ void load_ucode_amd_ap(unsigned int cpuid_1_eax)
 {
 	struct microcode_amd *mc;
 	struct cpio_data cp;
-	u32 *new_rev, rev, dummy;
+	u32 *new_rev;
 
 	if (IS_ENABLED(CONFIG_X86_32)) {
 		mc	= (struct microcode_amd *)__pa_nodebug(amd_ucode_patch);
@@ -526,10 +522,8 @@ void load_ucode_amd_ap(unsigned int cpuid_1_eax)
 		new_rev = &ucode_new_rev;
 	}
 
-	native_rdmsr(MSR_AMD64_PATCH_LEVEL, rev, dummy);
-
 	/* Check whether we have saved a new patch already: */
-	if (*new_rev && rev < mc->hdr.patch_id) {
+	if (*new_rev) {
 		if (!__apply_microcode_amd(mc)) {
 			*new_rev = mc->hdr.patch_id;
 			return;
@@ -571,23 +565,17 @@ int __init save_microcode_in_initrd_amd(unsigned int cpuid_1_eax)
 
 void reload_ucode_amd(void)
 {
-	struct microcode_amd *mc;
-	u32 rev, dummy __always_unused;
+	struct microcode_amd *mc = (struct microcode_amd *)amd_ucode_patch;
 
-	mc = (struct microcode_amd *)amd_ucode_patch;
-
-	rdmsr(MSR_AMD64_PATCH_LEVEL, rev, dummy);
-
-	if (rev < mc->hdr.patch_id) {
-		if (!__apply_microcode_amd(mc)) {
-			ucode_new_rev = mc->hdr.patch_id;
-			pr_info("reload patch_level=0x%08x\n", ucode_new_rev);
-		}
+	if (!__apply_microcode_amd(mc)) {
+		ucode_new_rev = mc->hdr.patch_id;
+		pr_info("reload patch_level=0x%08x\n", ucode_new_rev);
 	}
 }
 static u16 __find_equiv_id(unsigned int cpu)
 {
 	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
+
 	return find_equiv_id(&equiv_table, uci->cpu_sig.sig);
 }
 
@@ -678,7 +666,7 @@ static enum ucode_state apply_microcode_amd(int cpu)
 	struct ucode_cpu_info *uci;
 	struct ucode_patch *p;
 	enum ucode_state ret;
-	u32 rev, dummy __always_unused;
+	u32 rev;
 
 	BUG_ON(raw_smp_processor_id() != cpu);
 
@@ -691,14 +679,6 @@ static enum ucode_state apply_microcode_amd(int cpu)
 	mc_amd  = p->data;
 	uci->mc = p->data;
 
-	rdmsr(MSR_AMD64_PATCH_LEVEL, rev, dummy);
-
-	/* need to apply patch? */
-	if (rev >= mc_amd->hdr.patch_id) {
-		ret = UCODE_OK;
-		goto out;
-	}
-
 	if (__apply_microcode_amd(mc_amd)) {
 		pr_err("CPU%d: update failed for patch_level=0x%08x\n",
 			cpu, mc_amd->hdr.patch_id);
@@ -710,7 +690,6 @@ static enum ucode_state apply_microcode_amd(int cpu)
 
 	pr_info("CPU%d: new patch_level=0x%08x\n", cpu, rev);
 
-out:
 	uci->cpu_sig.rev = rev;
 	c->microcode	 = rev;
 
