@@ -5,7 +5,7 @@
 #define __SDW_BUS_H
 
 #define DEFAULT_BANK_SWITCH_TIMEOUT 3000
-#define DEFAULT_PROBE_TIMEOUT       10000
+#define DEFAULT_PROBE_TIMEOUT       2000
 
 u64 sdw_dmi_override_adr(struct sdw_bus *bus, u64 addr);
 
