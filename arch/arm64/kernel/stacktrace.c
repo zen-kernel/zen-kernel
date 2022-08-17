@@ -117,15 +117,15 @@ static int notrace unwind_next(struct task_struct *tsk,
 		if (fp <= state->prev_fp)
 			return -EINVAL;
 	} else {
-		set_bit(state->prev_type, state->stacks_done);
+		__set_bit(state->prev_type, state->stacks_done);
 	}
 
 	/*
 	 * Record this frame record's values and location. The prev_fp and
 	 * prev_type are only meaningful to the next unwind_next() invocation.
 	 */
-	state->fp = READ_ONCE_NOCHECK(*(unsigned long *)(fp));
-	state->pc = READ_ONCE_NOCHECK(*(unsigned long *)(fp + 8));
+	state->fp = READ_ONCE(*(unsigned long *)(fp));
+	state->pc = READ_ONCE(*(unsigned long *)(fp + 8));
 	state->prev_fp = fp;
 	state->prev_type = info.type;
 

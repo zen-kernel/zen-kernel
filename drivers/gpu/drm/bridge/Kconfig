@@ -78,6 +78,7 @@ config DRM_DISPLAY_CONNECTOR
 config DRM_FSL_LDB
 	tristate "Freescale i.MX8MP LDB bridge"
 	depends on OF
+	depends on ARCH_MXC || COMPILE_TEST
 	select DRM_KMS_HELPER
 	select DRM_PANEL_BRIDGE
 	help
@@ -93,6 +94,8 @@ config DRM_ITE_IT6505
         select DRM_KMS_HELPER
         select DRM_DP_HELPER
         select EXTCON
+        select CRYPTO
+        select CRYPTO_HASH
         help
           ITE IT6505 DisplayPort bridge chip driver.
 

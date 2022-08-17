@@ -107,8 +107,6 @@ static const struct ath11k_hw_params ath11k_hw_params[] = {
 		.fixed_mem_region = true,
 		.static_window_map = false,
 		.hybrid_bus_type = false,
-		.dp_window_idx = 0,
-		.ce_window_idx = 0,
 		.fixed_fw_mem = false,
 		.support_off_channel_tx = false,
 	},
@@ -183,8 +181,6 @@ static const struct ath11k_hw_params ath11k_hw_params[] = {
 		.fixed_mem_region = true,
 		.static_window_map = false,
 		.hybrid_bus_type = false,
-		.dp_window_idx = 0,
-		.ce_window_idx = 0,
 		.fixed_fw_mem = false,
 		.support_off_channel_tx = false,
 	},
@@ -258,8 +254,6 @@ static const struct ath11k_hw_params ath11k_hw_params[] = {
 		.fixed_mem_region = false,
 		.static_window_map = false,
 		.hybrid_bus_type = false,
-		.dp_window_idx = 0,
-		.ce_window_idx = 0,
 		.fixed_fw_mem = false,
 		.support_off_channel_tx = true,
 	},
@@ -333,8 +327,6 @@ static const struct ath11k_hw_params ath11k_hw_params[] = {
 		.fixed_mem_region = false,
 		.static_window_map = true,
 		.hybrid_bus_type = false,
-		.dp_window_idx = 3,
-		.ce_window_idx = 2,
 		.fixed_fw_mem = false,
 		.support_off_channel_tx = false,
 	},
@@ -408,8 +400,6 @@ static const struct ath11k_hw_params ath11k_hw_params[] = {
 		.fixed_mem_region = false,
 		.static_window_map = false,
 		.hybrid_bus_type = false,
-		.dp_window_idx = 0,
-		.ce_window_idx = 0,
 		.fixed_fw_mem = false,
 		.support_off_channel_tx = true,
 	},
@@ -482,8 +472,6 @@ static const struct ath11k_hw_params ath11k_hw_params[] = {
 		.fixed_mem_region = false,
 		.static_window_map = false,
 		.hybrid_bus_type = false,
-		.dp_window_idx = 0,
-		.ce_window_idx = 0,
 		.fixed_fw_mem = false,
 		.support_off_channel_tx = true,
 	},
@@ -556,8 +544,6 @@ static const struct ath11k_hw_params ath11k_hw_params[] = {
 		.fixed_mem_region = false,
 		.static_window_map = true,
 		.hybrid_bus_type = true,
-		.dp_window_idx = 1,
-		.ce_window_idx = 2,
 		.fixed_fw_mem = true,
 		.support_off_channel_tx = false,
 	},
@@ -1225,23 +1211,23 @@ static int ath11k_core_pdev_create(struct ath11k_base *ab)
 		return ret;
 	}
 
-	ret = ath11k_mac_register(ab);
-	if (ret) {
-		ath11k_err(ab, "failed register the radio with mac80211: %d\n", ret);
-		goto err_pdev_debug;
-	}
-
 	ret = ath11k_dp_pdev_alloc(ab);
 	if (ret) {
 		ath11k_err(ab, "failed to attach DP pdev: %d\n", ret);
-		goto err_mac_unregister;
+		goto err_pdev_debug;
+	}
+
+	ret = ath11k_mac_register(ab);
+	if (ret) {
+		ath11k_err(ab, "failed register the radio with mac80211: %d\n", ret);
+		goto err_dp_pdev_free;
 	}
 
 	ret = ath11k_thermal_register(ab);
 	if (ret) {
 		ath11k_err(ab, "could not register thermal device: %d\n",
 			   ret);
-		goto err_dp_pdev_free;
+		goto err_mac_unregister;
 	}
 
 	ret = ath11k_spectral_init(ab);
@@ -1254,10 +1240,10 @@ static int ath11k_core_pdev_create(struct ath11k_base *ab)
 
 err_thermal_unregister:
 	ath11k_thermal_unregister(ab);
-err_dp_pdev_free:
-	ath11k_dp_pdev_free(ab);
 err_mac_unregister:
 	ath11k_mac_unregister(ab);
+err_dp_pdev_free:
+	ath11k_dp_pdev_free(ab);
 err_pdev_debug:
 	ath11k_debugfs_pdev_destroy(ab);
 

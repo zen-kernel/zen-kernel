@@ -2115,10 +2115,12 @@ static int stfsm_probe(struct platform_device *pdev)
 		(long long)fsm->mtd.size, (long long)(fsm->mtd.size >> 20),
 		fsm->mtd.erasesize, (fsm->mtd.erasesize >> 10));
 
-	return mtd_device_register(&fsm->mtd, NULL, 0);
-
+	ret = mtd_device_register(&fsm->mtd, NULL, 0);
+	if (ret) {
 err_clk_unprepare:
-	clk_disable_unprepare(fsm->clk);
+		clk_disable_unprepare(fsm->clk);
+	}
+
 	return ret;
 }
 
@@ -2126,9 +2128,11 @@ static int stfsm_remove(struct platform_device *pdev)
 {
 	struct stfsm *fsm = platform_get_drvdata(pdev);
 
+	WARN_ON(mtd_device_unregister(&fsm->mtd));
+
 	clk_disable_unprepare(fsm->clk);
 
-	return mtd_device_unregister(&fsm->mtd);
+	return 0;
 }
 
 #ifdef CONFIG_PM_SLEEP

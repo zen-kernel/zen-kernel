@@ -109,9 +109,9 @@ static inline bool str_has_sfx(const char *str, const char *sfx)
 	size_t str_len = strlen(str);
 	size_t sfx_len = strlen(sfx);
 
-	if (sfx_len <= str_len)
-		return strcmp(str + str_len - sfx_len, sfx);
-	return false;
+	if (sfx_len > str_len)
+		return false;
+	return strcmp(str + str_len - sfx_len, sfx) == 0;
 }
 
 /* Symbol versioning is different between static and shared library.
@@ -579,5 +579,10 @@ struct bpf_link * usdt_manager_attach_usdt(struct usdt_manager *man,
 					   pid_t pid, const char *path,
 					   const char *usdt_provider, const char *usdt_name,
 					   __u64 usdt_cookie);
+
+static inline bool is_pow_of_2(size_t x)
+{
+	return x && (x & (x - 1)) == 0;
+}
 
 #endif /* __LIBBPF_LIBBPF_INTERNAL_H */

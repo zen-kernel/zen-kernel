@@ -2398,6 +2398,37 @@ int parse_btf_map_def(const char *map_name, struct btf *btf,
 	return 0;
 }
 
+static size_t adjust_ringbuf_sz(size_t sz)
+{
+	__u32 page_sz = sysconf(_SC_PAGE_SIZE);
+	__u32 mul;
+
+	/* if user forgot to set any size, make sure they see error */
+	if (sz == 0)
+		return 0;
+	/* Kernel expects BPF_MAP_TYPE_RINGBUF's max_entries to be
+	 * a power-of-2 multiple of kernel's page size. If user diligently
+	 * satisified these conditions, pass the size through.
+	 */
+	if ((sz % page_sz) == 0 && is_pow_of_2(sz / page_sz))
+		return sz;
+
+	/* Otherwise find closest (page_sz * power_of_2) product bigger than
+	 * user-set size to satisfy both user size request and kernel
+	 * requirements and substitute correct max_entries for map creation.
+	 */
+	for (mul = 1; mul <= UINT_MAX / page_sz; mul <<= 1) {
+		if (mul * page_sz > sz)
+			return mul * page_sz;
+	}
+
+	/* if it's impossible to satisfy the conditions (i.e., user size is
+	 * very close to UINT_MAX but is not a power-of-2 multiple of
+	 * page_size) then just return original size and let kernel reject it
+	 */
+	return sz;
+}
+
 static void fill_map_from_def(struct bpf_map *map, const struct btf_map_def *def)
 {
 	map->def.type = def->map_type;
@@ -2410,6 +2441,10 @@ static void fill_map_from_def(struct bpf_map *map, const struct btf_map_def *def
 	map->numa_node = def->numa_node;
 	map->btf_key_type_id = def->key_type_id;
 	map->btf_value_type_id = def->value_type_id;
+
+	/* auto-adjust BPF ringbuf map max_entries to be a multiple of page size */
+	if (map->def.type == BPF_MAP_TYPE_RINGBUF)
+		map->def.max_entries = adjust_ringbuf_sz(map->def.max_entries);
 
 	if (def->parts & MAP_DEF_MAP_TYPE)
 		pr_debug("map '%s': found type = %u.\n", map->name, def->map_type);
@@ -4327,7 +4362,7 @@ int bpf_map__set_autocreate(struct bpf_map *map, bool autocreate)
 int bpf_map__reuse_fd(struct bpf_map *map, int fd)
 {
 	struct bpf_map_info info = {};
-	__u32 len = sizeof(info);
+	__u32 len = sizeof(info), name_len;
 	int new_fd, err;
 	char *new_name;
 
@@ -4337,7 +4372,12 @@ int bpf_map__reuse_fd(struct bpf_map *map, int fd)
 	if (err)
 		return libbpf_err(err);
 
-	new_name = strdup(info.name);
+	name_len = strlen(info.name);
+	if (name_len == BPF_OBJ_NAME_LEN - 1 && strncmp(map->name, info.name, name_len) == 0)
+		new_name = strdup(map->name);
+	else
+		new_name = strdup(info.name);
+
 	if (!new_name)
 		return libbpf_err(-errno);
 
@@ -4396,9 +4436,15 @@ struct bpf_map *bpf_map__inner_map(struct bpf_map *map)
 
 int bpf_map__set_max_entries(struct bpf_map *map, __u32 max_entries)
 {
-	if (map->fd >= 0)
+	if (map->obj->loaded)
 		return libbpf_err(-EBUSY);
+
 	map->def.max_entries = max_entries;
+
+	/* auto-adjust BPF ringbuf map max_entries to be a multiple of page size */
+	if (map->def.type == BPF_MAP_TYPE_RINGBUF)
+		map->def.max_entries = adjust_ringbuf_sz(map->def.max_entries);
+
 	return 0;
 }
 
@@ -4943,42 +4989,6 @@ bpf_object__populate_internal_map(struct bpf_object *obj, struct bpf_map *map)
 
 static void bpf_map__destroy(struct bpf_map *map);
 
-static bool is_pow_of_2(size_t x)
-{
-	return x && (x & (x - 1));
-}
-
-static size_t adjust_ringbuf_sz(size_t sz)
-{
-	__u32 page_sz = sysconf(_SC_PAGE_SIZE);
-	__u32 mul;
-
-	/* if user forgot to set any size, make sure they see error */
-	if (sz == 0)
-		return 0;
-	/* Kernel expects BPF_MAP_TYPE_RINGBUF's max_entries to be
-	 * a power-of-2 multiple of kernel's page size. If user diligently
-	 * satisified these conditions, pass the size through.
-	 */
-	if ((sz % page_sz) == 0 && is_pow_of_2(sz / page_sz))
-		return sz;
-
-	/* Otherwise find closest (page_sz * power_of_2) product bigger than
-	 * user-set size to satisfy both user size request and kernel
-	 * requirements and substitute correct max_entries for map creation.
-	 */
-	for (mul = 1; mul <= UINT_MAX / page_sz; mul <<= 1) {
-		if (mul * page_sz > sz)
-			return mul * page_sz;
-	}
-
-	/* if it's impossible to satisfy the conditions (i.e., user size is
-	 * very close to UINT_MAX but is not a power-of-2 multiple of
-	 * page_size) then just return original size and let kernel reject it
-	 */
-	return sz;
-}
-
 static int bpf_object__create_map(struct bpf_object *obj, struct bpf_map *map, bool is_inner)
 {
 	LIBBPF_OPTS(bpf_map_create_opts, create_attr);
@@ -5017,9 +5027,6 @@ static int bpf_object__create_map(struct bpf_object *obj, struct bpf_map *map, b
 	}
 
 	switch (def->type) {
-	case BPF_MAP_TYPE_RINGBUF:
-		map->def.max_entries = adjust_ringbuf_sz(map->def.max_entries);
-		/* fallthrough */
 	case BPF_MAP_TYPE_PERF_EVENT_ARRAY:
 	case BPF_MAP_TYPE_CGROUP_ARRAY:
 	case BPF_MAP_TYPE_STACK_TRACE:
@@ -10988,43 +10995,6 @@ static int perf_event_uprobe_open_legacy(const char *probe_name, bool retprobe,
 	return pfd;
 }
 
-/* uprobes deal in relative offsets; subtract the base address associated with
- * the mapped binary.  See Documentation/trace/uprobetracer.rst for more
- * details.
- */
-static long elf_find_relative_offset(const char *filename, Elf *elf, long addr)
-{
-	size_t n;
-	int i;
-
-	if (elf_getphdrnum(elf, &n)) {
-		pr_warn("elf: failed to find program headers for '%s': %s\n", filename,
-			elf_errmsg(-1));
-		return -ENOENT;
-	}
-
-	for (i = 0; i < n; i++) {
-		int seg_start, seg_end, seg_offset;
-		GElf_Phdr phdr;
-
-		if (!gelf_getphdr(elf, i, &phdr)) {
-			pr_warn("elf: failed to get program header %d from '%s': %s\n", i, filename,
-				elf_errmsg(-1));
-			return -ENOENT;
-		}
-		if (phdr.p_type != PT_LOAD || !(phdr.p_flags & PF_X))
-			continue;
-
-		seg_start = phdr.p_vaddr;
-		seg_end = seg_start + phdr.p_memsz;
-		seg_offset = phdr.p_offset;
-		if (addr >= seg_start && addr < seg_end)
-			return addr - seg_start + seg_offset;
-	}
-	pr_warn("elf: failed to find prog header containing 0x%lx in '%s'\n", addr, filename);
-	return -ENOENT;
-}
-
 /* Return next ELF section of sh_type after scn, or first of that type if scn is NULL. */
 static Elf_Scn *elf_find_next_scn_by_type(Elf *elf, int sh_type, Elf_Scn *scn)
 {
@@ -11111,6 +11081,8 @@ static long elf_find_func_offset(const char *binary_path, const char *name)
 		for (idx = 0; idx < nr_syms; idx++) {
 			int curr_bind;
 			GElf_Sym sym;
+			Elf_Scn *sym_scn;
+			GElf_Shdr sym_sh;
 
 			if (!gelf_getsym(symbols, idx, &sym))
 				continue;
@@ -11148,12 +11120,28 @@ static long elf_find_func_offset(const char *binary_path, const char *name)
 					continue;
 				}
 			}
-			ret = sym.st_value;
+
+			/* Transform symbol's virtual address (absolute for
+			 * binaries and relative for shared libs) into file
+			 * offset, which is what kernel is expecting for
+			 * uprobe/uretprobe attachment.
+			 * See Documentation/trace/uprobetracer.rst for more
+			 * details.
+			 * This is done by looking up symbol's containing
+			 * section's header and using it's virtual address
+			 * (sh_addr) and corresponding file offset (sh_offset)
+			 * to transform sym.st_value (virtual address) into
+			 * desired final file offset.
+			 */
+			sym_scn = elf_getscn(elf, sym.st_shndx);
+			if (!sym_scn)
+				continue;
+			if (!gelf_getshdr(sym_scn, &sym_sh))
+				continue;
+
+			ret = sym.st_value - sym_sh.sh_addr + sym_sh.sh_offset;
 			last_bind = curr_bind;
 		}
-		/* For binaries that are not shared libraries, we need relative offset */
-		if (ret > 0 && !is_shared_lib)
-			ret = elf_find_relative_offset(binary_path, elf, ret);
 		if (ret > 0)
 			break;
 	}

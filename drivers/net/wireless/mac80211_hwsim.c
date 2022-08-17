@@ -680,7 +680,7 @@ struct mac80211_hwsim_data {
 	bool ps_poll_pending;
 	struct dentry *debugfs;
 
-	uintptr_t pending_cookie;
+	atomic_t pending_cookie;
 	struct sk_buff_head pending;	/* packets pending */
 	/*
 	 * Only radios in the same group can communicate together (the
@@ -889,7 +889,7 @@ static void hwsim_send_ps_poll(void *dat, u8 *mac, struct ieee80211_vif *vif)
 
 	rcu_read_lock();
 	mac80211_hwsim_tx_frame(data->hw, skb,
-				rcu_dereference(vif->chanctx_conf)->def.chan);
+				rcu_dereference(vif->bss_conf.chanctx_conf)->def.chan);
 	rcu_read_unlock();
 }
 
@@ -922,7 +922,7 @@ static void hwsim_send_nullfunc(struct mac80211_hwsim_data *data, u8 *mac,
 
 	rcu_read_lock();
 	mac80211_hwsim_tx_frame(data->hw, skb,
-				rcu_dereference(vif->chanctx_conf)->def.chan);
+				rcu_dereference(vif->bss_conf.chanctx_conf)->def.chan);
 	rcu_read_unlock();
 }
 
@@ -1416,8 +1416,7 @@ static void mac80211_hwsim_tx_frame_nl(struct ieee80211_hw *hw,
 		goto nla_put_failure;
 
 	/* We create a cookie to identify this skb */
-	data->pending_cookie++;
-	cookie = data->pending_cookie;
+	cookie = atomic_inc_return(&data->pending_cookie);
 	info->rate_driver_data[0] = (void *)cookie;
 	if (nla_put_u64_64bit(skb, HWSIM_ATTR_COOKIE, cookie, HWSIM_ATTR_PAD))
 		goto nla_put_failure;
@@ -1465,11 +1464,11 @@ static void mac80211_hwsim_tx_iter(void *_data, u8 *addr,
 {
 	struct tx_iter_data *data = _data;
 
-	if (!vif->chanctx_conf)
+	if (!vif->bss_conf.chanctx_conf)
 		return;
 
 	if (!hwsim_chans_compat(data->channel,
-				rcu_dereference(vif->chanctx_conf)->def.chan))
+				rcu_dereference(vif->bss_conf.chanctx_conf)->def.chan))
 		return;
 
 	data->receive = true;
@@ -1687,7 +1686,11 @@ static void mac80211_hwsim_tx(struct ieee80211_hw *hw,
 	} else if (txi->hw_queue == 4) {
 		channel = data->tmp_chan;
 	} else {
-		chanctx_conf = rcu_dereference(txi->control.vif->chanctx_conf);
+		struct ieee80211_bss_conf *bss_conf;
+
+		bss_conf = &txi->control.vif->bss_conf;
+
+		chanctx_conf = rcu_dereference(bss_conf->chanctx_conf);
 		if (chanctx_conf) {
 			channel = chanctx_conf->def.chan;
 			confbw = chanctx_conf->def.width;
@@ -1936,14 +1939,14 @@ static void mac80211_hwsim_beacon_tx(void *arg, u8 *mac,
 	}
 
 	mac80211_hwsim_tx_frame(hw, skb,
-				rcu_dereference(vif->chanctx_conf)->def.chan);
+				rcu_dereference(vif->bss_conf.chanctx_conf)->def.chan);
 
 	while ((skb = ieee80211_get_buffered_bc(hw, vif)) != NULL) {
 		mac80211_hwsim_tx_frame(hw, skb,
-				rcu_dereference(vif->chanctx_conf)->def.chan);
+				rcu_dereference(vif->bss_conf.chanctx_conf)->def.chan);
 	}
 
-	if (vif->csa_active && ieee80211_beacon_cntdwn_is_complete(vif))
+	if (vif->bss_conf.csa_active && ieee80211_beacon_cntdwn_is_complete(vif))
 		ieee80211_csa_finish(vif);
 }
 
@@ -2205,7 +2208,7 @@ mac80211_hwsim_sta_rc_update(struct ieee80211_hw *hw,
 		struct ieee80211_chanctx_conf *chanctx_conf;
 
 		rcu_read_lock();
-		chanctx_conf = rcu_dereference(vif->chanctx_conf);
+		chanctx_conf = rcu_dereference(vif->bss_conf.chanctx_conf);
 
 		if (!WARN_ON(!chanctx_conf))
 			confbw = chanctx_conf->def.width;
@@ -4080,6 +4083,7 @@ static int hwsim_tx_info_frame_received_nl(struct sk_buff *skb_2,
 	const u8 *src;
 	unsigned int hwsim_flags;
 	int i;
+	unsigned long flags;
 	bool found = false;
 
 	if (!info->attrs[HWSIM_ATTR_ADDR_TRANSMITTER] ||
@@ -4107,18 +4111,20 @@ static int hwsim_tx_info_frame_received_nl(struct sk_buff *skb_2,
 	}
 
 	/* look for the skb matching the cookie passed back from user */
+	spin_lock_irqsave(&data2->pending.lock, flags);
 	skb_queue_walk_safe(&data2->pending, skb, tmp) {
-		u64 skb_cookie;
+		uintptr_t skb_cookie;
 
 		txi = IEEE80211_SKB_CB(skb);
-		skb_cookie = (u64)(uintptr_t)txi->rate_driver_data[0];
+		skb_cookie = (uintptr_t)txi->rate_driver_data[0];
 
 		if (skb_cookie == ret_skb_cookie) {
-			skb_unlink(skb, &data2->pending);
+			__skb_unlink(skb, &data2->pending);
 			found = true;
 			break;
 		}
 	}
+	spin_unlock_irqrestore(&data2->pending.lock, flags);
 
 	/* not found */
 	if (!found)

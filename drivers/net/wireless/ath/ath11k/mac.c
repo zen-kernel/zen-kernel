@@ -505,7 +505,7 @@ static int ath11k_mac_vif_chan(struct ieee80211_vif *vif,
 	struct ieee80211_chanctx_conf *conf;
 
 	rcu_read_lock();
-	conf = rcu_dereference(vif->chanctx_conf);
+	conf = rcu_dereference(vif->bss_conf.chanctx_conf);
 	if (!conf) {
 		rcu_read_unlock();
 		return -ENOENT;
@@ -1398,10 +1398,10 @@ void ath11k_mac_bcn_tx_event(struct ath11k_vif *arvif)
 {
 	struct ieee80211_vif *vif = arvif->vif;
 
-	if (!vif->color_change_active && !arvif->bcca_zero_sent)
+	if (!vif->bss_conf.color_change_active && !arvif->bcca_zero_sent)
 		return;
 
-	if (vif->color_change_active && ieee80211_beacon_cntdwn_is_complete(vif)) {
+	if (vif->bss_conf.color_change_active && ieee80211_beacon_cntdwn_is_complete(vif)) {
 		arvif->bcca_zero_sent = true;
 		ieee80211_color_change_finish(vif);
 		return;
@@ -1409,7 +1409,7 @@ void ath11k_mac_bcn_tx_event(struct ath11k_vif *arvif)
 
 	arvif->bcca_zero_sent = false;
 
-	if (vif->color_change_active)
+	if (vif->bss_conf.color_change_active)
 		ieee80211_beacon_update_cntdwn(vif);
 	ath11k_mac_setup_bcn_tmpl(arvif);
 }
@@ -6848,7 +6848,7 @@ ath11k_mac_change_chanctx_cnt_iter(void *data, u8 *mac,
 {
 	struct ath11k_mac_change_chanctx_arg *arg = data;
 
-	if (rcu_access_pointer(vif->chanctx_conf) != arg->ctx)
+	if (rcu_access_pointer(vif->bss_conf.chanctx_conf) != arg->ctx)
 		return;
 
 	arg->n_vifs++;
@@ -6861,7 +6861,7 @@ ath11k_mac_change_chanctx_fill_iter(void *data, u8 *mac,
 	struct ath11k_mac_change_chanctx_arg *arg = data;
 	struct ieee80211_chanctx_conf *ctx;
 
-	ctx = rcu_access_pointer(vif->chanctx_conf);
+	ctx = rcu_access_pointer(vif->bss_conf.chanctx_conf);
 	if (ctx != arg->ctx)
 		return;
 
@@ -8297,22 +8297,20 @@ static int ath11k_mac_op_set_bios_sar_specs(struct ieee80211_hw *hw,
 					    const struct cfg80211_sar_specs *sar)
 {
 	struct ath11k *ar = hw->priv;
-	const struct cfg80211_sar_sub_specs *sspec = sar->sub_specs;
+	const struct cfg80211_sar_sub_specs *sspec;
 	int ret, index;
 	u8 *sar_tbl;
 	u32 i;
+
+	if (!sar || sar->type != NL80211_SAR_TYPE_POWER ||
+	    sar->num_sub_specs == 0)
+		return -EINVAL;
 
 	mutex_lock(&ar->conf_mutex);
 
 	if (!test_bit(WMI_TLV_SERVICE_BIOS_SAR_SUPPORT, ar->ab->wmi_ab.svc_map) ||
 	    !ar->ab->hw_params.bios_sar_capa) {
 		ret = -EOPNOTSUPP;
-		goto exit;
-	}
-
-	if (!sar || sar->type != NL80211_SAR_TYPE_POWER ||
-	    sar->num_sub_specs == 0) {
-		ret = -EINVAL;
 		goto exit;
 	}
 
@@ -8328,6 +8326,7 @@ static int ath11k_mac_op_set_bios_sar_specs(struct ieee80211_hw *hw,
 		goto exit;
 	}
 
+	sspec = sar->sub_specs;
 	for (i = 0; i < sar->num_sub_specs; i++) {
 		if (sspec->freq_range_index >= (BIOS_SAR_TABLE_LEN >> 1)) {
 			ath11k_warn(ar->ab, "Ignore bad frequency index %u, max allowed %u\n",
