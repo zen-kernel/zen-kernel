@@ -43,7 +43,7 @@
 
 #include "pelt.h"
 
-#include "../../fs/io-wq.h"
+#include "../../io_uring/io-wq.h"
 #include "../smpboot.h"
 
 /*
@@ -115,7 +115,11 @@ early_param("sched_timeslice", sched_timeslice);
  * 1: Deboost and requeue task. (default)
  * 2: Set rq skip task.
  */
+#ifdef CONFIG_ZEN_INTERACTIVE
+int sched_yield_type __read_mostly = 0;
+#else
 int sched_yield_type __read_mostly = 1;
+#endif
 
 #ifdef CONFIG_SMP
 static cpumask_t sched_rq_pending_mask ____cacheline_aligned_in_smp;
@@ -151,7 +155,91 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 #ifdef CONFIG_SCHED_SMT
 static cpumask_t sched_sg_idle_mask ____cacheline_aligned_in_smp;
 #endif
-static cpumask_t sched_rq_watermark[SCHED_QUEUE_BITS] ____cacheline_aligned_in_smp;
+
+#define BITS_PER_ATOMIC_LONG_T BITS_PER_LONG
+typedef struct sched_bitmask {
+	atomic_long_t bits[DIV_ROUND_UP(SCHED_QUEUE_BITS, BITS_PER_ATOMIC_LONG_T)];
+} sched_bitmask_t;
+static sched_bitmask_t sched_rq_watermark[NR_CPUS] ____cacheline_aligned_in_smp;
+
+#define x(p, set, mask)                                \
+	do {                                           \
+		smp_mb__before_atomic();               \
+		if (set)                               \
+			atomic_long_or((mask), (p));   \
+		else                                   \
+			atomic_long_and(~(mask), (p)); \
+		smp_mb__after_atomic();                \
+	} while (0)
+
+static __always_inline void sched_rq_watermark_fill_downwards(int cpu, unsigned int end,
+		unsigned int start, bool set)
+{
+	unsigned int start_idx, start_bit;
+	unsigned int end_idx, end_bit;
+	atomic_long_t *p;
+
+	if (end == start) {
+		return;
+	}
+
+	start_idx = start / BITS_PER_ATOMIC_LONG_T;
+	start_bit = start % BITS_PER_ATOMIC_LONG_T;
+	end_idx = (end - 1) / BITS_PER_ATOMIC_LONG_T;
+	end_bit = (end - 1) % BITS_PER_ATOMIC_LONG_T;
+	p = &sched_rq_watermark[cpu].bits[end_idx];
+
+	if (end_idx == start_idx) {
+		x(p, set, (~0UL >> (BITS_PER_ATOMIC_LONG_T - 1 - end_bit)) & (~0UL << start_bit));
+		return;
+	}
+
+	if (end_bit != BITS_PER_ATOMIC_LONG_T - 1) {
+		x(p, set, (~0UL >> (BITS_PER_ATOMIC_LONG_T - 1 - end_bit)));
+		p -= 1;
+		end_idx -= 1;
+	}
+
+	while (end_idx != start_idx) {
+		smp_mb__before_atomic();
+		atomic_long_set(p, set ? ~0UL : 0);
+		smp_mb__after_atomic();
+		p -= 1;
+		end_idx -= 1;
+	}
+
+	x(p, set, ~0UL << start_bit);
+}
+
+#undef x
+
+static __always_inline bool sched_rq_watermark_and(cpumask_t *dstp, const cpumask_t *cpus, int prio, bool not)
+{
+	int cpu;
+	bool ret = false;
+	int idx = prio / BITS_PER_ATOMIC_LONG_T;
+	int bit = prio % BITS_PER_ATOMIC_LONG_T;
+
+	cpumask_clear(dstp);
+	for_each_cpu(cpu, cpus)
+		if (test_bit(bit, (long*)&sched_rq_watermark[cpu].bits[idx].counter) == !not) {
+			__cpumask_set_cpu(cpu, dstp);
+			ret = true;
+		}
+	return ret;
+}
+
+static __always_inline bool sched_rq_watermark_test(const cpumask_t *cpus, int prio, bool not)
+{
+	int cpu;
+	int idx = prio / BITS_PER_ATOMIC_LONG_T;
+	int bit = prio % BITS_PER_ATOMIC_LONG_T;
+
+	for_each_cpu(cpu, cpus)
+		if (test_bit(bit, (long*)&sched_rq_watermark[cpu].bits[idx].counter) == !not)
+			return true;
+	return false;
+}
 
 /* sched_queue related functions */
 static inline void sched_queue_init(struct sched_queue *q)
@@ -180,7 +268,6 @@ static inline void update_sched_rq_watermark(struct rq *rq)
 {
 	unsigned long watermark = find_first_bit(rq->queue.bitmap, SCHED_QUEUE_BITS);
 	unsigned long last_wm = rq->watermark;
-	unsigned long i;
 	int cpu;
 
 	if (watermark == last_wm)
@@ -189,28 +276,25 @@ static inline void update_sched_rq_watermark(struct rq *rq)
 	rq->watermark = watermark;
 	cpu = cpu_of(rq);
 	if (watermark < last_wm) {
-		for (i = last_wm; i > watermark; i--)
-			cpumask_clear_cpu(cpu, sched_rq_watermark + SCHED_QUEUE_BITS - i);
+		sched_rq_watermark_fill_downwards(cpu, SCHED_QUEUE_BITS - watermark, SCHED_QUEUE_BITS - last_wm, false);
 #ifdef CONFIG_SCHED_SMT
 		if (static_branch_likely(&sched_smt_present) &&
-		    IDLE_TASK_SCHED_PRIO == last_wm)
+		    unlikely(IDLE_TASK_SCHED_PRIO == last_wm))
 			cpumask_andnot(&sched_sg_idle_mask,
 				       &sched_sg_idle_mask, cpu_smt_mask(cpu));
 #endif
 		return;
 	}
 	/* last_wm < watermark */
-	for (i = watermark; i > last_wm; i--)
-		cpumask_set_cpu(cpu, sched_rq_watermark + SCHED_QUEUE_BITS - i);
+	sched_rq_watermark_fill_downwards(cpu, SCHED_QUEUE_BITS - last_wm, SCHED_QUEUE_BITS - watermark, true);
 #ifdef CONFIG_SCHED_SMT
 	if (static_branch_likely(&sched_smt_present) &&
-	    IDLE_TASK_SCHED_PRIO == watermark) {
-		cpumask_t tmp;
+	    unlikely(IDLE_TASK_SCHED_PRIO == watermark)) {
+		const cpumask_t *smt_mask = cpu_smt_mask(cpu);
 
-		cpumask_and(&tmp, cpu_smt_mask(cpu), sched_rq_watermark);
-		if (cpumask_equal(&tmp, cpu_smt_mask(cpu)))
+		if (!sched_rq_watermark_test(smt_mask, 0, true))
 			cpumask_or(&sched_sg_idle_mask,
-				   &sched_sg_idle_mask, cpu_smt_mask(cpu));
+				   &sched_sg_idle_mask, smt_mask);
 	}
 #endif
 }
@@ -1907,9 +1991,9 @@ static inline int select_task_rq(struct task_struct *p)
 #ifdef CONFIG_SCHED_SMT
 	    cpumask_and(&tmp, &chk_mask, &sched_sg_idle_mask) ||
 #endif
-	    cpumask_and(&tmp, &chk_mask, sched_rq_watermark) ||
-	    cpumask_and(&tmp, &chk_mask,
-			sched_rq_watermark + SCHED_QUEUE_BITS - 1 - task_sched_prio(p)))
+	    sched_rq_watermark_and(&tmp, &chk_mask, 0, false) ||
+	    sched_rq_watermark_and(&tmp, &chk_mask,
+			SCHED_QUEUE_BITS - task_sched_prio(p) - 1, false))
 		return best_mask_cpu(task_cpu(p), &tmp);
 
 	return best_mask_cpu(task_cpu(p), &chk_mask);
@@ -2399,13 +2483,17 @@ static void __ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags
 	__smp_call_single_queue(cpu, &p->wake_entry.llist);
 }
 
-static inline bool ttwu_queue_cond(int cpu, int wake_flags)
+static inline bool ttwu_queue_cond(struct task_struct *p, int cpu)
 {
 	/*
 	 * Do not complicate things with the async wake_list while the CPU is
 	 * in hotplug state.
 	 */
 	if (!cpu_active(cpu))
+		return false;
+
+	/* Ensure the task will still be allowed to run on the CPU. */
+	if (!cpumask_test_cpu(cpu, p->cpus_ptr))
 		return false;
 
 	/*
@@ -2415,13 +2503,22 @@ static inline bool ttwu_queue_cond(int cpu, int wake_flags)
 	if (!cpus_share_cache(smp_processor_id(), cpu))
 		return true;
 
+	if (cpu == smp_processor_id())
+		return false;
+
 	/*
-	 * If the task is descheduling and the only running task on the
-	 * CPU then use the wakelist to offload the task activation to
-	 * the soon-to-be-idle CPU as the current CPU is likely busy.
-	 * nr_running is checked to avoid unnecessary task stacking.
-	 */
-	if ((wake_flags & WF_ON_CPU) && cpu_rq(cpu)->nr_running <= 1)
+        * If the wakee cpu is idle, or the task is descheduling and the
+        * only running task on the CPU, then use the wakelist to offload
+        * the task activation to the idle (or soon-to-be-idle) CPU as
+        * the current CPU is likely busy. nr_running is checked to
+        * avoid unnecessary task stacking.
+	*
+	* Note that we can only get here with (wakee) p->on_rq=0,
+	* p->on_cpu can be whatever, we've done the dequeue, so
+	* the wakee has been accounted out of ->nr_running.
+	*/
+
+	if (!cpu_rq(cpu)->nr_running)
 		return true;
 
 	return false;
@@ -2429,7 +2526,7 @@ static inline bool ttwu_queue_cond(int cpu, int wake_flags)
 
 static bool ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags)
 {
-	if (__is_defined(ALT_SCHED_TTWU_QUEUE) && ttwu_queue_cond(cpu, wake_flags)) {
+	if (__is_defined(ALT_SCHED_TTWU_QUEUE) && ttwu_queue_cond(p, cpu)) {
 		if (WARN_ON_ONCE(cpu == smp_processor_id()))
 			return false;
 
@@ -2788,7 +2885,7 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 	 * scheduling.
 	 */
 	if (smp_load_acquire(&p->on_cpu) &&
-	    ttwu_queue_wakelist(p, task_cpu(p), wake_flags | WF_ON_CPU))
+	    ttwu_queue_wakelist(p, task_cpu(p), wake_flags))
 		goto unlock;
 
 	/*
@@ -3250,7 +3347,8 @@ static inline void prepare_task(struct task_struct *next)
 	 * Claim the task as running, we do this before switching to it
 	 * such that any running task will have this set.
 	 *
-	 * See the ttwu() WF_ON_CPU case and its ordering comment.
+	 * See the smp_load_acquire(&p->on_cpu) case in ttwu() and
+	 * its ordering comment.
 	 */
 	WRITE_ONCE(next->on_cpu, 1);
 }
@@ -3991,7 +4089,7 @@ static inline void sg_balance(struct rq *rq)
 	 * find potential cpus which can migrate the current running task
 	 */
 	if (cpumask_test_cpu(cpu, &sched_sg_idle_mask) &&
-	    cpumask_andnot(&chk, cpu_online_mask, sched_rq_watermark) &&
+	    sched_rq_watermark_and(&chk, cpu_online_mask, 0, true) &&
 	    cpumask_andnot(&chk, &chk, &sched_rq_pending_mask)) {
 		int i;
 
@@ -4678,8 +4776,12 @@ static inline void sched_submit_work(struct task_struct *tsk)
 			io_wq_worker_sleeping(tsk);
 	}
 
-	if (tsk_is_pi_blocked(tsk))
-		return;
+	/*
+	 * spinlock and rwlock must not flush block requests.  This will
+	 * deadlock if the callback attempts to acquire a lock which is
+	 * already acquired.
+	 */
+	SCHED_WARN_ON(current->__state & TASK_RTLOCK_WAIT);
 
 	/*
 	 * If we are going to sleep and we have plugged IO queued,
@@ -6748,7 +6850,7 @@ int cpuset_cpumask_can_shrink(const struct cpumask __maybe_unused *cur,
 }
 
 int task_can_attach(struct task_struct *p,
-		    const struct cpumask *cs_cpus_allowed)
+		    const struct cpumask *cs_effective_cpus)
 {
 	int ret = 0;
 
@@ -7292,8 +7394,17 @@ void __init sched_init(void)
 	wait_bit_init();
 
 #ifdef CONFIG_SMP
-	for (i = 0; i < SCHED_QUEUE_BITS; i++)
-		cpumask_copy(sched_rq_watermark + i, cpu_present_mask);
+	for (i = 0; i < nr_cpu_ids; i++) {
+		long val = cpumask_test_cpu(i, cpu_present_mask) ? -1L : 0;
+		int j;
+		for (j = 0; j < DIV_ROUND_UP(SCHED_QUEUE_BITS, BITS_PER_ATOMIC_LONG_T); j++)
+			atomic_long_set(&sched_rq_watermark[i].bits[j], val);
+	}
+	for (i = nr_cpu_ids; i < NR_CPUS; i++) {
+		int j;
+		for (j = 0; j < DIV_ROUND_UP(SCHED_QUEUE_BITS, BITS_PER_ATOMIC_LONG_T); j++)
+			atomic_long_set(&sched_rq_watermark[i].bits[j], 0);
+	}
 #endif
 
 #ifdef CONFIG_CGROUP_SCHED
