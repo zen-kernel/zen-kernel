@@ -2881,10 +2881,10 @@ static void raid5_end_write_request(struct bio *bi)
 	if (!test_and_clear_bit(R5_DOUBLE_LOCKED, &sh->dev[i].flags))
 		clear_bit(R5_LOCKED, &sh->dev[i].flags);
 	set_bit(STRIPE_HANDLE, &sh->state);
-	raid5_release_stripe(sh);
 
 	if (sh->batch_head && sh != sh->batch_head)
 		raid5_release_stripe(sh->batch_head);
+	raid5_release_stripe(sh);
 }
 
 static void raid5_error(struct mddev *mddev, struct md_rdev *rdev)
@@ -5841,7 +5841,7 @@ static bool raid5_make_request(struct mddev *mddev, struct bio * bi)
 	if ((bi->bi_opf & REQ_NOWAIT) &&
 	    (conf->reshape_progress != MaxSector) &&
 	    (mddev->reshape_backwards
-	    ? (logical_sector > conf->reshape_progress && logical_sector <= conf->reshape_safe)
+	    ? (logical_sector >= conf->reshape_progress && logical_sector < conf->reshape_safe)
 	    : (logical_sector >= conf->reshape_safe && logical_sector < conf->reshape_progress))) {
 		bio_wouldblock_error(bi);
 		if (rw == WRITE)

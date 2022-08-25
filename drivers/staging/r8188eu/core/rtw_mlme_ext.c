@@ -5667,14 +5667,28 @@ unsigned int send_beacon(struct adapter *padapter)
 
 bool get_beacon_valid_bit(struct adapter *adapter)
 {
+	int res;
+	u8 reg;
+
+	res = rtw_read8(adapter, REG_TDECTRL + 2, &reg);
+	if (res)
+		return false;
+
 	/* BIT(16) of REG_TDECTRL = BIT(0) of REG_TDECTRL+2 */
-	return BIT(0) & rtw_read8(adapter, REG_TDECTRL + 2);
+	return BIT(0) & reg;
 }
 
 void clear_beacon_valid_bit(struct adapter *adapter)
 {
+	int res;
+	u8 reg;
+
+	res = rtw_read8(adapter, REG_TDECTRL + 2, &reg);
+	if (res)
+		return;
+
 	/* BIT(16) of REG_TDECTRL = BIT(0) of REG_TDECTRL+2, write 1 to clear, Clear by sw */
-	rtw_write8(adapter, REG_TDECTRL + 2, rtw_read8(adapter, REG_TDECTRL + 2) | BIT(0));
+	rtw_write8(adapter, REG_TDECTRL + 2, reg | BIT(0));
 }
 
 /****************************************************************************
@@ -6002,7 +6016,9 @@ static void rtw_set_bssid(struct adapter *adapter, u8 *bssid)
 static void mlme_join(struct adapter *adapter, int type)
 {
 	struct mlme_priv *mlmepriv = &adapter->mlmepriv;
-	u8 retry_limit = 0x30;
+	u8 retry_limit = 0x30, reg;
+	u32 reg32;
+	int res;
 
 	switch (type) {
 	case 0:
@@ -6010,8 +6026,12 @@ static void mlme_join(struct adapter *adapter, int type)
 		/* enable to rx data frame, accept all data frame */
 		rtw_write16(adapter, REG_RXFLTMAP2, 0xFFFF);
 
+		res = rtw_read32(adapter, REG_RCR, &reg32);
+		if (res)
+			return;
+
 		rtw_write32(adapter, REG_RCR,
-			    rtw_read32(adapter, REG_RCR) | RCR_CBSSID_DATA | RCR_CBSSID_BCN);
+			    reg32 | RCR_CBSSID_DATA | RCR_CBSSID_BCN);
 
 		if (check_fwstate(mlmepriv, WIFI_STATION_STATE)) {
 			retry_limit = 48;
@@ -6027,7 +6047,11 @@ static void mlme_join(struct adapter *adapter, int type)
 	case 2:
 		/* sta add event call back */
 		/* enable update TSF */
-		rtw_write8(adapter, REG_BCN_CTRL, rtw_read8(adapter, REG_BCN_CTRL) & (~BIT(4)));
+		res = rtw_read8(adapter, REG_BCN_CTRL, &reg);
+		if (res)
+			return;
+
+		rtw_write8(adapter, REG_BCN_CTRL, reg & (~BIT(4)));
 
 		if (check_fwstate(mlmepriv, WIFI_ADHOC_STATE | WIFI_ADHOC_MASTER_STATE))
 			retry_limit = 0x7;
@@ -6748,6 +6772,9 @@ void mlmeext_sta_add_event_callback(struct adapter *padapter, struct sta_info *p
 
 static void mlme_disconnect(struct adapter *adapter)
 {
+	int res;
+	u8 reg;
+
 	/* Set RCR to not to receive data frame when NO LINK state */
 	/* reject all data frames */
 	rtw_write16(adapter, REG_RXFLTMAP2, 0x00);
@@ -6756,7 +6783,12 @@ static void mlme_disconnect(struct adapter *adapter)
 	rtw_write8(adapter, REG_DUAL_TSF_RST, (BIT(0) | BIT(1)));
 
 	/* disable update TSF */
-	rtw_write8(adapter, REG_BCN_CTRL, rtw_read8(adapter, REG_BCN_CTRL) | BIT(4));
+
+	res = rtw_read8(adapter, REG_BCN_CTRL, &reg);
+	if (res)
+		return;
+
+	rtw_write8(adapter, REG_BCN_CTRL, reg | BIT(4));
 }
 
 void mlmeext_sta_del_event_callback(struct adapter *padapter)
@@ -6810,14 +6842,20 @@ static u8 chk_ap_is_alive(struct sta_info *psta)
 	return ret;
 }
 
-static void rtl8188e_sreset_linked_status_check(struct adapter *padapter)
+static int rtl8188e_sreset_linked_status_check(struct adapter *padapter)
 {
-	u32 rx_dma_status =  rtw_read32(padapter, REG_RXDMA_STATUS);
+	u32 rx_dma_status;
+	int res;
+	u8 reg;
+
+	res = rtw_read32(padapter, REG_RXDMA_STATUS, &rx_dma_status);
+	if (res)
+		return res;
 
 	if (rx_dma_status != 0x00)
 		rtw_write32(padapter, REG_RXDMA_STATUS, rx_dma_status);
 
-	rtw_read8(padapter, REG_FMETHR);
+	return rtw_read8(padapter, REG_FMETHR, &reg);
 }
 
 void linked_status_chk(struct adapter *padapter)
@@ -7219,6 +7257,7 @@ u8 disconnect_hdl(struct adapter *padapter, unsigned char *pbuf)
 	struct mlme_ext_info	*pmlmeinfo = &pmlmeext->mlmext_info;
 	struct wlan_bssid_ex *pnetwork = (struct wlan_bssid_ex *)(&pmlmeinfo->network);
 	u8 val8;
+	int res;
 
 	if (is_client_associated_to_ap(padapter))
 		issue_deauth_ex(padapter, pnetwork->MacAddress, WLAN_REASON_DEAUTH_LEAVING, param->deauth_timeout_ms / 100, 100);
@@ -7231,7 +7270,10 @@ u8 disconnect_hdl(struct adapter *padapter, unsigned char *pbuf)
 
 	if (((pmlmeinfo->state & 0x03) == WIFI_FW_ADHOC_STATE) || ((pmlmeinfo->state & 0x03) == WIFI_FW_AP_STATE)) {
 		/* Stop BCN */
-		val8 = rtw_read8(padapter, REG_BCN_CTRL);
+		res = rtw_read8(padapter, REG_BCN_CTRL, &val8);
+		if (res)
+			return H2C_DROPPED;
+
 		rtw_write8(padapter, REG_BCN_CTRL, val8 & (~(EN_BCN_FUNCTION | EN_TXBCN_RPT)));
 	}
 
