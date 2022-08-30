@@ -229,7 +229,7 @@ struct rq {
 #endif /* CONFIG_NO_HZ_COMMON */
 };
 
-extern unsigned long rq_load_util(struct rq *rq, unsigned long max);
+extern unsigned long rq_load_util(struct rq *rq, int cpu);
 
 extern unsigned long calc_load_update;
 extern atomic_long_t calc_load_tasks;

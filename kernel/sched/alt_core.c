@@ -703,15 +703,15 @@ static inline void rq_load_update(struct rq *rq)
 	rq->load_stamp = time;
 }
 
-unsigned long rq_load_util(struct rq *rq, unsigned long max)
+unsigned long rq_load_util(struct rq *rq, int cpu)
 {
-	return RQ_LOAD_HISTORY_TO_UTIL(rq->load_history) * (max >> RQ_UTIL_SHIFT);
+	return RQ_LOAD_HISTORY_TO_UTIL(rq->load_history) * (arch_scale_cpu_capacity(cpu) >> RQ_UTIL_SHIFT);
 }
 
 #ifdef CONFIG_SMP
-unsigned long sched_cpu_util(int cpu, unsigned long max)
+unsigned long sched_cpu_util(int cpu)
 {
-	return rq_load_util(cpu_rq(cpu), max);
+	return rq_load_util(cpu_rq(cpu), cpu);
 }
 #endif /* CONFIG_SMP */
 
