@@ -453,9 +453,18 @@ void ksz_phylink_get_caps(struct dsa_switch *ds, int port,
 	if (dev->info->supports_rgmii[port])
 		phy_interface_set_rgmii(config->supported_interfaces);
 
-	if (dev->info->internal_phy[port])
+	if (dev->info->internal_phy[port]) {
 		__set_bit(PHY_INTERFACE_MODE_INTERNAL,
 			  config->supported_interfaces);
+		/* Compatibility for phylib's default interface type when the
+		 * phy-mode property is absent
+		 */
+		__set_bit(PHY_INTERFACE_MODE_GMII,
+			  config->supported_interfaces);
+	}
+
+	if (dev->dev_ops->get_caps)
+		dev->dev_ops->get_caps(dev, port, config);
 }
 EXPORT_SYMBOL_GPL(ksz_phylink_get_caps);
 
@@ -930,6 +939,156 @@ void ksz_port_stp_state_set(struct dsa_switch *ds, int port,
 }
 EXPORT_SYMBOL_GPL(ksz_port_stp_state_set);
 
+enum dsa_tag_protocol ksz_get_tag_protocol(struct dsa_switch *ds,
+					   int port, enum dsa_tag_protocol mp)
+{
+	struct ksz_device *dev = ds->priv;
+	enum dsa_tag_protocol proto = DSA_TAG_PROTO_NONE;
+
+	if (dev->chip_id == KSZ8795_CHIP_ID ||
+	    dev->chip_id == KSZ8794_CHIP_ID ||
+	    dev->chip_id == KSZ8765_CHIP_ID)
+		proto = DSA_TAG_PROTO_KSZ8795;
+
+	if (dev->chip_id == KSZ8830_CHIP_ID ||
+	    dev->chip_id == KSZ9893_CHIP_ID)
+		proto = DSA_TAG_PROTO_KSZ9893;
+
+	if (dev->chip_id == KSZ9477_CHIP_ID ||
+	    dev->chip_id == KSZ9897_CHIP_ID ||
+	    dev->chip_id == KSZ9567_CHIP_ID)
+		proto = DSA_TAG_PROTO_KSZ9477;
+
+	return proto;
+}
+EXPORT_SYMBOL_GPL(ksz_get_tag_protocol);
+
+int ksz_port_vlan_filtering(struct dsa_switch *ds, int port,
+			    bool flag, struct netlink_ext_ack *extack)
+{
+	struct ksz_device *dev = ds->priv;
+
+	if (!dev->dev_ops->vlan_filtering)
+		return -EOPNOTSUPP;
+
+	return dev->dev_ops->vlan_filtering(dev, port, flag, extack);
+}
+EXPORT_SYMBOL_GPL(ksz_port_vlan_filtering);
+
+int ksz_port_vlan_add(struct dsa_switch *ds, int port,
+		      const struct switchdev_obj_port_vlan *vlan,
+		      struct netlink_ext_ack *extack)
+{
+	struct ksz_device *dev = ds->priv;
+
+	if (!dev->dev_ops->vlan_add)
+		return -EOPNOTSUPP;
+
+	return dev->dev_ops->vlan_add(dev, port, vlan, extack);
+}
+EXPORT_SYMBOL_GPL(ksz_port_vlan_add);
+
+int ksz_port_vlan_del(struct dsa_switch *ds, int port,
+		      const struct switchdev_obj_port_vlan *vlan)
+{
+	struct ksz_device *dev = ds->priv;
+
+	if (!dev->dev_ops->vlan_del)
+		return -EOPNOTSUPP;
+
+	return dev->dev_ops->vlan_del(dev, port, vlan);
+}
+EXPORT_SYMBOL_GPL(ksz_port_vlan_del);
+
+int ksz_port_mirror_add(struct dsa_switch *ds, int port,
+			struct dsa_mall_mirror_tc_entry *mirror,
+			bool ingress, struct netlink_ext_ack *extack)
+{
+	struct ksz_device *dev = ds->priv;
+
+	if (!dev->dev_ops->mirror_add)
+		return -EOPNOTSUPP;
+
+	return dev->dev_ops->mirror_add(dev, port, mirror, ingress, extack);
+}
+EXPORT_SYMBOL_GPL(ksz_port_mirror_add);
+
+void ksz_port_mirror_del(struct dsa_switch *ds, int port,
+			 struct dsa_mall_mirror_tc_entry *mirror)
+{
+	struct ksz_device *dev = ds->priv;
+
+	if (dev->dev_ops->mirror_del)
+		dev->dev_ops->mirror_del(dev, port, mirror);
+}
+EXPORT_SYMBOL_GPL(ksz_port_mirror_del);
+
+static int ksz_switch_detect(struct ksz_device *dev)
+{
+	u8 id1, id2;
+	u16 id16;
+	u32 id32;
+	int ret;
+
+	/* read chip id */
+	ret = ksz_read16(dev, REG_CHIP_ID0, &id16);
+	if (ret)
+		return ret;
+
+	id1 = FIELD_GET(SW_FAMILY_ID_M, id16);
+	id2 = FIELD_GET(SW_CHIP_ID_M, id16);
+
+	switch (id1) {
+	case KSZ87_FAMILY_ID:
+		if (id2 == KSZ87_CHIP_ID_95) {
+			u8 val;
+
+			dev->chip_id = KSZ8795_CHIP_ID;
+
+			ksz_read8(dev, KSZ8_PORT_STATUS_0, &val);
+			if (val & KSZ8_PORT_FIBER_MODE)
+				dev->chip_id = KSZ8765_CHIP_ID;
+		} else if (id2 == KSZ87_CHIP_ID_94) {
+			dev->chip_id = KSZ8794_CHIP_ID;
+		} else {
+			return -ENODEV;
+		}
+		break;
+	case KSZ88_FAMILY_ID:
+		if (id2 == KSZ88_CHIP_ID_63)
+			dev->chip_id = KSZ8830_CHIP_ID;
+		else
+			return -ENODEV;
+		break;
+	default:
+		ret = ksz_read32(dev, REG_CHIP_ID0, &id32);
+		if (ret)
+			return ret;
+
+		dev->chip_rev = FIELD_GET(SW_REV_ID_M, id32);
+		id32 &= ~0xFF;
+
+		switch (id32) {
+		case KSZ9477_CHIP_ID:
+		case KSZ9897_CHIP_ID:
+		case KSZ9893_CHIP_ID:
+		case KSZ9567_CHIP_ID:
+		case LAN9370_CHIP_ID:
+		case LAN9371_CHIP_ID:
+		case LAN9372_CHIP_ID:
+		case LAN9373_CHIP_ID:
+		case LAN9374_CHIP_ID:
+			dev->chip_id = id32;
+			break;
+		default:
+			dev_err(dev->dev,
+				"unsupported switch detected %x)\n", id32);
+			return -ENODEV;
+		}
+	}
+	return 0;
+}
+
 struct ksz_device *ksz_switch_alloc(struct device *base, void *priv)
 {
 	struct dsa_switch *ds;
@@ -986,10 +1145,9 @@ int ksz_switch_register(struct ksz_device *dev,
 	mutex_init(&dev->alu_mutex);
 	mutex_init(&dev->vlan_mutex);
 
-	dev->dev_ops = ops;
-
-	if (dev->dev_ops->detect(dev))
-		return -EINVAL;
+	ret = ksz_switch_detect(dev);
+	if (ret)
+		return ret;
 
 	info = ksz_lookup_info(dev->chip_id);
 	if (!info)
@@ -998,9 +1156,14 @@ int ksz_switch_register(struct ksz_device *dev,
 	/* Update the compatible info with the probed one */
 	dev->info = info;
 
+	dev_info(dev->dev, "found switch: %s, rev %i\n",
+		 dev->info->dev_name, dev->chip_rev);
+
 	ret = ksz_check_device_id(dev);
 	if (ret)
 		return ret;
+
+	dev->dev_ops = ops;
 
 	ret = dev->dev_ops->init(dev);
 	if (ret)
