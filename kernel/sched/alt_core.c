@@ -1611,7 +1611,7 @@ static struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int
 	rq = cpu_rq(new_cpu);
 
 	raw_spin_lock(&rq->lock);
-	BUG_ON(task_cpu(p) != new_cpu);
+	WARN_ON_ONCE(task_cpu(p) != new_cpu);
 	sched_task_sanity_check(p, rq);
 	enqueue_task(p, rq, 0);
 	p->on_rq = TASK_ON_RQ_QUEUED;
@@ -4244,7 +4244,7 @@ static void sched_tick_stop(int cpu)
 int __init sched_tick_offload_init(void)
 {
 	tick_work_cpu = alloc_percpu(struct tick_work);
-	BUG_ON(!tick_work_cpu);
+	WARN_ON_ONCE(!tick_work_cpu);
 	return 0;
 }
 
@@ -5049,7 +5049,7 @@ asmlinkage __visible void __sched preempt_schedule_irq(void)
 	enum ctx_state prev_state;
 
 	/* Catch callers which need to be fixed */
-	BUG_ON(preempt_count() || !irqs_disabled());
+	WARN_ON_ONCE(preempt_count() || !irqs_disabled());
 
 	prev_state = exception_enter();
 
@@ -5404,7 +5404,7 @@ static int __sched_setscheduler(struct task_struct *p,
 	raw_spinlock_t *lock;
 
 	/* The pi code expects interrupts enabled */
-	BUG_ON(pi && in_interrupt());
+	WARN_ON_ONCE(pi && in_interrupt());
 
 	/*
 	 * Alt schedule FW supports SCHED_DEADLINE by squash it as prio 0 SCHED_FIFO
@@ -6892,7 +6892,7 @@ void idle_task_exit(void)
 {
 	struct mm_struct *mm = current->active_mm;
 
-	BUG_ON(current != this_rq()->idle);
+	WARN_ON_ONCE(current != this_rq()->idle);
 
 	if (mm != &init_mm) {
 		switch_mm(mm, &init_mm, current);
