@@ -1134,7 +1134,7 @@ void __init swap_setup(void)
 
 #ifdef CONFIG_ZEN_INTERACTIVE
 	/* Only swap-in pages requested, avoid readahead */
-	page_cluster = 0
+	page_cluster = 0;
 #else
 	/* Use a smaller cluster for small-memory machines */
 	if (megs < 16)
