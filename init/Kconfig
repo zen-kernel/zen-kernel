@@ -134,6 +134,7 @@ config ZEN_INTERACTIVE
 	    MG-LRU minimum cache TTL.......:   0    ->   1000 ms
 	    Compact Unevictable............:   1    ->   0
 	    Proactive Compaction...........:  20    ->   0
+	    Swap-in readahead..............:   3    ->   0
 
 	  --- CFS CPU Scheduler ----------------------------------
 
