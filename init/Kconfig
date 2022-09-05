@@ -233,6 +233,7 @@ config ZEN_INTERACTIVE
 
 	    Background-reclaim hugepages...:   no   ->   yes
 	    Compact unevictable............:   yes  ->   no
+	    Swap-in readahead..............:   3    ->   0
 
 	  --- EEVDF CPU Scheduler --------------------------------
 
