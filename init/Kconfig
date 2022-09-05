@@ -154,6 +154,7 @@ config ZEN_INTERACTIVE
 	    Compaction proactiveness.......:  20    ->   0
 	    Watermark boost factor.........:   1.5  ->   0
 	    Pageblock order................:  10    ->   3
+	    Swap-in readahead..............:   3    ->   0
 
 	  --- EEVDF CPU Scheduler --------------------------------
 
