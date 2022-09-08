@@ -5533,17 +5533,6 @@ static bool arg_type_is_mem_size(enum bpf_arg_type type)
 	       type == ARG_CONST_SIZE_OR_ZERO;
 }
 
-static bool arg_type_is_alloc_size(enum bpf_arg_type type)
-{
-	return type == ARG_CONST_ALLOC_SIZE_OR_ZERO;
-}
-
-static bool arg_type_is_int_ptr(enum bpf_arg_type type)
-{
-	return type == ARG_PTR_TO_INT ||
-	       type == ARG_PTR_TO_LONG;
-}
-
 static bool arg_type_is_release(enum bpf_arg_type type)
 {
 	return type & OBJ_RELEASE;
@@ -5847,6 +5836,7 @@ static int check_func_arg(struct bpf_verifier_env *env, u32 arg,
 	struct bpf_reg_state *regs = cur_regs(env), *reg = &regs[regno];
 	enum bpf_arg_type arg_type = fn->arg_type[arg];
 	enum bpf_reg_type type = reg->type;
+	u32 *arg_btf_id = NULL;
 	int err = 0;
 
 	if (arg_type == ARG_DONTCARE)
@@ -5883,7 +5873,11 @@ static int check_func_arg(struct bpf_verifier_env *env, u32 arg,
 		 */
 		goto skip_type_check;
 
-	err = check_reg_type(env, regno, arg_type, fn->arg_btf_id[arg], meta);
+	/* arg_btf_id and arg_size are in a union. */
+	if (base_type(arg_type) == ARG_PTR_TO_BTF_ID)
+		arg_btf_id = fn->arg_btf_id[arg];
+
+	err = check_reg_type(env, regno, arg_type, arg_btf_id, meta);
 	if (err)
 		return err;
 
@@ -5924,7 +5918,8 @@ skip_type_check:
 		meta->ref_obj_id = reg->ref_obj_id;
 	}
 
-	if (arg_type == ARG_CONST_MAP_PTR) {
+	switch (base_type(arg_type)) {
+	case ARG_CONST_MAP_PTR:
 		/* bpf_map_xxx(map_ptr) call: remember that map_ptr */
 		if (meta->map_ptr) {
 			/* Use map_uid (which is unique id of inner map) to reject:
@@ -5949,7 +5944,8 @@ skip_type_check:
 		}
 		meta->map_ptr = reg->map_ptr;
 		meta->map_uid = reg->map_uid;
-	} else if (arg_type == ARG_PTR_TO_MAP_KEY) {
+		break;
+	case ARG_PTR_TO_MAP_KEY:
 		/* bpf_map_xxx(..., map_ptr, ..., key) call:
 		 * check that [key, key + map->key_size) are within
 		 * stack limits and initialized
@@ -5966,7 +5962,8 @@ skip_type_check:
 		err = check_helper_mem_access(env, regno,
 					      meta->map_ptr->key_size, false,
 					      NULL);
-	} else if (base_type(arg_type) == ARG_PTR_TO_MAP_VALUE) {
+		break;
+	case ARG_PTR_TO_MAP_VALUE:
 		if (type_may_be_null(arg_type) && register_is_null(reg))
 			return 0;
 
@@ -5982,14 +5979,16 @@ skip_type_check:
 		err = check_helper_mem_access(env, regno,
 					      meta->map_ptr->value_size, false,
 					      meta);
-	} else if (arg_type == ARG_PTR_TO_PERCPU_BTF_ID) {
+		break;
+	case ARG_PTR_TO_PERCPU_BTF_ID:
 		if (!reg->btf_id) {
 			verbose(env, "Helper has invalid btf_id in R%d\n", regno);
 			return -EACCES;
 		}
 		meta->ret_btf = reg->btf;
 		meta->ret_btf_id = reg->btf_id;
-	} else if (arg_type == ARG_PTR_TO_SPIN_LOCK) {
+		break;
+	case ARG_PTR_TO_SPIN_LOCK:
 		if (meta->func_id == BPF_FUNC_spin_lock) {
 			if (process_spin_lock(env, regno, true))
 				return -EACCES;
@@ -6000,21 +5999,32 @@ skip_type_check:
 			verbose(env, "verifier internal error\n");
 			return -EFAULT;
 		}
-	} else if (arg_type == ARG_PTR_TO_TIMER) {
+		break;
+	case ARG_PTR_TO_TIMER:
 		if (process_timer_func(env, regno, meta))
 			return -EACCES;
-	} else if (arg_type == ARG_PTR_TO_FUNC) {
+		break;
+	case ARG_PTR_TO_FUNC:
 		meta->subprogno = reg->subprogno;
-	} else if (base_type(arg_type) == ARG_PTR_TO_MEM) {
+		break;
+	case ARG_PTR_TO_MEM:
 		/* The access to this pointer is only checked when we hit the
 		 * next is_mem_size argument below.
 		 */
 		meta->raw_mode = arg_type & MEM_UNINIT;
-	} else if (arg_type_is_mem_size(arg_type)) {
-		bool zero_size_allowed = (arg_type == ARG_CONST_SIZE_OR_ZERO);
-
-		err = check_mem_size_reg(env, reg, regno, zero_size_allowed, meta);
-	} else if (arg_type_is_dynptr(arg_type)) {
+		if (arg_type & MEM_FIXED_SIZE) {
+			err = check_helper_mem_access(env, regno,
+						      fn->arg_size[arg], false,
+						      meta);
+		}
+		break;
+	case ARG_CONST_SIZE:
+		err = check_mem_size_reg(env, reg, regno, false, meta);
+		break;
+	case ARG_CONST_SIZE_OR_ZERO:
+		err = check_mem_size_reg(env, reg, regno, true, meta);
+		break;
+	case ARG_PTR_TO_DYNPTR:
 		if (arg_type & MEM_UNINIT) {
 			if (!is_dynptr_reg_valid_uninit(env, reg)) {
 				verbose(env, "Dynptr has to be an uninitialized dynptr\n");
@@ -6048,21 +6058,31 @@ skip_type_check:
 				err_extra, arg + 1);
 			return -EINVAL;
 		}
-	} else if (arg_type_is_alloc_size(arg_type)) {
+		break;
+	case ARG_CONST_ALLOC_SIZE_OR_ZERO:
 		if (!tnum_is_const(reg->var_off)) {
 			verbose(env, "R%d is not a known constant'\n",
 				regno);
 			return -EACCES;
 		}
 		meta->mem_size = reg->var_off.value;
-	} else if (arg_type_is_int_ptr(arg_type)) {
+		err = mark_chain_precision(env, regno);
+		if (err)
+			return err;
+		break;
+	case ARG_PTR_TO_INT:
+	case ARG_PTR_TO_LONG:
+	{
 		int size = int_ptr_type_to_size(arg_type);
 
 		err = check_helper_mem_access(env, regno, size, false, meta);
 		if (err)
 			return err;
 		err = check_ptr_alignment(env, reg, 0, size, true);
-	} else if (arg_type == ARG_PTR_TO_CONST_STR) {
+		break;
+	}
+	case ARG_PTR_TO_CONST_STR:
+	{
 		struct bpf_map *map = reg->map_ptr;
 		int map_off;
 		u64 map_addr;
@@ -6101,9 +6121,12 @@ skip_type_check:
 			verbose(env, "string is not zero-terminated\n");
 			return -EINVAL;
 		}
-	} else if (arg_type == ARG_PTR_TO_KPTR) {
+		break;
+	}
+	case ARG_PTR_TO_KPTR:
 		if (process_kptr_func(env, regno, meta))
 			return -EACCES;
+		break;
 	}
 
 	return err;
@@ -6400,11 +6423,19 @@ static bool check_raw_mode_ok(const struct bpf_func_proto *fn)
 	return count <= 1;
 }
 
-static bool check_args_pair_invalid(enum bpf_arg_type arg_curr,
-				    enum bpf_arg_type arg_next)
+static bool check_args_pair_invalid(const struct bpf_func_proto *fn, int arg)
 {
-	return (base_type(arg_curr) == ARG_PTR_TO_MEM) !=
-		arg_type_is_mem_size(arg_next);
+	bool is_fixed = fn->arg_type[arg] & MEM_FIXED_SIZE;
+	bool has_size = fn->arg_size[arg] != 0;
+	bool is_next_size = false;
+
+	if (arg + 1 < ARRAY_SIZE(fn->arg_type))
+		is_next_size = arg_type_is_mem_size(fn->arg_type[arg + 1]);
+
+	if (base_type(fn->arg_type[arg]) != ARG_PTR_TO_MEM)
+		return is_next_size;
+
+	return has_size == is_next_size || is_next_size == is_fixed;
 }
 
 static bool check_arg_pair_ok(const struct bpf_func_proto *fn)
@@ -6415,11 +6446,11 @@ static bool check_arg_pair_ok(const struct bpf_func_proto *fn)
 	 * helper function specification.
 	 */
 	if (arg_type_is_mem_size(fn->arg1_type) ||
-	    base_type(fn->arg5_type) == ARG_PTR_TO_MEM ||
-	    check_args_pair_invalid(fn->arg1_type, fn->arg2_type) ||
-	    check_args_pair_invalid(fn->arg2_type, fn->arg3_type) ||
-	    check_args_pair_invalid(fn->arg3_type, fn->arg4_type) ||
-	    check_args_pair_invalid(fn->arg4_type, fn->arg5_type))
+	    check_args_pair_invalid(fn, 0) ||
+	    check_args_pair_invalid(fn, 1) ||
+	    check_args_pair_invalid(fn, 2) ||
+	    check_args_pair_invalid(fn, 3) ||
+	    check_args_pair_invalid(fn, 4))
 		return false;
 
 	return true;
@@ -6460,7 +6491,10 @@ static bool check_btf_id_ok(const struct bpf_func_proto *fn)
 		if (base_type(fn->arg_type[i]) == ARG_PTR_TO_BTF_ID && !fn->arg_btf_id[i])
 			return false;
 
-		if (base_type(fn->arg_type[i]) != ARG_PTR_TO_BTF_ID && fn->arg_btf_id[i])
+		if (base_type(fn->arg_type[i]) != ARG_PTR_TO_BTF_ID && fn->arg_btf_id[i] &&
+		    /* arg_btf_id and arg_size are in a union. */
+		    (base_type(fn->arg_type[i]) != ARG_PTR_TO_MEM ||
+		     !(fn->arg_type[i] & MEM_FIXED_SIZE)))
 			return false;
 	}
 
