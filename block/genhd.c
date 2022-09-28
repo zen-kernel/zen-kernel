@@ -617,13 +617,14 @@ void del_gendisk(struct gendisk *disk)
 	 * Fail any new I/O.
 	 */
 	set_bit(GD_DEAD, &disk->state);
+	if (test_bit(GD_OWNS_QUEUE, &disk->state))
+		blk_queue_flag_set(QUEUE_FLAG_DYING, q);
 	set_capacity(disk, 0);
 
 	/*
 	 * Prevent new I/O from crossing bio_queue_enter().
 	 */
 	blk_queue_start_drain(q);
-	blk_mq_freeze_queue_wait(q);
 
 	if (!(disk->flags & GENHD_FL_HIDDEN)) {
 		sysfs_remove_link(&disk_to_dev(disk)->kobj, "bdi");
@@ -647,6 +648,8 @@ void del_gendisk(struct gendisk *disk)
 	pm_runtime_set_memalloc_noio(disk_to_dev(disk), false);
 	device_del(disk_to_dev(disk));
 
+	blk_mq_freeze_queue_wait(q);
+
 	blk_throtl_cancel_bios(disk->queue);
 
 	blk_sync_queue(q);
@@ -663,11 +666,16 @@ void del_gendisk(struct gendisk *disk)
 	blk_mq_unquiesce_queue(q);
 
 	/*
-	 * Allow using passthrough request again after the queue is torn down.
+	 * If the disk does not own the queue, allow using passthrough requests
+	 * again.  Else leave the queue frozen to fail all I/O.
 	 */
-	blk_queue_flag_clear(QUEUE_FLAG_INIT_DONE, q);
-	__blk_mq_unfreeze_queue(q, true);
-
+	if (!test_bit(GD_OWNS_QUEUE, &disk->state)) {
+		blk_queue_flag_clear(QUEUE_FLAG_INIT_DONE, q);
+		__blk_mq_unfreeze_queue(q, true);
+	} else {
+		if (queue_is_mq(q))
+			blk_mq_exit_queue(q);
+	}
 }
 EXPORT_SYMBOL(del_gendisk);
 
@@ -1151,6 +1159,18 @@ static void disk_release(struct device *dev)
 	might_sleep();
 	WARN_ON_ONCE(disk_live(disk));
 
+	/*
+	 * To undo the all initialization from blk_mq_init_allocated_queue in
+	 * case of a probe failure where add_disk is never called we have to
+	 * call blk_mq_exit_queue here. We can't do this for the more common
+	 * teardown case (yet) as the tagset can be gone by the time the disk
+	 * is released once it was added.
+	 */
+	if (queue_is_mq(disk->queue) &&
+	    test_bit(GD_OWNS_QUEUE, &disk->state) &&
+	    !test_bit(GD_ADDED, &disk->state))
+		blk_mq_exit_queue(disk->queue);
+
 	blkcg_exit_queue(disk->queue);
 
 	disk_release_events(disk);
@@ -1338,12 +1358,9 @@ struct gendisk *__alloc_disk_node(struct request_queue *q, int node_id,
 {
 	struct gendisk *disk;
 
-	if (!blk_get_queue(q))
-		return NULL;
-
 	disk = kzalloc_node(sizeof(struct gendisk), GFP_KERNEL, node_id);
 	if (!disk)
-		goto out_put_queue;
+		return NULL;
 
 	disk->bdi = bdi_alloc(node_id);
 	if (!disk->bdi)
@@ -1387,11 +1404,8 @@ out_free_bdi:
 	bdi_put(disk->bdi);
 out_free_disk:
 	kfree(disk);
-out_put_queue:
-	blk_put_queue(q);
 	return NULL;
 }
-EXPORT_SYMBOL(__alloc_disk_node);
 
 struct gendisk *__blk_alloc_disk(int node, struct lock_class_key *lkclass)
 {
@@ -1404,9 +1418,10 @@ struct gendisk *__blk_alloc_disk(int node, struct lock_class_key *lkclass)
 
 	disk = __alloc_disk_node(q, node, lkclass);
 	if (!disk) {
-		blk_cleanup_queue(q);
+		blk_put_queue(q);
 		return NULL;
 	}
+	set_bit(GD_OWNS_QUEUE, &disk->state);
 	return disk;
 }
 EXPORT_SYMBOL(__blk_alloc_disk);
@@ -1417,6 +1432,9 @@ EXPORT_SYMBOL(__blk_alloc_disk);
  *
  * This decrements the refcount for the struct gendisk. When this reaches 0
  * we'll have disk_release() called.
+ *
+ * Note: for blk-mq disk put_disk must be called before freeing the tag_set
+ * when handling probe errors (that is before add_disk() is called).
  *
  * Context: Any context, but the last reference must not be dropped from
  *          atomic context.
@@ -1439,7 +1457,6 @@ EXPORT_SYMBOL(put_disk);
  */
 void blk_cleanup_disk(struct gendisk *disk)
 {
-	blk_cleanup_queue(disk->queue);
 	put_disk(disk);
 }
 EXPORT_SYMBOL(blk_cleanup_disk);

@@ -168,7 +168,7 @@ static void __scsi_queue_insert(struct scsi_cmnd *cmd, int reason, bool unbusy)
 	 * Requeue this command.  It will go before all other commands
 	 * that are already in the queue. Schedule requeue work under
 	 * lock such that the kblockd_schedule_work() call happens
-	 * before blk_cleanup_queue() finishes.
+	 * before blk_mq_destroy_queue() finishes.
 	 */
 	cmd->result = 0;
 
@@ -429,9 +429,9 @@ static void scsi_starved_list_run(struct Scsi_Host *shost)
 		 * it and the queue.  Mitigate by taking a reference to the
 		 * queue and never touching the sdev again after we drop the
 		 * host lock.  Note: if __scsi_remove_device() invokes
-		 * blk_cleanup_queue() before the queue is run from this
+		 * blk_mq_destroy_queue() before the queue is run from this
 		 * function then blk_run_queue() will return immediately since
-		 * blk_cleanup_queue() marks the queue with QUEUE_FLAG_DYING.
+		 * blk_mq_destroy_queue() marks the queue with QUEUE_FLAG_DYING.
 		 */
 		slq = sdev->request_queue;
 		if (!blk_get_queue(slq))
@@ -1995,9 +1995,13 @@ int scsi_mq_setup_tags(struct Scsi_Host *shost)
 	return blk_mq_alloc_tag_set(tag_set);
 }
 
-void scsi_mq_destroy_tags(struct Scsi_Host *shost)
+void scsi_mq_free_tags(struct kref *kref)
 {
+	struct Scsi_Host *shost = container_of(kref, typeof(*shost),
+					       tagset_refcnt);
+
 	blk_mq_free_tag_set(&shost->tag_set);
+	complete(&shost->tagset_freed);
 }
 
 /**
