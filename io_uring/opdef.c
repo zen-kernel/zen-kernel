@@ -69,6 +69,7 @@ const struct io_op_def io_op_defs[] = {
 		.issue			= io_read,
 		.prep_async		= io_readv_prep_async,
 		.cleanup		= io_readv_writev_cleanup,
+		.fail			= io_rw_fail,
 	},
 	[IORING_OP_WRITEV] = {
 		.needs_file		= 1,
@@ -85,6 +86,7 @@ const struct io_op_def io_op_defs[] = {
 		.issue			= io_write,
 		.prep_async		= io_writev_prep_async,
 		.cleanup		= io_readv_writev_cleanup,
+		.fail			= io_rw_fail,
 	},
 	[IORING_OP_FSYNC] = {
 		.needs_file		= 1,
@@ -105,6 +107,7 @@ const struct io_op_def io_op_defs[] = {
 		.name			= "READ_FIXED",
 		.prep			= io_prep_rw,
 		.issue			= io_read,
+		.fail			= io_rw_fail,
 	},
 	[IORING_OP_WRITE_FIXED] = {
 		.needs_file		= 1,
@@ -119,6 +122,7 @@ const struct io_op_def io_op_defs[] = {
 		.name			= "WRITE_FIXED",
 		.prep			= io_prep_rw,
 		.issue			= io_write,
+		.fail			= io_rw_fail,
 	},
 	[IORING_OP_POLL_ADD] = {
 		.needs_file		= 1,
@@ -153,6 +157,7 @@ const struct io_op_def io_op_defs[] = {
 		.issue			= io_sendmsg,
 		.prep_async		= io_sendmsg_prep_async,
 		.cleanup		= io_sendmsg_recvmsg_cleanup,
+		.fail			= io_sendrecv_fail,
 #else
 		.prep			= io_eopnotsupp_prep,
 #endif
@@ -170,6 +175,7 @@ const struct io_op_def io_op_defs[] = {
 		.issue			= io_recvmsg,
 		.prep_async		= io_recvmsg_prep_async,
 		.cleanup		= io_sendmsg_recvmsg_cleanup,
+		.fail			= io_sendrecv_fail,
 #else
 		.prep			= io_eopnotsupp_prep,
 #endif
@@ -273,6 +279,7 @@ const struct io_op_def io_op_defs[] = {
 		.name			= "READ",
 		.prep			= io_prep_rw,
 		.issue			= io_read,
+		.fail			= io_rw_fail,
 	},
 	[IORING_OP_WRITE] = {
 		.needs_file		= 1,
@@ -287,6 +294,7 @@ const struct io_op_def io_op_defs[] = {
 		.name			= "WRITE",
 		.prep			= io_prep_rw,
 		.issue			= io_write,
+		.fail			= io_rw_fail,
 	},
 	[IORING_OP_FADVISE] = {
 		.needs_file		= 1,
@@ -310,6 +318,7 @@ const struct io_op_def io_op_defs[] = {
 #if defined(CONFIG_NET)
 		.prep			= io_sendmsg_prep,
 		.issue			= io_send,
+		.fail			= io_sendrecv_fail,
 #else
 		.prep			= io_eopnotsupp_prep,
 #endif
@@ -325,6 +334,7 @@ const struct io_op_def io_op_defs[] = {
 #if defined(CONFIG_NET)
 		.prep			= io_recvmsg_prep,
 		.issue			= io_recv,
+		.fail			= io_sendrecv_fail,
 #else
 		.prep			= io_eopnotsupp_prep,
 #endif
@@ -480,10 +490,11 @@ const struct io_op_def io_op_defs[] = {
 		.manual_alloc		= 1,
 #if defined(CONFIG_NET)
 		.async_size		= sizeof(struct io_async_msghdr),
-		.prep			= io_sendzc_prep,
-		.issue			= io_sendzc,
+		.prep			= io_send_zc_prep,
+		.issue			= io_send_zc,
 		.prep_async		= io_sendzc_prep_async,
-		.cleanup		= io_sendzc_cleanup,
+		.cleanup		= io_send_zc_cleanup,
+		.fail			= io_send_zc_fail,
 #else
 		.prep			= io_eopnotsupp_prep,
 #endif
