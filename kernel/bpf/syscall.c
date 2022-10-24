@@ -4361,7 +4361,9 @@ static int bpf_task_fd_query(const union bpf_attr *attr,
 	if (attr->task_fd_query.flags != 0)
 		return -EINVAL;
 
+	rcu_read_lock();
 	task = get_pid_task(find_vpid(pid), PIDTYPE_PID);
+	rcu_read_unlock();
 	if (!task)
 		return -ENOENT;
 
@@ -5138,7 +5140,7 @@ BPF_CALL_4(bpf_kallsyms_lookup_name, const char *, name, int, name_sz, int, flag
 	return *res ? 0 : -ENOENT;
 }
 
-const struct bpf_func_proto bpf_kallsyms_lookup_name_proto = {
+static const struct bpf_func_proto bpf_kallsyms_lookup_name_proto = {
 	.func		= bpf_kallsyms_lookup_name,
 	.gpl_only	= false,
 	.ret_type	= RET_INTEGER,
