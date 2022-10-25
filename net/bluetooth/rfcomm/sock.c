@@ -61,22 +61,19 @@ static void rfcomm_sk_data_ready(struct rfcomm_dlc *d, struct sk_buff *skb)
 		rfcomm_dlc_throttle(d);
 }
 
-void __rfcomm_sk_state_change(struct work_struct *work)
+static void rfcomm_sk_state_change(struct rfcomm_dlc *d, int err)
 {
-	struct rfcomm_dlc *d = container_of(work, struct rfcomm_dlc,
-					    state_change_work);
 	struct sock *sk = d->owner, *parent;
 
 	if (!sk)
 		return;
 
+	BT_DBG("dlc %p state %ld err %d", d, d->state, err);
+
 	lock_sock(sk);
-	rfcomm_dlc_lock(d);
 
-	BT_DBG("dlc %p state %ld err %d", d, d->state, d->err);
-
-	if (d->err)
-		sk->sk_err = d->err;
+	if (err)
+		sk->sk_err = err;
 
 	sk->sk_state = d->state;
 
@@ -94,22 +91,15 @@ void __rfcomm_sk_state_change(struct work_struct *work)
 		sk->sk_state_change(sk);
 	}
 
-	rfcomm_dlc_unlock(d);
 	release_sock(sk);
-	sock_put(sk);
-}
 
-static void rfcomm_sk_state_change(struct rfcomm_dlc *d, int err)
-{
-	struct sock *sk = d->owner;
-
-	if (!sk)
-		return;
-
-	d->err = err;
-	sock_hold(sk);
-	if (!schedule_work(&d->state_change_work))
-		sock_put(sk);
+	if (parent && sock_flag(sk, SOCK_ZAPPED)) {
+		/* We have to drop DLC lock here, otherwise
+		 * rfcomm_sock_destruct() will dead lock. */
+		rfcomm_dlc_unlock(d);
+		rfcomm_sock_kill(sk);
+		rfcomm_dlc_lock(d);
+	}
 }
 
 /* ---- Socket functions ---- */
