@@ -219,20 +219,12 @@ static inline bool i915_gem_object_trylock(struct drm_i915_gem_object *obj,
 		return ww_mutex_trylock(&obj->base.resv->lock, &ww->ctx);
 }
 
-static inline void __i915_gem_object_unlock(struct drm_i915_gem_object *obj)
+static inline void i915_gem_object_unlock(struct drm_i915_gem_object *obj)
 {
 	if (obj->ops->adjust_lru)
 		obj->ops->adjust_lru(obj);
 
 	dma_resv_unlock(obj->base.resv);
-}
-
-static inline void i915_gem_object_unlock(struct drm_i915_gem_object *obj)
-{
-	if (list_empty(&obj->obj_link))
-		__i915_gem_object_unlock(obj);
-	else
-		i915_gem_ww_unlock_single(obj);
 }
 
 static inline void
