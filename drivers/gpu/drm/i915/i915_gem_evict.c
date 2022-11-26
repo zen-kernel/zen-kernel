@@ -55,29 +55,33 @@ static int ggtt_flush(struct intel_gt *gt)
 	return intel_gt_wait_for_idle(gt, MAX_SCHEDULE_TIMEOUT);
 }
 
-static bool grab_vma(struct i915_vma *vma, struct i915_gem_ww_ctx *ww)
+static int grab_vma(struct i915_vma *vma, struct i915_gem_ww_ctx *ww)
 {
+	int err;
+
+	/* Dead objects don't need pins */
+	if (dying_vma(vma))
+		atomic_and(~I915_VMA_PIN_MASK, &vma->flags);
+
+	err = i915_gem_object_lock(vma->obj, ww);
+
 	/*
 	 * We add the extra refcount so the object doesn't drop to zero until
-	 * after ungrab_vma(), this way trylock is always paired with unlock.
+	 * after ungrab_vma(), this way lock is always paired with unlock.
 	 */
-	if (i915_gem_object_get_rcu(vma->obj)) {
-		if (!i915_gem_object_trylock(vma->obj, ww)) {
-			i915_gem_object_put(vma->obj);
-			return false;
-		}
-	} else {
-		/* Dead objects don't need pins */
-		atomic_and(~I915_VMA_PIN_MASK, &vma->flags);
-	}
+	if (!err)
+		i915_gem_object_get(vma->obj);
 
-	return true;
+	return err;
 }
 
 static void ungrab_vma(struct i915_vma *vma)
 {
-	if (dying_vma(vma))
+	if (dying_vma(vma)) {
+		/* Dead objects don't need pins */
+		atomic_and(~I915_VMA_PIN_MASK, &vma->flags);
 		return;
+	}
 
 	i915_gem_object_unlock(vma->obj);
 	i915_gem_object_put(vma->obj);
@@ -93,10 +97,11 @@ mark_free(struct drm_mm_scan *scan,
 	if (i915_vma_is_pinned(vma))
 		return false;
 
-	if (!grab_vma(vma, ww))
+	if (grab_vma(vma, ww))
 		return false;
 
 	list_add(&vma->evict_link, unwind);
+
 	return drm_mm_scan_add_block(scan, &vma->node);
 }
 
@@ -284,10 +289,12 @@ found:
 		vma = container_of(node, struct i915_vma, node);
 
 		/* If we find any non-objects (!vma), we cannot evict them */
-		if (vma->node.color != I915_COLOR_UNEVICTABLE &&
-		    grab_vma(vma, ww)) {
-			ret = __i915_vma_unbind(vma);
-			ungrab_vma(vma);
+		if (vma->node.color != I915_COLOR_UNEVICTABLE) {
+			ret = grab_vma(vma, ww);
+			if (!ret) {
+				ret = __i915_vma_unbind(vma);
+				ungrab_vma(vma);
+			}
 		} else {
 			ret = -ENOSPC;
 		}
@@ -382,10 +389,9 @@ int i915_gem_evict_for_node(struct i915_address_space *vm,
 			break;
 		}
 
-		if (!grab_vma(vma, ww)) {
-			ret = -ENOSPC;
+		ret = grab_vma(vma, ww);
+		if (ret)
 			break;
-		}
 
 		/*
 		 * Never show fear in the face of dragons!
