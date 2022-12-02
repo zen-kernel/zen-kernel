@@ -19,16 +19,14 @@ static void i915_gem_ww_ctx_unlock_all(struct i915_gem_ww_ctx *ww)
 	struct drm_i915_gem_object *obj;
 
 	while ((obj = list_first_entry_or_null(&ww->obj_list, struct drm_i915_gem_object, obj_link))) {
-		list_del(&obj->obj_link);
-		i915_gem_object_unlock(obj);
-		i915_gem_object_put(obj);
+		i915_gem_ww_unlock_single(obj);
 	}
 }
 
 void i915_gem_ww_unlock_single(struct drm_i915_gem_object *obj)
 {
-	list_del(&obj->obj_link);
-	i915_gem_object_unlock(obj);
+	list_del_init(&obj->obj_link);
+	__i915_gem_object_unlock(obj);
 	i915_gem_object_put(obj);
 }
 
