@@ -4339,18 +4339,23 @@ inline void alt_sched_debug(void) {}
 
 #ifdef	CONFIG_SMP
 
-#define SCHED_RQ_NR_MIGRATION (32U)
+#ifdef CONFIG_PREEMPT_RT
+#define SCHED_NR_MIGRATE_BREAK 8
+#else
+#define SCHED_NR_MIGRATE_BREAK 32
+#endif
+
+const_debug unsigned int sysctl_sched_nr_migrate = SCHED_NR_MIGRATE_BREAK;
+
 /*
  * Migrate pending tasks in @rq to @dest_cpu
- * Will try to migrate mininal of half of @rq nr_running tasks and
- * SCHED_RQ_NR_MIGRATION to @dest_cpu
  */
 static inline int
 migrate_pending_tasks(struct rq *rq, struct rq *dest_rq, const int dest_cpu)
 {
 	struct task_struct *p, *skip = rq->curr;
 	int nr_migrated = 0;
-	int nr_tries = min(rq->nr_running / 2, SCHED_RQ_NR_MIGRATION);
+	int nr_tries = min(rq->nr_running / 2, sysctl_sched_nr_migrate);
 
 	while (skip != rq->idle && nr_tries &&
 	       (p = sched_rq_next_task(skip, rq)) != rq->idle) {
