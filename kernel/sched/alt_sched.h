@@ -80,6 +80,15 @@ static inline void resched_latency_warn(int cpu, u64 latency) {}
 #define MAX_SHARES		(1UL << 18)
 #endif
 
+/*
+ * Tunables that become constants when CONFIG_SCHED_DEBUG is off:
+ */
+#ifdef CONFIG_SCHED_DEBUG
+# define const_debug __read_mostly
+#else
+# define const_debug const
+#endif
+
 /* task_struct::on_rq states: */
 #define TASK_ON_RQ_QUEUED	1
 #define TASK_ON_RQ_MIGRATING	2
