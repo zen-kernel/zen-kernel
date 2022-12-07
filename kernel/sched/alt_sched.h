@@ -1,6 +1,7 @@
 #ifndef ALT_SCHED_H
 #define ALT_SCHED_H
 
+#include <linux/context_tracking.h>
 #include <linux/psi.h>
 #include <linux/stop_machine.h>
 #include <linux/syscalls.h>
