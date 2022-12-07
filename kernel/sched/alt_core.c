@@ -1531,7 +1531,7 @@ static struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int
 	rq = cpu_rq(new_cpu);
 
 	raw_spin_lock(&rq->lock);
-	BUG_ON(task_cpu(p) != new_cpu);
+	WARN_ON_ONCE(task_cpu(p) != new_cpu);
 	sched_task_sanity_check(p, rq);
 	enqueue_task(p, rq, 0);
 	p->on_rq = TASK_ON_RQ_QUEUED;
