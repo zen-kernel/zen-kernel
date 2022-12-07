@@ -1703,7 +1703,7 @@ unsigned long wait_task_inactive(struct task_struct *p, unsigned int match_state
 		 * if the runqueue has changed and p is actually now
 		 * running somewhere else!
 		 */
-		while (task_running(p) && p == rq->curr) {
+		while (task_on_cpu(p) && p == rq->curr) {
 			if (match_state && unlikely(READ_ONCE(p->__state) != match_state))
 				return 0;
 			cpu_relax();
@@ -1716,7 +1716,7 @@ unsigned long wait_task_inactive(struct task_struct *p, unsigned int match_state
 		 */
 		task_access_lock_irqsave(p, &lock, &flags);
 		trace_sched_wait_task(p);
-		running = task_running(p);
+		running = task_on_cpu(p);
 		on_rq = p->on_rq;
 		ncsw = 0;
 		if (!match_state || READ_ONCE(p->__state) == match_state)
@@ -1963,7 +1963,7 @@ static int affine_move_task(struct rq *rq, struct task_struct *p, int dest_cpu,
 			rq->nr_pinned--;
 		}
 
-		if (task_running(p) || READ_ONCE(p->__state) == TASK_WAKING) {
+		if (task_on_cpu(p) || READ_ONCE(p->__state) == TASK_WAKING) {
 			struct migration_arg arg = { p, dest_cpu };
 
 			/* Need help from migration thread: drop lock and wait. */
