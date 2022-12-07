@@ -1704,7 +1704,7 @@ unsigned long wait_task_inactive(struct task_struct *p, unsigned int match_state
 		 * running somewhere else!
 		 */
 		while (task_on_cpu(p) && p == rq->curr) {
-			if (match_state && unlikely(READ_ONCE(p->__state) != match_state))
+			if (match_state && !(READ_ONCE(p->__state) & match_state))
 				return 0;
 			cpu_relax();
 		}
@@ -1719,7 +1719,7 @@ unsigned long wait_task_inactive(struct task_struct *p, unsigned int match_state
 		running = task_on_cpu(p);
 		on_rq = p->on_rq;
 		ncsw = 0;
-		if (!match_state || READ_ONCE(p->__state) == match_state)
+		if (!match_state || (READ_ONCE(p->__state) & match_state))
 			ncsw = p->nvcsw | LONG_MIN; /* sets MSB */
 		task_access_unlock_irqrestore(p, lock, &flags);
 
