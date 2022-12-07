@@ -33,6 +33,7 @@
 
 #include <uapi/linux/sched/types.h>
 
+#include <asm/irq_regs.h>
 #include <asm/switch_to.h>
 
 #define CREATE_TRACE_POINTS
@@ -6734,6 +6735,16 @@ void show_state_filter(unsigned int state_filter)
 
 void dump_cpu_task(int cpu)
 {
+	if (cpu == smp_processor_id() && in_hardirq()) {
+		struct pt_regs *regs;
+
+		regs = get_irq_regs();
+		if (regs) {
+			show_regs(regs);
+			return;
+		}
+	}
+
 	if (trigger_single_cpu_backtrace(cpu))
 		return;
 
