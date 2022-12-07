@@ -117,6 +117,12 @@ struct sched_queue {
 	struct list_head heads[SCHED_BITS];
 };
 
+struct rq;
+struct balance_callback {
+	struct balance_callback *next;
+	void (*func)(struct rq *rq);
+};
+
 /*
  * This is the main, per-CPU runqueue data structure.
  * This data should only be modified by the local cpu.
@@ -165,7 +171,7 @@ struct rq {
 	int active_balance;
 	struct cpu_stop_work	active_balance_work;
 #endif
-	struct callback_head	*balance_callback;
+	struct balance_callback	*balance_callback;
 #ifdef CONFIG_HOTPLUG_CPU
 	struct rcuwait		hotplug_wait;
 #endif
