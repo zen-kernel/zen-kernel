@@ -719,7 +719,7 @@ unsigned long rq_load_util(struct rq *rq, int cpu)
 #ifdef CONFIG_SMP
 unsigned long sched_cpu_util(int cpu)
 {
-	return rq_load_util(cpu_rq(cpu), cpu);
+	return rq_load_util(cpu_rq(cpu), arch_scale_cpu_capacity(cpu));
 }
 #endif /* CONFIG_SMP */
 
