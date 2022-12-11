@@ -2,8 +2,8 @@
 VERSION = 6
 PATCHLEVEL = 2
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Hurr durr I'ma ninja sloth
+EXTRAVERSION = -zen
+NAME = Finding Humor In Nothing
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
