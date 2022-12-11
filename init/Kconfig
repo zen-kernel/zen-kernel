@@ -143,6 +143,7 @@ config ZEN_INTERACTIVE
 	  --- Block Layer ----------------------------------------
 
 	    Default scheduler for SQ..: mq-deadline ->   bfq
+	    Default scheduler for MQ..:        none ->   kyber
 
 config BROKEN
 	bool
