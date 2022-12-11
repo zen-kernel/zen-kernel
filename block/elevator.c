@@ -738,7 +738,13 @@ void elevator_set_default(struct request_queue *q)
 	 * to "none".
 	 */
 	if (q->nr_hw_queues != 1 && !blk_mq_is_shared_tags(q->tag_set->flags))
+#if defined(CONFIG_ZEN_INTERACTIVE) && defined(CONFIG_MQ_IOSCHED_KYBER)
+		ctx.name = "kyber";
+#elif defined(CONFIG_ZEN_INTERACTIVE)
+		ctx.name = "mq-deadline";
+#else
 		return;
+#endif
 
 	e = elevator_find_get(ctx.name);
 	if (!e)
