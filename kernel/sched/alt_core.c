@@ -67,7 +67,7 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 #define sched_feat(x)	(0)
 #endif /* CONFIG_SCHED_DEBUG */
 
-#define ALT_SCHED_VERSION "v6.0-r0-vd"
+#define ALT_SCHED_VERSION "v6.0-r0"
 
 /* rt_prio(prio) defined in include/linux/sched/rt.h */
 #define rt_task(p)		rt_prio((p)->prio)
@@ -719,7 +719,7 @@ unsigned long rq_load_util(struct rq *rq, int cpu)
 #ifdef CONFIG_SMP
 unsigned long sched_cpu_util(int cpu)
 {
-	return rq_load_util(cpu_rq(cpu), cpu);
+	return rq_load_util(cpu_rq(cpu), arch_scale_cpu_capacity(cpu));
 }
 #endif /* CONFIG_SMP */
 
@@ -4680,7 +4680,7 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 			prev->sched_contributes_to_load =
 				(prev_state & TASK_UNINTERRUPTIBLE) &&
 				!(prev_state & TASK_NOLOAD) &&
-				!(prev->flags & PF_FROZEN);
+				!(prev->flags & TASK_FROZEN);
 
 			if (prev->sched_contributes_to_load)
 				rq->nr_uninterruptible++;
