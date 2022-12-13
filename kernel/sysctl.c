@@ -96,6 +96,10 @@ EXPORT_SYMBOL_GPL(sysctl_long_vals);
 
 /* Constants used for minimum and maximum */
 
+#ifdef CONFIG_SCHED_ALT
+extern int sched_yield_type;
+#endif
+
 #ifdef CONFIG_PERF_EVENTS
 static const int six_hundred_forty_kb = 640 * 1024;
 #endif
@@ -1636,6 +1640,7 @@ int proc_do_static_key(struct ctl_table *table, int write,
 }
 
 static struct ctl_table kern_table[] = {
+#ifndef CONFIG_SCHED_ALT
 #ifdef CONFIG_NUMA_BALANCING
 	{
 		.procname	= "numa_balancing",
@@ -1655,6 +1660,7 @@ static struct ctl_table kern_table[] = {
 		.extra1		= SYSCTL_ZERO,
 	},
 #endif /* CONFIG_NUMA_BALANCING */
+#endif /* !CONFIG_SCHED_ALT */
 	{
 		.procname	= "panic",
 		.data		= &panic_timeout,
@@ -1963,6 +1969,17 @@ static struct ctl_table kern_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
+	},
+#endif
+#ifdef CONFIG_SCHED_ALT
+	{
+		.procname	= "yield_type",
+		.data		= &sched_yield_type,
+		.maxlen		= sizeof (int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_TWO,
 	},
 #endif
 #if defined(CONFIG_S390) && defined(CONFIG_SMP)
