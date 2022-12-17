@@ -156,7 +156,8 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 #ifdef CONFIG_SCHED_SMT
 static cpumask_t sched_sg_idle_mask ____cacheline_aligned_in_smp;
 #endif
-static cpumask_t sched_rq_watermark[SCHED_QUEUE_BITS] ____cacheline_aligned_in_smp;
+static cpumask_t sched_preempt_mask[SCHED_QUEUE_BITS] ____cacheline_aligned_in_smp;
+static cpumask_t *const sched_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS - 1];
 
 /* sched_queue related functions */
 static inline void sched_queue_init(struct sched_queue *q)
@@ -180,44 +181,79 @@ static inline void sched_queue_init_idle(struct sched_queue *q,
 	list_add(&idle->sq_node, &q->heads[idle->sq_idx]);
 }
 
-/* water mark related functions */
-static inline void update_sched_rq_watermark(struct rq *rq)
+static unsigned long sched_wm_update[2];
+
+static inline void
+clear_recorded_preempt_mask(int pr, int low, int high, int cpu)
 {
-	unsigned long watermark = find_first_bit(rq->queue.bitmap, SCHED_QUEUE_BITS);
-	unsigned long last_wm = rq->watermark;
-	unsigned long i;
-	int cpu;
+	if (low < pr && pr <= high) {
+		cpumask_clear_cpu(cpu, sched_preempt_mask + pr);
+		sched_wm_update[0]++;
+	}
+}
 
-	if (watermark == last_wm)
+static inline void
+set_recorded_preempt_mask(int pr, int low, int high, int cpu)
+{
+	if (low < pr && pr <= high) {
+		cpumask_set_cpu(cpu, sched_preempt_mask + pr);
+		sched_wm_update[0]++;
+	}
+}
+
+static atomic_t sched_prio_record = ATOMIC_INIT(0);
+
+/* water mark related functions */
+static inline void update_sched_preempt_mask(struct rq *rq)
+{
+	unsigned long prio = find_first_bit(rq->queue.bitmap, SCHED_QUEUE_BITS);
+	unsigned long last_prio = rq->prio;
+	int cpu, pr;
+
+	if (prio == last_prio)
 		return;
 
-	rq->watermark = watermark;
+	rq->prio = prio;
 	cpu = cpu_of(rq);
-	if (watermark < last_wm) {
-		for (i = last_wm; i > watermark; i--)
-			cpumask_clear_cpu(cpu, sched_rq_watermark + SCHED_QUEUE_BITS - i);
+	pr = atomic_read(&sched_prio_record);
+
+	if (prio < last_prio) {
+		sched_wm_update[1] += (last_prio - prio);
+
+		if (IDLE_TASK_SCHED_PRIO == last_prio) {
+			cpumask_clear_cpu(cpu, sched_idle_mask);
+			last_prio -= 2;
+			sched_wm_update[0]++;
 #ifdef CONFIG_SCHED_SMT
-		if (static_branch_likely(&sched_smt_present) &&
-		    IDLE_TASK_SCHED_PRIO == last_wm)
-			cpumask_andnot(&sched_sg_idle_mask,
-				       &sched_sg_idle_mask, cpu_smt_mask(cpu));
+			if (static_branch_likely(&sched_smt_present))
+				cpumask_andnot(&sched_sg_idle_mask,
+					       &sched_sg_idle_mask, cpu_smt_mask(cpu));
 #endif
+		}
+		clear_recorded_preempt_mask(pr, prio, last_prio, cpu);
+
 		return;
 	}
-	/* last_wm < watermark */
-	for (i = watermark; i > last_wm; i--)
-		cpumask_set_cpu(cpu, sched_rq_watermark + SCHED_QUEUE_BITS - i);
-#ifdef CONFIG_SCHED_SMT
-	if (static_branch_likely(&sched_smt_present) &&
-	    IDLE_TASK_SCHED_PRIO == watermark) {
-		cpumask_t tmp;
+	/* last_prio < prio */
+	sched_wm_update[1] += (prio - last_prio);
 
-		cpumask_and(&tmp, cpu_smt_mask(cpu), sched_rq_watermark);
-		if (cpumask_equal(&tmp, cpu_smt_mask(cpu)))
-			cpumask_or(&sched_sg_idle_mask,
-				   &sched_sg_idle_mask, cpu_smt_mask(cpu));
-	}
+	if (IDLE_TASK_SCHED_PRIO == prio) {
+		cpumask_set_cpu(cpu, sched_idle_mask);
+		prio -= 2;
+		sched_wm_update[0]++;
+#ifdef CONFIG_SCHED_SMT
+		if (static_branch_likely(&sched_smt_present)) {
+			cpumask_t tmp;
+
+			cpumask_and(&tmp, cpu_smt_mask(cpu), sched_idle_mask);
+			if (cpumask_equal(&tmp, cpu_smt_mask(cpu)))
+				cpumask_or(&sched_sg_idle_mask,
+					   &sched_sg_idle_mask, cpu_smt_mask(cpu));
+		}
 #endif
+	}
+
+	set_recorded_preempt_mask(pr, last_prio, prio, cpu);
 }
 
 /*
@@ -781,7 +817,7 @@ static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
 		  task_cpu(p), cpu_of(rq));
 
 	__SCHED_ENQUEUE_TASK(p, rq, flags);
-	update_sched_rq_watermark(rq);
+	update_sched_preempt_mask(rq);
 	++rq->nr_running;
 #ifdef CONFIG_SMP
 	if (2 == rq->nr_running)
@@ -806,7 +842,7 @@ static inline void requeue_task(struct task_struct *p, struct rq *rq, int idx)
 				  rq->queue.bitmap);
 		p->sq_idx = idx;
 		set_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);
-		update_sched_rq_watermark(rq);
+		update_sched_preempt_mask(rq);
 	}
 }
 
@@ -1533,7 +1569,7 @@ static struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int
 
 	WRITE_ONCE(p->on_rq, TASK_ON_RQ_MIGRATING);
 	dequeue_task(p, rq, 0);
-	update_sched_rq_watermark(rq);
+	update_sched_preempt_mask(rq);
 	set_task_cpu(p, new_cpu);
 	raw_spin_unlock(&rq->lock);
 
@@ -1895,23 +1931,65 @@ out:
 	return dest_cpu;
 }
 
+int sched_wm_mismatch[8];
+
+static inline void
+sched_preempt_mask_flush(cpumask_t *mask, int prio)
+{
+	int cpu;
+	/*
+	cpumask_t tmp, xor;
+	cpumask_t *mask = &tmp;
+	*/
+
+	cpumask_copy(mask, sched_idle_mask);
+
+	for_each_cpu_not(cpu, mask) {
+		if (prio < cpu_rq(cpu)->prio)
+			cpumask_set_cpu(cpu, mask);
+	}
+
+	/*
+	cpumask_xor(&xor, mask, sched_preempt_mask + level);
+	sched_wm_mismatch[cpumask_weight(&xor)]++;
+	*/
+}
+
+int sched_wm_cached_hit[2];
+
+static inline int
+preempt_mask_check(struct task_struct *p, cpumask_t *allow_mask, cpumask_t *preempt_mask)
+{
+	int task_prio = task_sched_prio(p);
+	cpumask_t *mask = sched_preempt_mask + task_prio;
+	int prio = atomic_read(&sched_prio_record);
+
+	if (prio != task_prio) {
+		sched_preempt_mask_flush(mask, task_prio);
+		atomic_set(&sched_prio_record, task_prio);
+		sched_wm_cached_hit[0]++;
+	} else
+		sched_wm_cached_hit[1]++;
+
+	return cpumask_and(preempt_mask, allow_mask, mask);
+}
+
 static inline int select_task_rq(struct task_struct *p)
 {
-	cpumask_t chk_mask, tmp;
+	cpumask_t allow_mask, mask;
 
-	if (unlikely(!cpumask_and(&chk_mask, p->cpus_ptr, cpu_active_mask)))
+	if (unlikely(!cpumask_and(&allow_mask, p->cpus_ptr, cpu_active_mask)))
 		return select_fallback_rq(task_cpu(p), p);
 
 	if (
 #ifdef CONFIG_SCHED_SMT
-	    cpumask_and(&tmp, &chk_mask, &sched_sg_idle_mask) ||
+	    cpumask_and(&mask, &allow_mask, &sched_sg_idle_mask) ||
 #endif
-	    cpumask_and(&tmp, &chk_mask, sched_rq_watermark) ||
-	    cpumask_and(&tmp, &chk_mask,
-			sched_rq_watermark + SCHED_QUEUE_BITS - 1 - task_sched_prio(p)))
-		return best_mask_cpu(task_cpu(p), &tmp);
+	    cpumask_and(&mask, &allow_mask, sched_idle_mask) ||
+	    preempt_mask_check(p, &allow_mask, &mask))
+		return best_mask_cpu(task_cpu(p), &mask);
 
-	return best_mask_cpu(task_cpu(p), &chk_mask);
+	return best_mask_cpu(task_cpu(p), &allow_mask);
 }
 
 void sched_set_stop_task(int cpu, struct task_struct *stop)
@@ -4048,7 +4126,7 @@ static inline void sg_balance(struct rq *rq)
 	 * find potential cpus which can migrate the current running task
 	 */
 	if (cpumask_test_cpu(cpu, &sched_sg_idle_mask) &&
-	    cpumask_andnot(&chk, cpu_online_mask, sched_rq_watermark) &&
+	    cpumask_andnot(&chk, cpu_online_mask, sched_idle_mask) &&
 	    cpumask_andnot(&chk, &chk, &sched_rq_pending_mask)) {
 		int i;
 
@@ -4358,11 +4436,21 @@ void alt_sched_debug(void)
 {
 	printk(KERN_INFO "sched: pending: 0x%04lx, idle: 0x%04lx, sg_idle: 0x%04lx\n",
 	       sched_rq_pending_mask.bits[0],
-	       sched_rq_watermark[0].bits[0],
+	       sched_idle_mask->bits[0],
 	       sched_sg_idle_mask.bits[0]);
 }
 #else
-inline void alt_sched_debug(void) {}
+inline void alt_sched_debug(void)
+{
+	int i;
+
+	printk(KERN_INFO "sched: sched_wm_cached_hit %d %ld %ld\n",
+	       sched_wm_cached_hit[1] * 1000 / (sched_wm_cached_hit[0] + sched_wm_cached_hit[1]),
+	       sched_wm_update[0], sched_wm_update[1]);
+	for (i = 0; i < 8; i++)
+		printk(KERN_INFO "sched: wm_mismatch[%d] = %d\n",
+		       i, sched_wm_mismatch[i]);
+}
 #endif
 
 #ifdef	CONFIG_SMP
@@ -4663,7 +4751,7 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 
 	if (likely(prev != next)) {
 		if (deactivated)
-			update_sched_rq_watermark(rq);
+			update_sched_preempt_mask(rq);
 		next->last_ran = rq->clock_task;
 		rq->last_ts_switch = rq->clock;
 
@@ -7399,8 +7487,7 @@ void __init sched_init(void)
 	wait_bit_init();
 
 #ifdef CONFIG_SMP
-	for (i = 0; i < SCHED_QUEUE_BITS; i++)
-		cpumask_copy(sched_rq_watermark + i, cpu_present_mask);
+	cpumask_copy(sched_idle_mask, cpu_present_mask);
 #endif
 
 #ifdef CONFIG_CGROUP_SCHED
@@ -7414,7 +7501,7 @@ void __init sched_init(void)
 		rq = cpu_rq(i);
 
 		sched_queue_init(&rq->queue);
-		rq->watermark = IDLE_TASK_SCHED_PRIO;
+		rq->prio = IDLE_TASK_SCHED_PRIO;
 		rq->skip = NULL;
 
 		raw_spin_lock_init(&rq->lock);
