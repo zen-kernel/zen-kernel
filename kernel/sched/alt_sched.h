@@ -139,7 +139,7 @@ struct rq {
 #ifdef CONFIG_SCHED_PDS
 	u64			time_edge;
 #endif
-	unsigned long watermark;
+	unsigned long prio;
 
 	/* switch count */
 	u64 nr_switches;
