@@ -139,7 +139,7 @@ struct rq {
 #ifdef CONFIG_SCHED_PDS
 	u64			time_edge;
 #endif
-	unsigned long watermark;
+	unsigned long prio;
 
 	/* switch count */
 	u64 nr_switches;
@@ -404,17 +404,24 @@ rq_lock(struct rq *rq, struct rq_flags *rf)
 }
 
 static inline void
-rq_unlock_irq(struct rq *rq, struct rq_flags *rf)
-	__releases(rq->lock)
-{
-	raw_spin_unlock_irq(&rq->lock);
-}
-
-static inline void
 rq_unlock(struct rq *rq, struct rq_flags *rf)
 	__releases(rq->lock)
 {
 	raw_spin_unlock(&rq->lock);
+}
+
+static inline void
+rq_lock_irq(struct rq *rq, struct rq_flags *rf)
+	__acquires(rq->lock)
+{
+	raw_spin_lock_irq(&rq->lock);
+}
+
+static inline void
+rq_unlock_irq(struct rq *rq, struct rq_flags *rf)
+	__releases(rq->lock)
+{
+	raw_spin_unlock_irq(&rq->lock);
 }
 
 static inline struct rq *
