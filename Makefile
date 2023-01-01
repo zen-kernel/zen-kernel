@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 6
 PATCHLEVEL = 0
-SUBLEVEL = 13
-EXTRAVERSION = -lqx3
+SUBLEVEL = 16
+EXTRAVERSION = -lqx1
 NAME = Sparkling Hot Fudge
 
 # *DOCUMENTATION*
