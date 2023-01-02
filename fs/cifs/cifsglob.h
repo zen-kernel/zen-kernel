@@ -13,6 +13,8 @@
 #include <linux/in6.h>
 #include <linux/inet.h>
 #include <linux/slab.h>
+#include <linux/scatterlist.h>
+#include <linux/mm.h>
 #include <linux/mempool.h>
 #include <linux/workqueue.h>
 #include <linux/utsname.h>
@@ -195,6 +197,19 @@ struct cifs_cred {
 	struct cifs_ace *aces;
 };
 
+struct cifs_open_info_data {
+	char *symlink_target;
+	union {
+		struct smb2_file_all_info fi;
+		struct smb311_posix_qinfo posix_fi;
+	};
+};
+
+static inline void cifs_free_open_info(struct cifs_open_info_data *data)
+{
+	kfree(data->symlink_target);
+}
+
 /*
  *****************************************************************
  * Except the CIFS PDUs themselves all the
@@ -317,20 +332,20 @@ struct smb_version_operations {
 	int (*is_path_accessible)(const unsigned int, struct cifs_tcon *,
 				  struct cifs_sb_info *, const char *);
 	/* query path data from the server */
-	int (*query_path_info)(const unsigned int, struct cifs_tcon *,
-			       struct cifs_sb_info *, const char *,
-			       FILE_ALL_INFO *, bool *, bool *);
+	int (*query_path_info)(const unsigned int xid, struct cifs_tcon *tcon,
+			       struct cifs_sb_info *cifs_sb, const char *full_path,
+			       struct cifs_open_info_data *data, bool *adjust_tz, bool *reparse);
 	/* query file data from the server */
-	int (*query_file_info)(const unsigned int, struct cifs_tcon *,
-			       struct cifs_fid *, FILE_ALL_INFO *);
+	int (*query_file_info)(const unsigned int xid, struct cifs_tcon *tcon,
+			       struct cifsFileInfo *cfile, struct cifs_open_info_data *data);
 	/* query reparse tag from srv to determine which type of special file */
 	int (*query_reparse_tag)(const unsigned int xid, struct cifs_tcon *tcon,
 				struct cifs_sb_info *cifs_sb, const char *path,
 				__u32 *reparse_tag);
 	/* get server index number */
-	int (*get_srv_inum)(const unsigned int, struct cifs_tcon *,
-			    struct cifs_sb_info *, const char *,
-			    u64 *uniqueid, FILE_ALL_INFO *);
+	int (*get_srv_inum)(const unsigned int xid, struct cifs_tcon *tcon,
+			    struct cifs_sb_info *cifs_sb, const char *full_path, u64 *uniqueid,
+			    struct cifs_open_info_data *data);
 	/* set size by path */
 	int (*set_path_size)(const unsigned int, struct cifs_tcon *,
 			     const char *, __u64, struct cifs_sb_info *, bool);
@@ -379,8 +394,8 @@ struct smb_version_operations {
 			     struct cifs_sb_info *, const char *,
 			     char **, bool);
 	/* open a file for non-posix mounts */
-	int (*open)(const unsigned int, struct cifs_open_parms *,
-		    __u32 *, FILE_ALL_INFO *);
+	int (*open)(const unsigned int xid, struct cifs_open_parms *oparms, __u32 *oplock,
+		    void *buf);
 	/* set fid protocol-specific info */
 	void (*set_fid)(struct cifsFileInfo *, struct cifs_fid *, __u32);
 	/* close a file */
@@ -1133,6 +1148,7 @@ struct cifs_fattr {
 	struct timespec64 cf_mtime;
 	struct timespec64 cf_ctime;
 	u32             cf_cifstag;
+	char            *cf_symlink_target;
 };
 
 /*
@@ -1395,6 +1411,7 @@ struct cifsFileInfo {
 	struct work_struct put; /* work for the final part of _put */
 	struct delayed_work deferred;
 	bool deferred_close_scheduled; /* Flag to indicate close is scheduled */
+	char *symlink_target;
 };
 
 struct cifs_io_parms {
@@ -1553,6 +1570,7 @@ struct cifsInodeInfo {
 	struct list_head deferred_closes; /* list of deferred closes */
 	spinlock_t deferred_lock; /* protection on deferred list */
 	bool lease_granted; /* Flag to indicate whether lease or oplock is granted. */
+	char *symlink_target;
 };
 
 static inline struct cifsInodeInfo *
@@ -2119,6 +2137,82 @@ static inline size_t ntlmssp_workstation_name_size(const struct cifs_ses *ses)
 	if (ses->server->dialect <= SMB20_PROT_ID)
 		return min_t(size_t, sizeof(ses->workstation_name), RFC1001_NAME_LEN_WITH_NULL);
 	return sizeof(ses->workstation_name);
+}
+
+static inline void move_cifs_info_to_smb2(struct smb2_file_all_info *dst, const FILE_ALL_INFO *src)
+{
+	memcpy(dst, src, (size_t)((u8 *)&src->AccessFlags - (u8 *)src));
+	dst->AccessFlags = src->AccessFlags;
+	dst->CurrentByteOffset = src->CurrentByteOffset;
+	dst->Mode = src->Mode;
+	dst->AlignmentRequirement = src->AlignmentRequirement;
+	dst->FileNameLength = src->FileNameLength;
+}
+
+static inline unsigned int cifs_get_num_sgs(const struct smb_rqst *rqst,
+					    int num_rqst,
+					    const u8 *sig)
+{
+	unsigned int len, skip;
+	unsigned int nents = 0;
+	unsigned long addr;
+	int i, j;
+
+	/* Assumes the first rqst has a transform header as the first iov.
+	 * I.e.
+	 * rqst[0].rq_iov[0]  is transform header
+	 * rqst[0].rq_iov[1+] data to be encrypted/decrypted
+	 * rqst[1+].rq_iov[0+] data to be encrypted/decrypted
+	 */
+	for (i = 0; i < num_rqst; i++) {
+		/*
+		 * The first rqst has a transform header where the
+		 * first 20 bytes are not part of the encrypted blob.
+		 */
+		for (j = 0; j < rqst[i].rq_nvec; j++) {
+			struct kvec *iov = &rqst[i].rq_iov[j];
+
+			skip = (i == 0) && (j == 0) ? 20 : 0;
+			addr = (unsigned long)iov->iov_base + skip;
+			if (unlikely(is_vmalloc_addr((void *)addr))) {
+				len = iov->iov_len - skip;
+				nents += DIV_ROUND_UP(offset_in_page(addr) + len,
+						      PAGE_SIZE);
+			} else {
+				nents++;
+			}
+		}
+		nents += rqst[i].rq_npages;
+	}
+	nents += DIV_ROUND_UP(offset_in_page(sig) + SMB2_SIGNATURE_SIZE, PAGE_SIZE);
+	return nents;
+}
+
+/* We can not use the normal sg_set_buf() as we will sometimes pass a
+ * stack object as buf.
+ */
+static inline struct scatterlist *cifs_sg_set_buf(struct scatterlist *sg,
+						  const void *buf,
+						  unsigned int buflen)
+{
+	unsigned long addr = (unsigned long)buf;
+	unsigned int off = offset_in_page(addr);
+
+	addr &= PAGE_MASK;
+	if (unlikely(is_vmalloc_addr((void *)addr))) {
+		do {
+			unsigned int len = min_t(unsigned int, buflen, PAGE_SIZE - off);
+
+			sg_set_page(sg++, vmalloc_to_page((void *)addr), len, off);
+
+			off = 0;
+			addr += PAGE_SIZE;
+			buflen -= len;
+		} while (buflen);
+	} else {
+		sg_set_page(sg++, virt_to_page(addr), buflen, off);
+	}
+	return sg;
 }
 
 #endif	/* _CIFS_GLOB_H */

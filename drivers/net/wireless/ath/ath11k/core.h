@@ -498,6 +498,8 @@ struct ath11k_sta {
 
 	bool use_4addr_set;
 	u16 tcl_metadata;
+
+	u32 bw_prev;
 };
 
 #define ATH11K_MIN_5G_FREQ 4150
@@ -545,9 +547,6 @@ struct ath11k_debug {
 	struct dentry *debugfs_pdev;
 	struct ath11k_dbg_htt_stats htt_stats;
 	u32 extd_tx_stats;
-	struct ath11k_fw_stats fw_stats;
-	struct completion fw_stats_complete;
-	bool fw_stats_done;
 	u32 extd_rx_stats;
 	u32 pktlog_filter;
 	u32 pktlog_mode;
@@ -710,6 +709,9 @@ struct ath11k {
 	u8 twt_enabled;
 	bool nlo_enabled;
 	u8 alpha2[REG_ALPHA2_LEN + 1];
+	struct ath11k_fw_stats fw_stats;
+	struct completion fw_stats_complete;
+	bool fw_stats_done;
 };
 
 struct ath11k_band_cap {
@@ -1111,6 +1113,12 @@ struct ath11k_fw_stats_bcn {
 	u32 tx_bcn_succ_cnt;
 	u32 tx_bcn_outage_cnt;
 };
+
+void ath11k_fw_stats_init(struct ath11k *ar);
+void ath11k_fw_stats_pdevs_free(struct list_head *head);
+void ath11k_fw_stats_vdevs_free(struct list_head *head);
+void ath11k_fw_stats_bcn_free(struct list_head *head);
+void ath11k_fw_stats_free(struct ath11k_fw_stats *stats);
 
 extern const struct ce_pipe_config ath11k_target_ce_config_wlan_ipq8074[];
 extern const struct service_to_pipe ath11k_target_service_to_ce_map_wlan_ipq8074[];

@@ -354,16 +354,30 @@ static int hns_roce_alloc_uar_entry(struct ib_ucontext *uctx)
 static int hns_roce_alloc_ucontext(struct ib_ucontext *uctx,
 				   struct ib_udata *udata)
 {
-	int ret;
 	struct hns_roce_ucontext *context = to_hr_ucontext(uctx);
-	struct hns_roce_ib_alloc_ucontext_resp resp = {};
 	struct hns_roce_dev *hr_dev = to_hr_dev(uctx->device);
+	struct hns_roce_ib_alloc_ucontext_resp resp = {};
+	struct hns_roce_ib_alloc_ucontext ucmd = {};
+	int ret;
 
 	if (!hr_dev->active)
 		return -EAGAIN;
 
 	resp.qp_tab_size = hr_dev->caps.num_qps;
 	resp.srq_tab_size = hr_dev->caps.num_srqs;
+
+	ret = ib_copy_from_udata(&ucmd, udata,
+				 min(udata->inlen, sizeof(ucmd)));
+	if (ret)
+		return ret;
+
+	if (hr_dev->pci_dev->revision >= PCI_REVISION_ID_HIP09)
+		context->config = ucmd.config & HNS_ROCE_EXSGE_FLAGS;
+
+	if (context->config & HNS_ROCE_EXSGE_FLAGS) {
+		resp.config |= HNS_ROCE_RSP_EXSGE_FLAGS;
+		resp.max_inline_data = hr_dev->caps.max_sq_inline;
+	}
 
 	ret = hns_roce_uar_alloc(hr_dev, &context->uar);
 	if (ret)
@@ -515,7 +529,6 @@ static const struct ib_device_ops hns_roce_dev_ops = {
 	.destroy_ah = hns_roce_destroy_ah,
 	.destroy_cq = hns_roce_destroy_cq,
 	.disassociate_ucontext = hns_roce_disassociate_ucontext,
-	.fill_res_cq_entry = hns_roce_fill_res_cq_entry,
 	.get_dma_mr = hns_roce_get_dma_mr,
 	.get_link_layer = hns_roce_get_link_layer,
 	.get_port_immutable = hns_roce_port_immutable,
@@ -566,6 +579,10 @@ static const struct ib_device_ops hns_roce_dev_xrcd_ops = {
 	INIT_RDMA_OBJ_SIZE(ib_xrcd, hns_roce_xrcd, ibxrcd),
 };
 
+static const struct ib_device_ops hns_roce_dev_restrack_ops = {
+	.fill_res_cq_entry = hns_roce_fill_res_cq_entry,
+};
+
 static int hns_roce_register_device(struct hns_roce_dev *hr_dev)
 {
 	int ret;
@@ -605,6 +622,7 @@ static int hns_roce_register_device(struct hns_roce_dev *hr_dev)
 
 	ib_set_device_ops(ib_dev, hr_dev->hw->hns_roce_dev_ops);
 	ib_set_device_ops(ib_dev, &hns_roce_dev_ops);
+	ib_set_device_ops(ib_dev, &hns_roce_dev_restrack_ops);
 	for (i = 0; i < hr_dev->caps.num_ports; i++) {
 		if (!hr_dev->iboe.netdevs[i])
 			continue;
