@@ -4469,6 +4469,9 @@ static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 			int nr_migrated;
 			struct rq *src_rq;
 
+			if(i == cpu)
+				continue;
+
 			src_rq = cpu_rq(i);
 			if (!do_raw_spin_trylock(&src_rq->lock))
 				continue;
@@ -6851,7 +6854,6 @@ void __init init_idle(struct task_struct *idle, int cpu)
 
 	raw_spin_lock_irqsave(&idle->pi_lock, flags);
 	raw_spin_lock(&rq->lock);
-	update_rq_clock(rq);
 
 	idle->last_ran = rq->clock_task;
 	idle->__state = TASK_RUNNING;
