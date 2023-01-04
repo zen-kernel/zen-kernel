@@ -6846,7 +6846,6 @@ void __init init_idle(struct task_struct *idle, int cpu)
 
 	raw_spin_lock_irqsave(&idle->pi_lock, flags);
 	raw_spin_lock(&rq->lock);
-	update_rq_clock(rq);
 
 	idle->last_ran = rq->clock_task;
 	idle->__state = TASK_RUNNING;
