@@ -151,8 +151,48 @@ else
         # FIXME - should be integrated in Makefile.cpu (Makefile_32.cpu)
         cflags-$(CONFIG_MK8)		+= -march=k8
         cflags-$(CONFIG_MPSC)		+= -march=nocona
-        cflags-$(CONFIG_MCORE2)		+= -march=core2
-        cflags-$(CONFIG_MATOM)		+= -march=atom
+        cflags-$(CONFIG_MK8SSE3)	+= -march=k8-sse3
+        cflags-$(CONFIG_MK10) 		+= -march=amdfam10
+        cflags-$(CONFIG_MBARCELONA) 	+= -march=barcelona
+        cflags-$(CONFIG_MBOBCAT) 	+= -march=btver1
+        cflags-$(CONFIG_MJAGUAR) 	+= -march=btver2
+        cflags-$(CONFIG_MBULLDOZER) 	+= -march=bdver1
+        cflags-$(CONFIG_MPILEDRIVER)	+= -march=bdver2 -mno-tbm
+        cflags-$(CONFIG_MSTEAMROLLER) 	+= -march=bdver3 -mno-tbm
+        cflags-$(CONFIG_MEXCAVATOR) 	+= -march=bdver4 -mno-tbm
+        cflags-$(CONFIG_MZEN) 		+= -march=znver1
+        cflags-$(CONFIG_MZEN2) 	+= -march=znver2
+        cflags-$(CONFIG_MZEN3) 	+= -march=znver3
+        cflags-$(CONFIG_MZEN4) 	+= -march=znver4
+        cflags-$(CONFIG_MNATIVE_INTEL) += -march=native
+        cflags-$(CONFIG_MNATIVE_AMD) 	+= -march=native
+        cflags-$(CONFIG_MATOM) 	+= -march=bonnell
+        cflags-$(CONFIG_MCORE2) 	+= -march=core2
+        cflags-$(CONFIG_MNEHALEM) 	+= -march=nehalem
+        cflags-$(CONFIG_MWESTMERE) 	+= -march=westmere
+        cflags-$(CONFIG_MSILVERMONT) 	+= -march=silvermont
+        cflags-$(CONFIG_MGOLDMONT) 	+= -march=goldmont
+        cflags-$(CONFIG_MGOLDMONTPLUS) += -march=goldmont-plus
+        cflags-$(CONFIG_MSANDYBRIDGE) 	+= -march=sandybridge
+        cflags-$(CONFIG_MIVYBRIDGE) 	+= -march=ivybridge
+        cflags-$(CONFIG_MHASWELL) 	+= -march=haswell
+        cflags-$(CONFIG_MBROADWELL) 	+= -march=broadwell
+        cflags-$(CONFIG_MSKYLAKE) 	+= -march=skylake
+        cflags-$(CONFIG_MSKYLAKEX) 	+= -march=skylake-avx512
+        cflags-$(CONFIG_MCANNONLAKE) 	+= -march=cannonlake
+        cflags-$(CONFIG_MICELAKE) 	+= -march=icelake-client
+        cflags-$(CONFIG_MCASCADELAKE) 	+= -march=cascadelake
+        cflags-$(CONFIG_MCOOPERLAKE) 	+= -march=cooperlake
+        cflags-$(CONFIG_MTIGERLAKE) 	+= -march=tigerlake
+        cflags-$(CONFIG_MSAPPHIRERAPIDS) += -march=sapphirerapids
+        cflags-$(CONFIG_MROCKETLAKE) 	+= -march=rocketlake
+        cflags-$(CONFIG_MALDERLAKE) 	+= -march=alderlake
+        cflags-$(CONFIG_MRAPTORLAKE) 	+= -march=raptorlake
+        cflags-$(CONFIG_MMETEORLAKE) 	+= -march=meteorlake
+        cflags-$(CONFIG_MEMERALDRAPIDS)	+= -march=emeraldrapids
+        cflags-$(CONFIG_GENERIC_CPU2) 	+= -march=x86-64-v2
+        cflags-$(CONFIG_GENERIC_CPU3) 	+= -march=x86-64-v3
+        cflags-$(CONFIG_GENERIC_CPU4) 	+= -march=x86-64-v4
         cflags-$(CONFIG_GENERIC_CPU)	+= -mtune=generic
         KBUILD_CFLAGS += $(cflags-y)
 
