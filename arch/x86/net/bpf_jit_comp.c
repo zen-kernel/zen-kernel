@@ -343,9 +343,10 @@ static int emit_call(u8 **pprog, void *func, void *ip)
 
 static int emit_rsb_call(u8 **pprog, void *func, void *ip)
 {
+	void *adjusted_ip;
 	OPTIMIZER_HIDE_VAR(func);
-	x86_call_depth_emit_accounting(pprog, func);
-	return emit_patch(pprog, func, ip, 0xE8);
+	adjusted_ip = (u8 *)ip + x86_call_depth_emit_accounting(pprog, func);
+	return emit_patch(pprog, func, adjusted_ip, 0xE8);
 }
 
 static int emit_jump(u8 **pprog, void *func, void *ip)
