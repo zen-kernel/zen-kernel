@@ -4469,9 +4469,6 @@ static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 			int nr_migrated;
 			struct rq *src_rq;
 
-			if(i == cpu)
-				continue;
-
 			src_rq = cpu_rq(i);
 			if (!do_raw_spin_trylock(&src_rq->lock))
 				continue;
