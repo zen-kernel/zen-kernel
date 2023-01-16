@@ -4474,14 +4474,14 @@ static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 				if (src_rq->nr_running < 2)
 					cpumask_clear_cpu(i, &sched_rq_pending_mask);
 
+				spin_release(&src_rq->lock.dep_map, _RET_IP_);
+				do_raw_spin_unlock(&src_rq->lock);
+
 				rq->nr_running += nr_migrated;
 				if (rq->nr_running > 1)
 					cpumask_set_cpu(cpu, &sched_rq_pending_mask);
 
 				cpufreq_update_util(rq, 0);
-
-				spin_release(&src_rq->lock.dep_map, _RET_IP_);
-				do_raw_spin_unlock(&src_rq->lock);
 
 				return 1;
 			}
@@ -4511,7 +4511,7 @@ static inline void check_curr(struct task_struct *p, struct rq *rq)
 }
 
 static inline struct task_struct *
-choose_next_task(struct rq *rq, int cpu, struct task_struct *prev)
+choose_next_task(struct rq *rq, int cpu)
 {
 	struct task_struct *next;
 
@@ -4698,7 +4698,7 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 
 	check_curr(prev, rq);
 
-	next = choose_next_task(rq, cpu, prev);
+	next = choose_next_task(rq, cpu);
 	clear_tsk_need_resched(prev);
 	clear_preempt_need_resched();
 #ifdef CONFIG_SCHED_DEBUG
