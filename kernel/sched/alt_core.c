@@ -27,7 +27,6 @@
 #include <linux/init_task.h>
 #include <linux/kcov.h>
 #include <linux/kprobes.h>
-#include <linux/profile.h>
 #include <linux/nmi.h>
 #include <linux/scs.h>
 
