@@ -176,14 +176,14 @@ static inline void
 clear_recorded_preempt_mask(int pr, int low, int high, int cpu)
 {
 	if (low < pr && pr <= high)
-		cpumask_clear_cpu(cpu, sched_preempt_mask + SCHED_QUEUE_BITS - 1 - pr);
+		cpumask_clear_cpu(cpu, sched_preempt_mask + SCHED_QUEUE_BITS - pr);
 }
 
 static inline void
 set_recorded_preempt_mask(int pr, int low, int high, int cpu)
 {
 	if (low < pr && pr <= high)
-		cpumask_set_cpu(cpu, sched_preempt_mask + SCHED_QUEUE_BITS - 1 - pr);
+		cpumask_set_cpu(cpu, sched_preempt_mask + SCHED_QUEUE_BITS - pr);
 }
 
 static atomic_t sched_prio_record = ATOMIC_INIT(0);
