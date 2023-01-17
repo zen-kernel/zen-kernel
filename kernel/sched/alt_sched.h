@@ -2,6 +2,7 @@
 #define ALT_SCHED_H
 
 #include <linux/context_tracking.h>
+#include <linux/profile.h>
 #include <linux/psi.h>
 #include <linux/stop_machine.h>
 #include <linux/syscalls.h>
@@ -139,7 +140,7 @@ struct rq {
 #ifdef CONFIG_SCHED_PDS
 	u64			time_edge;
 #endif
-	unsigned long watermark;
+	unsigned long prio;
 
 	/* switch count */
 	u64 nr_switches;
