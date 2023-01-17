@@ -27,7 +27,6 @@
 #include <linux/init_task.h>
 #include <linux/kcov.h>
 #include <linux/kprobes.h>
-#include <linux/profile.h>
 #include <linux/nmi.h>
 #include <linux/scs.h>
 
@@ -68,7 +67,7 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 #define sched_feat(x)	(0)
 #endif /* CONFIG_SCHED_DEBUG */
 
-#define ALT_SCHED_VERSION "v6.1-r1"
+#define ALT_SCHED_VERSION "v6.1-r2"
 
 /* rt_prio(prio) defined in include/linux/sched/rt.h */
 #define rt_task(p)		rt_prio((p)->prio)
@@ -762,8 +761,8 @@ unsigned long get_wchan(struct task_struct *p)
  * Context: rq->lock
  */
 #define __SCHED_DEQUEUE_TASK(p, rq, flags)					\
-	psi_dequeue(p, flags & DEQUEUE_SLEEP);					\
 	sched_info_dequeue(rq, p);						\
+	psi_dequeue(p, flags & DEQUEUE_SLEEP);					\
 										\
 	list_del(&p->sq_node);							\
 	if (list_empty(&rq->queue.heads[p->sq_idx])) 				\
@@ -1400,11 +1399,13 @@ void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 
 	WARN_ON_ONCE(is_migration_disabled(p));
 #endif
-	if (task_cpu(p) == new_cpu)
-		return;
 	trace_sched_migrate_task(p, new_cpu);
-	rseq_migrate(p);
-	perf_event_task_migrate(p);
+
+	if (task_cpu(p) != new_cpu)
+	{
+		rseq_migrate(p);
+		perf_event_task_migrate(p);
+	}
 
 	__set_task_cpu(p, new_cpu);
 }
@@ -5163,6 +5164,7 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
 		return;
 
 	rq = __task_access_lock(p, &lock);
+	update_rq_clock(rq);
 	/*
 	 * Set under pi_lock && rq->lock, such that the value can be used under
 	 * either lock.
@@ -6041,6 +6043,13 @@ out_unlock:
 	rcu_read_unlock();
 	return retval;
 }
+
+#ifdef CONFIG_SMP
+int dl_task_check_affinity(struct task_struct *p, const struct cpumask *mask)
+{
+	return 0;
+}
+#endif
 
 static int
 __sched_setaffinity(struct task_struct *p, const struct cpumask *mask)
