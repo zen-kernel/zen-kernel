@@ -6458,6 +6458,7 @@ static int dm_encoder_helper_atomic_check(struct drm_encoder *encoder,
 	const struct drm_display_mode *adjusted_mode = &crtc_state->adjusted_mode;
 	struct drm_dp_mst_topology_mgr *mst_mgr;
 	struct drm_dp_mst_port *mst_port;
+	struct drm_dp_mst_topology_state *mst_state;
 	enum dc_color_depth color_depth;
 	int clock, bpp = 0;
 	bool is_y420 = false;
@@ -6471,6 +6472,13 @@ static int dm_encoder_helper_atomic_check(struct drm_encoder *encoder,
 	if (!crtc_state->connectors_changed && !crtc_state->mode_changed)
 		return 0;
 
+	mst_state = drm_atomic_get_mst_topology_state(state, mst_mgr);
+	if (IS_ERR(mst_state))
+		return PTR_ERR(mst_state);
+
+	if (!mst_state->pbn_div)
+		mst_state->pbn_div = dm_mst_get_pbn_divider(aconnector->mst_port->dc_link);
+
 	if (!state->duplicated) {
 		int max_bpc = conn_state->max_requested_bpc;
 		is_y420 = drm_mode_is_420_also(&connector->display_info, adjusted_mode) &&
@@ -6482,11 +6490,10 @@ static int dm_encoder_helper_atomic_check(struct drm_encoder *encoder,
 		clock = adjusted_mode->clock;
 		dm_new_connector_state->pbn = drm_dp_calc_pbn_mode(clock, bpp, false);
 	}
-	dm_new_connector_state->vcpi_slots = drm_dp_atomic_find_time_slots(state,
-									   mst_mgr,
-									   mst_port,
-									   dm_new_connector_state->pbn,
-									   dm_mst_get_pbn_divider(aconnector->dc_link));
+
+	dm_new_connector_state->vcpi_slots =
+		drm_dp_atomic_find_time_slots(state, mst_mgr, mst_port,
+					      dm_new_connector_state->pbn);
 	if (dm_new_connector_state->vcpi_slots < 0) {
 		DRM_DEBUG_ATOMIC("failed finding vcpi slots: %d\n", (int)dm_new_connector_state->vcpi_slots);
 		return dm_new_connector_state->vcpi_slots;
@@ -6557,17 +6564,14 @@ static int dm_update_mst_vcpi_slots_for_dsc(struct drm_atomic_state *state,
 			dm_conn_state->vcpi_slots = slot_num;
 
 			ret = drm_dp_mst_atomic_enable_dsc(state, aconnector->port,
-							   dm_conn_state->pbn, 0, false);
+							   dm_conn_state->pbn, false);
 			if (ret < 0)
 				return ret;
 
 			continue;
 		}
 
-		vcpi = drm_dp_mst_atomic_enable_dsc(state,
-						    aconnector->port,
-						    pbn, pbn_div,
-						    true);
+		vcpi = drm_dp_mst_atomic_enable_dsc(state, aconnector->port, pbn, true);
 		if (vcpi < 0)
 			return vcpi;
 
@@ -9393,6 +9397,8 @@ static int amdgpu_dm_atomic_check(struct drm_device *dev,
 	struct drm_connector_state *old_con_state, *new_con_state;
 	struct drm_crtc *crtc;
 	struct drm_crtc_state *old_crtc_state, *new_crtc_state;
+	struct drm_dp_mst_topology_mgr *mgr;
+	struct drm_dp_mst_topology_state *mst_state;
 	struct drm_plane *plane;
 	struct drm_plane_state *old_plane_state, *new_plane_state;
 	enum dc_status status;
@@ -9401,8 +9407,6 @@ static int amdgpu_dm_atomic_check(struct drm_device *dev,
 	struct dm_crtc_state *dm_old_crtc_state, *dm_new_crtc_state;
 #if defined(CONFIG_DRM_AMD_DC_DCN)
 	struct dsc_mst_fairness_vars vars[MAX_PIPES];
-	struct drm_dp_mst_topology_state *mst_state;
-	struct drm_dp_mst_topology_mgr *mgr;
 #endif
 
 	trace_amdgpu_dm_atomic_check_begin(state);
@@ -9658,14 +9662,9 @@ static int amdgpu_dm_atomic_check(struct drm_device *dev,
 		struct drm_connector_list_iter iter;
 		u8 link_coding_cap;
 
-		if (!mgr->mst_state )
-			continue;
-
 		drm_connector_list_iter_begin(dev, &iter);
 		drm_for_each_connector_iter(connector, &iter) {
-			int id = connector->index;
-
-			if (id == mst_state->mgr->conn_base_id) {
+			if (connector->index == mst_state->mgr->conn_base_id) {
 				aconnector = to_amdgpu_dm_connector(connector);
 				link_coding_cap = dc_link_dp_mst_decide_link_encoding_format(aconnector->dc_link);
 				drm_dp_mst_update_slots(mst_state, link_coding_cap);
@@ -9674,9 +9673,9 @@ static int amdgpu_dm_atomic_check(struct drm_device *dev,
 			}
 		}
 		drm_connector_list_iter_end(&iter);
-
 	}
 #endif
+
 	/**
 	 * Streams and planes are reset when there are changes that affect
 	 * bandwidth. Anything that affects bandwidth needs to go through
