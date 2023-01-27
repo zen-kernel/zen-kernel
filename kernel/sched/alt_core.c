@@ -4096,7 +4096,7 @@ static inline void sg_balance(struct rq *rq)
 		int i;
 
 		for_each_cpu_wrap(i, &chk, cpu) {
-			if (cpumask_subset(cpu_smt_mask(i), &chk) &&
+			if (!cpumask_intersects(cpu_smt_mask(i), sched_idle_mask) &&\
 			    sg_balance_trigger(i))
 				return;
 		}
