@@ -762,7 +762,7 @@ unsigned long get_wchan(struct task_struct *p)
 
 #define __SCHED_ENQUEUE_TASK(p, rq, flags)				\
 	sched_info_enqueue(rq, p);					\
-	psi_enqueue(p, flags);						\
+	psi_enqueue(p, flags & ENQUEUE_WAKEUP);				\
 									\
 	p->sq_idx = task_sched_prio_idx(p, rq);				\
 	list_add_tail(&p->sq_node, &rq->queue.heads[p->sq_idx]);	\
