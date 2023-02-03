@@ -2003,6 +2003,8 @@ void sched_set_stop_task(int cpu, struct task_struct *stop)
 
 static int affine_move_task(struct rq *rq, struct task_struct *p, int dest_cpu,
 			    raw_spinlock_t *lock, unsigned long irq_flags)
+	__releases(rq->lock)
+	__releases(p->pi_lock)
 {
 	/* Can the task run on the task's current CPU? If so, we're done */
 	if (!cpumask_test_cpu(task_cpu(p), &p->cpus_mask)) {
@@ -2188,7 +2190,7 @@ err_unlock:
 
 /*
  * Restrict the CPU affinity of task @p so that it is a subset of
- * task_cpu_possible_mask() and point @p->user_cpu_ptr to a copy of the
+ * task_cpu_possible_mask() and point @p->user_cpus_ptr to a copy of the
  * old affinity mask. If the resulting mask is empty, we warn and walk
  * up the cpuset hierarchy until we find a suitable mask.
  */
