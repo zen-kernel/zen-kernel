@@ -88,6 +88,11 @@ static inline void requeue_task(struct task_struct *p, struct rq *rq, int idx);
 #include "pds.h"
 #endif
 
+struct affinity_context {
+	const struct cpumask *new_mask;
+	unsigned int flags;
+};
+
 static int __init sched_timeslice(char *str)
 {
 	int timeslice_ms;
@@ -1630,22 +1635,27 @@ static int migration_cpu_stop(void *data)
 }
 
 static inline void
-set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_mask)
+set_cpus_allowed_common(struct task_struct *p, struct affinity_context *ctx)
 {
-	cpumask_copy(&p->cpus_mask, new_mask);
-	p->nr_cpus_allowed = cpumask_weight(new_mask);
+	cpumask_copy(&p->cpus_mask, ctx->new_mask);
+	p->nr_cpus_allowed = cpumask_weight(ctx->new_mask);
 }
 
 static void
-__do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask)
+__do_set_cpus_allowed(struct task_struct *p, struct affinity_context *ctx)
 {
 	lockdep_assert_held(&p->pi_lock);
-	set_cpus_allowed_common(p, new_mask);
+	set_cpus_allowed_common(p, ctx);
 }
 
 void do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask)
 {
-	__do_set_cpus_allowed(p, new_mask);
+	struct affinity_context ac = {
+		.new_mask  = new_mask,
+		.flags     = 0,
+	};
+
+	__do_set_cpus_allowed(p, &ac);
 }
 
 int dup_user_cpus_ptr(struct task_struct *dst, struct task_struct *src,
@@ -2042,8 +2052,7 @@ static int affine_move_task(struct rq *rq, struct task_struct *p, int dest_cpu,
 }
 
 static int __set_cpus_allowed_ptr_locked(struct task_struct *p,
-					 const struct cpumask *new_mask,
-					 u32 flags,
+					 struct affinity_context *ctx,
 					 struct rq *rq,
 					 raw_spinlock_t *lock,
 					 unsigned long irq_flags)
@@ -2069,7 +2078,7 @@ static int __set_cpus_allowed_ptr_locked(struct task_struct *p,
 		cpu_valid_mask = cpu_online_mask;
 	}
 
-	if (!kthread && !cpumask_subset(new_mask, cpu_allowed_mask)) {
+	if (!kthread && !cpumask_subset(ctx->new_mask, cpu_allowed_mask)) {
 		ret = -EINVAL;
 		goto out;
 	}
@@ -2078,23 +2087,23 @@ static int __set_cpus_allowed_ptr_locked(struct task_struct *p,
 	 * Must re-check here, to close a race against __kthread_bind(),
 	 * sched_setaffinity() is not guaranteed to observe the flag.
 	 */
-	if ((flags & SCA_CHECK) && (p->flags & PF_NO_SETAFFINITY)) {
+	if ((ctx->flags & SCA_CHECK) && (p->flags & PF_NO_SETAFFINITY)) {
 		ret = -EINVAL;
 		goto out;
 	}
 
-	if (cpumask_equal(&p->cpus_mask, new_mask))
+	if (cpumask_equal(&p->cpus_mask, ctx->new_mask))
 		goto out;
 
-	dest_cpu = cpumask_any_and(cpu_valid_mask, new_mask);
+	dest_cpu = cpumask_any_and(cpu_valid_mask, ctx->new_mask);
 	if (dest_cpu >= nr_cpu_ids) {
 		ret = -EINVAL;
 		goto out;
 	}
 
-	__do_set_cpus_allowed(p, new_mask);
+	__do_set_cpus_allowed(p, ctx);
 
-	if (flags & SCA_USER)
+	if (ctx->flags & SCA_USER)
 		user_mask = clear_user_cpus_ptr(p);
 
 	ret = affine_move_task(rq, p, dest_cpu, lock, irq_flags);
@@ -2120,7 +2129,7 @@ out:
  * call is not atomic; no spinlocks may be held.
  */
 static int __set_cpus_allowed_ptr(struct task_struct *p,
-				  const struct cpumask *new_mask, u32 flags)
+				  struct affinity_context *ctx)
 {
 	unsigned long irq_flags;
 	struct rq *rq;
@@ -2129,12 +2138,17 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 	raw_spin_lock_irqsave(&p->pi_lock, irq_flags);
 	rq = __task_access_lock(p, &lock);
 
-	return __set_cpus_allowed_ptr_locked(p, new_mask, flags, rq, lock, irq_flags);
+	return __set_cpus_allowed_ptr_locked(p, ctx, rq, lock, irq_flags);
 }
 
 int set_cpus_allowed_ptr(struct task_struct *p, const struct cpumask *new_mask)
 {
-	return __set_cpus_allowed_ptr(p, new_mask, 0);
+	struct affinity_context ac = {
+		.new_mask  = new_mask,
+		.flags     = 0,
+	};
+
+	return __set_cpus_allowed_ptr(p, &ac);
 }
 EXPORT_SYMBOL_GPL(set_cpus_allowed_ptr);
 
@@ -2150,6 +2164,7 @@ static int restrict_cpus_allowed_ptr(struct task_struct *p,
 				     const struct cpumask *subset_mask)
 {
 	struct cpumask *user_mask = NULL;
+	struct affinity_context ac;
 	unsigned long irq_flags;
 	raw_spinlock_t *lock;
 	struct rq *rq;
@@ -2178,8 +2193,10 @@ static int restrict_cpus_allowed_ptr(struct task_struct *p,
 		p->user_cpus_ptr = user_mask;
 	}
 
-	/*return __set_cpus_allowed_ptr_locked(p, new_mask, 0, rq, &rf);*/
-	return __set_cpus_allowed_ptr_locked(p, new_mask, 0, rq, lock, irq_flags);
+	ac = (struct affinity_context){
+		.new_mask = new_mask,
+	};
+	return __set_cpus_allowed_ptr_locked(p, &ac, rq, lock, irq_flags);
 
 err_unlock:
 	__task_access_unlock(p, lock);
@@ -2234,7 +2251,7 @@ out_free_mask:
 }
 
 static int
-__sched_setaffinity(struct task_struct *p, const struct cpumask *mask);
+__sched_setaffinity(struct task_struct *p, struct affinity_context *ctx);
 
 /*
  * Restore the affinity of a task @p which was previously restricted by a
@@ -2247,6 +2264,9 @@ __sched_setaffinity(struct task_struct *p, const struct cpumask *mask);
 void relax_compatible_cpus_allowed_ptr(struct task_struct *p)
 {
 	struct cpumask *user_mask = p->user_cpus_ptr;
+	struct affinity_context ac = {
+		.new_mask  = user_mask,
+	};
 	unsigned long flags;
 
 	/*
@@ -2254,7 +2274,7 @@ void relax_compatible_cpus_allowed_ptr(struct task_struct *p)
 	 * we free the mask explicitly to avoid it being inherited across
 	 * a subsequent fork().
 	 */
-	if (!user_mask || !__sched_setaffinity(p, user_mask))
+	if (!user_mask || !__sched_setaffinity(p, &ac))
 		return;
 
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
@@ -2273,9 +2293,9 @@ static inline int select_task_rq(struct task_struct *p)
 
 static inline int
 __set_cpus_allowed_ptr(struct task_struct *p,
-		       const struct cpumask *new_mask, u32 flags)
+		       struct affinity_context *ctx)
 {
-	return set_cpus_allowed_ptr(p, new_mask);
+	return set_cpus_allowed_ptr(p, ctx->new_mask);
 }
 
 static inline bool rq_has_pinned_tasks(struct rq *rq)
@@ -6021,7 +6041,7 @@ int dl_task_check_affinity(struct task_struct *p, const struct cpumask *mask)
 #endif
 
 static int
-__sched_setaffinity(struct task_struct *p, const struct cpumask *mask)
+__sched_setaffinity(struct task_struct *p, struct affinity_context *ctx)
 {
 	int retval;
 	cpumask_var_t cpus_allowed, new_mask;
@@ -6035,9 +6055,12 @@ __sched_setaffinity(struct task_struct *p, const struct cpumask *mask)
 	}
 
 	cpuset_cpus_allowed(p, cpus_allowed);
-	cpumask_and(new_mask, mask, cpus_allowed);
+	cpumask_and(new_mask, ctx->new_mask, cpus_allowed);
+
+	ctx->new_mask = new_mask;
+	ctx->flags |= SCA_CHECK;
 again:
-	retval = __set_cpus_allowed_ptr(p, new_mask, SCA_CHECK | SCA_USER);
+	retval = __set_cpus_allowed_ptr(p, ctx);
 	if (retval)
 		goto out_free_new_mask;
 
@@ -6061,6 +6084,9 @@ out_free_cpus_allowed:
 
 long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 {
+	struct affinity_context ac = {
+		.new_mask = in_mask,
+	};
 	struct task_struct *p;
 	int retval;
 
@@ -6095,7 +6121,7 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	if (retval)
 		goto out_put_task;
 
-	retval = __sched_setaffinity(p, in_mask);
+	retval = __sched_setaffinity(p, &ac);
 out_put_task:
 	put_task_struct(p);
 	return retval;
@@ -6851,6 +6877,12 @@ void dump_cpu_task(int cpu)
  */
 void __init init_idle(struct task_struct *idle, int cpu)
 {
+#ifdef CONFIG_SMP
+	struct affinity_context ac = (struct affinity_context) {
+		.new_mask  = cpumask_of(cpu),
+		.flags     = 0,
+	};
+#endif
 	struct rq *rq = cpu_rq(cpu);
 	unsigned long flags;
 
@@ -6877,7 +6909,7 @@ void __init init_idle(struct task_struct *idle, int cpu)
 	 *
 	 * And since this is boot we can forgo the serialisation.
 	 */
-	set_cpus_allowed_common(idle, cpumask_of(cpu));
+	set_cpus_allowed_common(idle, &ac);
 #endif
 
 	/* Silence PROVE_RCU */
