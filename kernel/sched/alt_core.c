@@ -2148,6 +2148,15 @@ static int __set_cpus_allowed_ptr(struct task_struct *p,
 
 	raw_spin_lock_irqsave(&p->pi_lock, irq_flags);
 	rq = __task_access_lock(p, &lock);
+	/*
+	 * Masking should be skipped if SCA_USER or any of the SCA_MIGRATE_*
+	 * flags are set.
+	 */
+	if (p->user_cpus_ptr &&
+	    !(ctx->flags & SCA_USER) &&
+	    cpumask_and(rq->scratch_mask, ctx->new_mask, p->user_cpus_ptr))
+		ctx->new_mask = rq->scratch_mask;
+
 
 	return __set_cpus_allowed_ptr_locked(p, ctx, rq, lock, irq_flags);
 }
@@ -7555,6 +7564,8 @@ void __init sched_init(void)
 
 		hrtick_rq_init(rq);
 		atomic_set(&rq->nr_iowait, 0);
+
+		zalloc_cpumask_var_node(&rq->scratch_mask, GFP_KERNEL, cpu_to_node(i));
 	}
 #ifdef CONFIG_SMP
 	/* Set rq->online for cpu 0 */

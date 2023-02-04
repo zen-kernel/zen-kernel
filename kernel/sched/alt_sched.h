@@ -244,6 +244,9 @@ struct rq {
 #endif
 	atomic_t		nohz_flags;
 #endif /* CONFIG_NO_HZ_COMMON */
+
+	/* Scratch cpumask to be temporarily used under rq_lock */
+	cpumask_var_t		scratch_mask;
 };
 
 extern unsigned long rq_load_util(struct rq *rq, unsigned long max);
