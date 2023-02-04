@@ -1674,9 +1674,29 @@ void do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask)
 		.user_mask = NULL,
 		.flags     = SCA_USER,	/* clear the user requested mask */
 	};
+	union cpumask_rcuhead {
+		cpumask_t cpumask;
+		struct rcu_head rcu;
+	};
 
 	__do_set_cpus_allowed(p, &ac);
-	kfree(ac.user_mask);
+
+	/*
+	 * Because this is called with p->pi_lock held, it is not possible
+	 * to use kfree() here (when PREEMPT_RT=y), therefore punt to using
+	 * kfree_rcu().
+	 */
+	kfree_rcu((union cpumask_rcuhead *)ac.user_mask, rcu);
+}
+
+static cpumask_t *alloc_user_cpus_ptr(int node)
+{
+	/*
+	 * See do_set_cpus_allowed() above for the rcu_head usage.
+	 */
+	int size = max_t(int, cpumask_size(), sizeof(struct rcu_head));
+
+	return kmalloc_node(size, GFP_KERNEL, node);
 }
 
 int dup_user_cpus_ptr(struct task_struct *dst, struct task_struct *src,
@@ -1699,7 +1719,7 @@ int dup_user_cpus_ptr(struct task_struct *dst, struct task_struct *src,
 	if (data_race(!src->user_cpus_ptr))
 		return 0;
 
-	user_mask = kmalloc_node(cpumask_size(), GFP_KERNEL, node);
+	user_mask = alloc_user_cpus_ptr(node);
 	if (!user_mask)
 		return -ENOMEM;
 
@@ -2328,6 +2348,11 @@ __set_cpus_allowed_ptr(struct task_struct *p,
 static inline bool rq_has_pinned_tasks(struct rq *rq)
 {
 	return false;
+}
+
+static inline cpumask_t *alloc_user_cpus_ptr(int node)
+{
+	return NULL;
 }
 
 #endif /* !CONFIG_SMP */
@@ -6169,8 +6194,8 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	if (retval)
 		goto out_put_task;
 
-	user_mask = kmalloc(cpumask_size(), GFP_KERNEL);
-	if (!user_mask) {
+	user_mask = alloc_user_cpus_ptr(NUMA_NO_NODE);
+	if (IS_ENABLED(CONFIG_SMP) && !user_mask) {
 		retval = -ENOMEM;
 		goto out_put_task;
 	}
