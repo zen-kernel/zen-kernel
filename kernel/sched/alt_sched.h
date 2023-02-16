@@ -290,8 +290,7 @@ enum {
 	NR_CPU_AFFINITY_LEVELS
 };
 
-DECLARE_PER_CPU(cpumask_t [NR_CPU_AFFINITY_LEVELS], sched_cpu_topo_masks);
-DECLARE_PER_CPU(cpumask_t *, sched_cpu_llc_mask);
+DECLARE_PER_CPU_ALIGNED(cpumask_t [NR_CPU_AFFINITY_LEVELS], sched_cpu_topo_masks);
 
 static inline int
 __best_mask_cpu(const cpumask_t *cpumask, const cpumask_t *mask)
