@@ -218,13 +218,13 @@ static inline void update_sched_preempt_mask(struct rq *rq)
 
 	if (prio < last_prio) {
 		if (IDLE_TASK_SCHED_PRIO == last_prio) {
-			cpumask_clear_cpu(cpu, sched_idle_mask);
-			last_prio -= 2;
 #ifdef CONFIG_SCHED_SMT
 			if (static_branch_likely(&sched_smt_present))
 				cpumask_andnot(&sched_sg_idle_mask,
 					       &sched_sg_idle_mask, cpu_smt_mask(cpu));
 #endif
+			cpumask_clear_cpu(cpu, sched_idle_mask);
+			last_prio -= 2;
 		}
 		clear_recorded_preempt_mask(pr, prio, last_prio, cpu);
 
@@ -232,18 +232,14 @@ static inline void update_sched_preempt_mask(struct rq *rq)
 	}
 	/* last_prio < prio */
 	if (IDLE_TASK_SCHED_PRIO == prio) {
+#ifdef CONFIG_SCHED_SMT
+		if (static_branch_likely(&sched_smt_present) &&
+		    cpumask_intersects(cpu_smt_mask(cpu), sched_idle_mask))
+			cpumask_or(&sched_sg_idle_mask,
+				   &sched_sg_idle_mask, cpu_smt_mask(cpu));
+#endif
 		cpumask_set_cpu(cpu, sched_idle_mask);
 		prio -= 2;
-#ifdef CONFIG_SCHED_SMT
-		if (static_branch_likely(&sched_smt_present)) {
-			cpumask_t tmp;
-
-			cpumask_and(&tmp, cpu_smt_mask(cpu), sched_idle_mask);
-			if (cpumask_equal(&tmp, cpu_smt_mask(cpu)))
-				cpumask_or(&sched_sg_idle_mask,
-					   &sched_sg_idle_mask, cpu_smt_mask(cpu));
-		}
-#endif
 	}
 	set_recorded_preempt_mask(pr, last_prio, prio, cpu);
 }
@@ -4157,10 +4153,9 @@ static inline int sg_balance_trigger(const int cpu)
 /*
  * sg_balance - slibing group balance check for run queue @rq
  */
-static inline void sg_balance(struct rq *rq)
+static inline void sg_balance(struct rq *rq, int cpu)
 {
 	cpumask_t chk;
-	int cpu = cpu_of(rq);
 
 	/* exit when cpu is offline */
 	if (unlikely(!rq->online))
@@ -4821,13 +4816,15 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 
 		/* Also unlocks the rq: */
 		rq = context_switch(rq, prev, next);
+
+		cpu = cpu_of(rq);
 	} else {
 		__balance_callbacks(rq);
 		raw_spin_unlock_irq(&rq->lock);
 	}
 
 #ifdef CONFIG_SCHED_SMT
-	sg_balance(rq);
+	sg_balance(rq, cpu);
 #endif
 }
 
