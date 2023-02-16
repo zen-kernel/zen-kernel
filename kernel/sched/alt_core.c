@@ -122,9 +122,9 @@ int sched_yield_type __read_mostly = 1;
 #ifdef CONFIG_SMP
 static cpumask_t sched_rq_pending_mask ____cacheline_aligned_in_smp;
 
-DEFINE_PER_CPU(cpumask_t [NR_CPU_AFFINITY_LEVELS], sched_cpu_topo_masks);
-DEFINE_PER_CPU(cpumask_t *, sched_cpu_llc_mask);
-DEFINE_PER_CPU(cpumask_t *, sched_cpu_topo_end_mask);
+DEFINE_PER_CPU_ALIGNED(cpumask_t [NR_CPU_AFFINITY_LEVELS], sched_cpu_topo_masks);
+DEFINE_PER_CPU_ALIGNED(cpumask_t *, sched_cpu_llc_mask);
+DEFINE_PER_CPU_ALIGNED(cpumask_t *, sched_cpu_topo_end_mask);
 
 #ifdef CONFIG_SCHED_SMT
 DEFINE_STATIC_KEY_FALSE(sched_smt_present);
