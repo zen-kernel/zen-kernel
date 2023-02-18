@@ -254,6 +254,28 @@ static inline struct task_struct *sched_rq_first_task(struct rq *rq)
 }
 
 static inline struct task_struct *
+sched_rq_next_task_debug(struct task_struct *p, struct rq *rq)
+{
+       unsigned long idx = p->sq_idx;
+       struct list_head *head = &rq->queue.heads[idx];
+
+       printk(KERN_INFO "sched: p %lu %016lx %016lx %016lx %016lx\n",
+	      idx, rq->queue.bitmap[0], rq->queue.bitmap[1],
+	      rq->queue.bitmap[2], rq->queue.bitmap[3]);
+       if (list_is_last(&p->sq_node, head)) {
+	       idx = find_next_bit(rq->queue.bitmap, SCHED_QUEUE_BITS,
+				   sched_idx2prio(idx, rq) + 1);
+	       printk(KERN_INFO "sched: sched_idx2prio %d, next %lu idx %d\n",
+		      sched_idx2prio(idx, rq), idx, sched_prio2idx(idx, rq));
+	       head = &rq->queue.heads[sched_prio2idx(idx, rq)];
+
+	       return list_first_entry(head, struct task_struct, sq_node);
+       }
+
+       return list_next_entry(p, sq_node);
+}
+
+static inline struct task_struct *
 sched_rq_next_task(struct task_struct *p, struct rq *rq)
 {
 	unsigned long idx = p->sq_idx;
@@ -4472,6 +4494,13 @@ migrate_pending_tasks(struct rq *rq, struct rq *dest_rq, const int dest_cpu)
 
 	while (skip != rq->idle && nr_tries &&
 	       (p = sched_rq_next_task(skip, rq)) != rq->idle) {
+               if (((uintptr_t)0xdead000000000000) ==
+                   ((uintptr_t)p & (uintptr_t)0xffff000000000000)) {
+                       printk(KERN_INFO "sched: %d %d %d %d %d %p %p %p",
+                              cpu_of(rq), dest_cpu, nr_tries, nr_migrated,
+                              rq->nr_running, skip, rq->idle, p);
+                       sched_rq_next_task_debug(skip, rq);
+               }
 		skip = sched_rq_next_task(p, rq);
 		if (cpumask_test_cpu(dest_cpu, p->cpus_ptr)) {
 			__SCHED_DEQUEUE_TASK(p, rq, 0);
