@@ -803,7 +803,6 @@ static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
 		  task_cpu(p), cpu_of(rq));
 
 	__SCHED_ENQUEUE_TASK(p, rq, flags);
-	update_sched_preempt_mask(rq);
 	++rq->nr_running;
 #ifdef CONFIG_SMP
 	if (2 == rq->nr_running)
@@ -1317,9 +1316,9 @@ static int effective_prio(struct task_struct *p)
  *
  * Context: rq->lock
  */
-static void activate_task(struct task_struct *p, struct rq *rq)
+static void activate_task(struct task_struct *p, struct rq *rq, int flags)
 {
-	enqueue_task(p, rq, ENQUEUE_WAKEUP);
+	enqueue_task(p, rq, flags);
 	p->on_rq = TASK_ON_RQ_QUEUED;
 
 	/*
@@ -1335,10 +1334,10 @@ static void activate_task(struct task_struct *p, struct rq *rq)
  *
  * Context: rq->lock
  */
-static inline void deactivate_task(struct task_struct *p, struct rq *rq)
+static void deactivate_task(struct task_struct *p, struct rq *rq, int flags)
 {
-	dequeue_task(p, rq, DEQUEUE_SLEEP);
-	p->on_rq = 0;
+	p->on_rq = (flags & DEQUEUE_SLEEP) ? 0 : TASK_ON_RQ_MIGRATING;
+	dequeue_task(p, rq, flags);
 	cpufreq_update_util(rq, 0);
 }
 
@@ -1555,8 +1554,7 @@ static struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int
 {
 	lockdep_assert_held(&rq->lock);
 
-	WRITE_ONCE(p->on_rq, TASK_ON_RQ_MIGRATING);
-	dequeue_task(p, rq, 0);
+	deactivate_task(p, rq, 0);
 	update_sched_preempt_mask(rq);
 	set_task_cpu(p, new_cpu);
 	raw_spin_unlock(&rq->lock);
@@ -1566,8 +1564,8 @@ static struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int
 	raw_spin_lock(&rq->lock);
 	WARN_ON_ONCE(task_cpu(p) != new_cpu);
 	sched_task_sanity_check(p, rq);
-	enqueue_task(p, rq, 0);
-	p->on_rq = TASK_ON_RQ_QUEUED;
+	activate_task(p, rq, 0);
+	update_sched_preempt_mask(rq);
 	check_preempt_curr(rq);
 
 	return rq;
@@ -2371,7 +2369,7 @@ ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags)
 		atomic_dec(&task_rq(p)->nr_iowait);
 	}
 
-	activate_task(p, rq);
+	activate_task(p, rq, ENQUEUE_WAKEUP);
 	ttwu_do_wakeup(rq, p, 0);
 }
 
@@ -3287,7 +3285,7 @@ void wake_up_new_task(struct task_struct *p)
 	raw_spin_lock(&rq->lock);
 	update_rq_clock(rq);
 
-	activate_task(p, rq);
+	activate_task(p, rq, flags);
 	trace_sched_wakeup_new(p);
 	check_preempt_curr(rq);
 
@@ -4726,7 +4724,7 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 			 * After this, schedule() must not care about p->state any more.
 			 */
 			sched_task_deactivate(prev, rq);
-			deactivate_task(prev, rq);
+			deactivate_task(prev, rq, DEQUEUE_SLEEP);
 			deactivated = 1;
 
 			if (prev->in_iowait) {
@@ -7382,6 +7380,7 @@ static void sched_init_topology_cpumask_early(void)
 		cpumask_copy(tmp, cpumask_of(cpu));
 		tmp++;
 		cpumask_copy(tmp, cpu_possible_mask);
+		cpumask_clear_cpu(cpu, tmp);
 		per_cpu(sched_cpu_llc_mask, cpu) = tmp;
 		per_cpu(sched_cpu_topo_end_mask, cpu) = ++tmp;
 		/*per_cpu(sd_llc_id, cpu) = cpu;*/
@@ -7492,7 +7491,6 @@ static struct kmem_cache *task_group_cache __read_mostly;
 void __init sched_init(void)
 {
 	int i;
-	struct rq *rq;
 
 	printk(KERN_INFO ALT_SCHED_VERSION_MSG);
 
@@ -7511,6 +7509,7 @@ void __init sched_init(void)
 	INIT_LIST_HEAD(&root_task_group.siblings);
 #endif /* CONFIG_CGROUP_SCHED */
 	for_each_possible_cpu(i) {
+		struct rq *rq;
 		rq = cpu_rq(i);
 
 		sched_queue_init(&rq->queue);
