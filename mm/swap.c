@@ -1134,6 +1134,10 @@ EXPORT_SYMBOL(pagevec_lookup_range_tag);
  */
 void __init swap_setup(void)
 {
+#ifdef CONFIG_ZEN_INTERACTIVE
+	/* Only swap-in pages requested, avoid readahead */
+	page_cluster = 0;
+#else
 	unsigned long megs = totalram_pages() >> (20 - PAGE_SHIFT);
 
 	/* Use a smaller cluster for small-memory machines */
@@ -1145,4 +1149,5 @@ void __init swap_setup(void)
 	 * Right now other parts of the system means that we
 	 * _really_ don't want to cluster much more
 	 */
+#endif
 }
