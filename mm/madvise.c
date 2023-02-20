@@ -1527,3 +1527,116 @@ free_iov:
 out:
 	return ret;
 }
+
+SYSCALL_DEFINE3(pmadv_ksm, int, pidfd, int, behaviour, unsigned int, flags)
+{
+#ifdef CONFIG_KSM
+	ssize_t ret;
+	struct pid *pid;
+	struct task_struct *task;
+	struct mm_struct *mm;
+	unsigned int f_flags;
+	struct vm_area_struct *vma;
+	struct vma_iterator vmi;
+
+	if (flags != 0) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	switch (behaviour) {
+		case MADV_MERGEABLE:
+		case MADV_UNMERGEABLE:
+			break;
+		default:
+			ret = -EINVAL;
+			goto out;
+			break;
+	}
+
+	pid = pidfd_get_pid(pidfd, &f_flags);
+	if (IS_ERR(pid)) {
+		ret = PTR_ERR(pid);
+		goto out;
+	}
+
+	task = get_pid_task(pid, PIDTYPE_PID);
+	if (!task) {
+		ret = -ESRCH;
+		goto put_pid;
+	}
+
+	/* Require PTRACE_MODE_READ to avoid leaking ASLR metadata. */
+	mm = mm_access(task, PTRACE_MODE_READ_FSCREDS);
+	if (IS_ERR_OR_NULL(mm)) {
+		ret = IS_ERR(mm) ? PTR_ERR(mm) : -ESRCH;
+		goto release_task;
+	}
+
+	/* Require CAP_SYS_NICE for influencing process performance. */
+	if (!capable(CAP_SYS_NICE)) {
+		ret = -EPERM;
+		goto release_mm;
+	}
+
+	if (mmap_write_lock_killable(mm)) {
+		ret = -EINTR;
+		goto release_mm;
+	}
+
+	vma_iter_init(&vmi, mm, 0);
+	for_each_vma(vmi, vma) {
+		switch (behaviour) {
+			case MADV_MERGEABLE:
+				ret = ksm_madvise_merge(vma->vm_mm, vma, &vma->vm_flags);
+				break;
+			case MADV_UNMERGEABLE:
+				ret = ksm_madvise_unmerge(vma, vma->vm_start, vma->vm_end, &vma->vm_flags);
+				break;
+			default:
+				/* look, ma, no brain */
+				break;
+		}
+		if (ret)
+			break;
+	}
+
+	mmap_write_unlock(mm);
+
+release_mm:
+	mmput(mm);
+release_task:
+	put_task_struct(task);
+put_pid:
+	put_pid(pid);
+out:
+	return ret;
+#else /* CONFIG_KSM */
+	return -ENOSYS;
+#endif /* CONFIG_KSM */
+}
+
+#ifdef CONFIG_KSM
+static ssize_t ksm_show(struct kobject *kobj, struct kobj_attribute *attr,
+			 char *buf)
+{
+	return sprintf(buf, "%u\n", __NR_pmadv_ksm);
+}
+static struct kobj_attribute pmadv_ksm_attr = __ATTR_RO(ksm);
+
+static struct attribute *pmadv_sysfs_attrs[] = {
+	&pmadv_ksm_attr.attr,
+	NULL,
+};
+
+static const struct attribute_group pmadv_sysfs_attr_group = {
+	.attrs = pmadv_sysfs_attrs,
+	.name = "pmadv",
+};
+
+static int __init pmadv_sysfs_init(void)
+{
+	return sysfs_create_group(kernel_kobj, &pmadv_sysfs_attr_group);
+}
+subsys_initcall(pmadv_sysfs_init);
+#endif /* CONFIG_KSM */
