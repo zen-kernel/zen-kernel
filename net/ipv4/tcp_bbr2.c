@@ -1775,10 +1775,10 @@ static void bbr2_pick_probe_wait(struct sock *sk)
 
 	/* Decide the random round-trip bound for wait until probe: */
 	bbr->rounds_since_probe =
-		prandom_u32_max(bbr->params.bw_probe_rand_rounds);
+		get_random_u32_below(bbr->params.bw_probe_rand_rounds);
 	/* Decide the random wall clock bound for wait until probe: */
 	bbr->probe_wait_us = bbr->params.bw_probe_base_us +
-			     prandom_u32_max(bbr->params.bw_probe_rand_us);
+			     get_random_u32_below(bbr->params.bw_probe_rand_us);
 }
 
 static void bbr2_set_cycle_idx(struct sock *sk, int cycle_idx)
