@@ -4513,9 +4513,12 @@ const_debug unsigned int sysctl_sched_nr_migrate = SCHED_NR_MIGRATE_BREAK;
 static inline int
 migrate_pending_tasks(struct rq *rq, struct rq *dest_rq, const int dest_cpu)
 {
-	struct task_struct *p, *skip = rq->curr;
+	struct task_struct *p, *skip = rcu_dereference(rq->curr);
 	int nr_migrated = 0;
 	int nr_tries = min(rq->nr_running / 2, sysctl_sched_nr_migrate);
+
+	if (!task_on_rq_queued(skip))
+		return 0;
 
 	while (skip != rq->idle && nr_tries &&
 	       (p = sched_rq_next_task(skip, rq)) != rq->idle) {
