@@ -1,4 +1,4 @@
-#define ALT_SCHED_VERSION_MSG "sched/pds: PDS CPU Scheduler "ALT_SCHED_VERSION" by Alfred Chen.\n"
+#define ALT_SCHED_NAME "PDS"
 
 static int sched_timeslice_shift = 22;
 
@@ -18,11 +18,13 @@ task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 {
 	s64 delta = p->deadline - rq->time_edge + NORMAL_PRIO_NUM - NICE_WIDTH;
 
+#ifdef ALT_SCHED_DEBUG
 	if (WARN_ONCE(delta > NORMAL_PRIO_NUM - 1,
 		      "pds: task_sched_prio_normal() delta %lld\n", delta))
 		return NORMAL_PRIO_NUM - 1;
+#endif
 
-	return (delta < 0) ? 0 : delta;
+	return max(0LL, delta);
 }
 
 static inline int task_sched_prio(const struct task_struct *p)
