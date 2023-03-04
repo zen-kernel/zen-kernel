@@ -67,7 +67,7 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 #define sched_feat(x)	(0)
 #endif /* CONFIG_SCHED_DEBUG */
 
-#define ALT_SCHED_VERSION "v6.2-r0"
+#define ALT_SCHED_VERSION "v6.2-r1"
 
 /*
  * Compile time debug macro
@@ -7591,7 +7591,8 @@ void __init sched_init(void)
 	int i;
 	struct rq *rq;
 
-	printk(KERN_INFO ALT_SCHED_VERSION_MSG);
+	printk(KERN_INFO "sched/alt: "ALT_SCHED_NAME" CPU Scheduler "ALT_SCHED_VERSION\
+			 " by Alfred Chen.\n");
 
 	wait_bit_init();
 
