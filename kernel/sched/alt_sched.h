@@ -119,6 +119,8 @@ struct sched_queue {
 };
 
 struct rq;
+struct cpuidle_state;
+
 struct balance_callback {
 	struct balance_callback *next;
 	void (*func)(struct rq *rq);
