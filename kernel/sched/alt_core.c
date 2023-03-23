@@ -67,7 +67,7 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 #define sched_feat(x)	(0)
 #endif /* CONFIG_SCHED_DEBUG */
 
-#define ALT_SCHED_VERSION "v6.2-r1"
+#define ALT_SCHED_VERSION "v6.2-r2"
 
 /*
  * Compile time debug macro
