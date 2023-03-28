@@ -1328,9 +1328,9 @@ static int effective_prio(struct task_struct *p)
  *
  * Context: rq->lock
  */
-static void activate_task(struct task_struct *p, struct rq *rq, int flags)
+static void activate_task(struct task_struct *p, struct rq *rq)
 {
-	enqueue_task(p, rq, flags);
+	enqueue_task(p, rq, ENQUEUE_WAKEUP);
 	p->on_rq = TASK_ON_RQ_QUEUED;
 
 	/*
@@ -1346,10 +1346,10 @@ static void activate_task(struct task_struct *p, struct rq *rq, int flags)
  *
  * Context: rq->lock
  */
-static void deactivate_task(struct task_struct *p, struct rq *rq, int flags)
+static inline void deactivate_task(struct task_struct *p, struct rq *rq)
 {
-	p->on_rq = (flags & DEQUEUE_SLEEP) ? 0 : TASK_ON_RQ_MIGRATING;
-	dequeue_task(p, rq, flags);
+	dequeue_task(p, rq, DEQUEUE_SLEEP);
+	p->on_rq = 0;
 	cpufreq_update_util(rq, 0);
 }
 
@@ -1566,7 +1566,8 @@ static struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int
 {
 	lockdep_assert_held(&rq->lock);
 
-	deactivate_task(p, rq, 0);
+	WRITE_ONCE(p->on_rq, TASK_ON_RQ_MIGRATING);
+	dequeue_task(p, rq, 0);
 	set_task_cpu(p, new_cpu);
 	raw_spin_unlock(&rq->lock);
 
@@ -1575,7 +1576,8 @@ static struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int
 	raw_spin_lock(&rq->lock);
 	WARN_ON_ONCE(task_cpu(p) != new_cpu);
 	sched_task_sanity_check(p, rq);
-	activate_task(p, rq, 0);
+	enqueue_task(p, rq, 0);
+	p->on_rq = TASK_ON_RQ_QUEUED;
 	check_preempt_curr(rq);
 
 	return rq;
@@ -2410,7 +2412,7 @@ ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags)
 		atomic_dec(&task_rq(p)->nr_iowait);
 	}
 
-	activate_task(p, rq, ENQUEUE_WAKEUP);
+	activate_task(p, rq);
 	ttwu_do_wakeup(rq, p, 0);
 }
 
@@ -3330,7 +3332,7 @@ void wake_up_new_task(struct task_struct *p)
 	raw_spin_lock(&rq->lock);
 	update_rq_clock(rq);
 
-	activate_task(p, rq, flags);
+	activate_task(p, rq);
 	trace_sched_wakeup_new(p);
 	check_preempt_curr(rq);
 
@@ -4771,7 +4773,7 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 			 * After this, schedule() must not care about p->state any more.
 			 */
 			sched_task_deactivate(prev, rq);
-			deactivate_task(prev, rq, DEQUEUE_SLEEP);
+			deactivate_task(prev, rq);
 			deactivated = 1;
 
 			if (prev->in_iowait) {
