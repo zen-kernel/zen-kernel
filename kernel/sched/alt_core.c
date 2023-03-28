@@ -798,7 +798,7 @@ static inline void dequeue_task(struct task_struct *p, struct rq *rq, int flags)
 #ifdef ALT_SCHED_DEBUG
 	lockdep_assert_held(&rq->lock);
 
-	/*printk(KERN_INFO "sched: dequeue(%d) %px %016llx\n", cpu_of(rq), p, p->priodl);*/
+	/*printk(KERN_INFO "sched: dequeue(%d) %px %016llx\n", cpu_of(rq), p, p->deadline);*/
 	WARN_ONCE(task_rq(p) != rq, "sched: dequeue task reside on cpu%d from cpu%d\n",
 		  task_cpu(p), cpu_of(rq));
 #endif
@@ -818,7 +818,7 @@ static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
 #ifdef ALT_SCHED_DEBUG
 	lockdep_assert_held(&rq->lock);
 
-	/*printk(KERN_INFO "sched: enqueue(%d) %px %016llx\n", cpu_of(rq), p, p->priodl);*/
+	/*printk(KERN_INFO "sched: enqueue(%d) %px %d\n", cpu_of(rq), p, p->prio);*/
 	WARN_ONCE(task_rq(p) != rq, "sched: enqueue task reside on cpu%d to cpu%d\n",
 		  task_cpu(p), cpu_of(rq));
 #endif
@@ -837,7 +837,7 @@ static inline void requeue_task(struct task_struct *p, struct rq *rq, int idx)
 {
 #ifdef ALT_SCHED_DEBUG
 	lockdep_assert_held(&rq->lock);
-	/*printk(KERN_INFO "sched: requeue(%d) %px %016llx\n", cpu_of(rq), p, p->priodl);*/
+	/*printk(KERN_INFO "sched: requeue(%d) %px %016llx\n", cpu_of(rq), p, p->deadline);*/
 	WARN_ONCE(task_rq(p) != rq, "sched: cpu[%d] requeue task reside on cpu%d\n",
 		  cpu_of(rq), task_cpu(p));
 #endif
@@ -1359,8 +1359,8 @@ static void activate_task(struct task_struct *p, struct rq *rq)
  */
 static inline void deactivate_task(struct task_struct *p, struct rq *rq)
 {
-	p->on_rq = 0;
 	dequeue_task(p, rq, DEQUEUE_SLEEP);
+	p->on_rq = 0;
 	cpufreq_update_util(rq, 0);
 }
 
@@ -1577,7 +1577,7 @@ static struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int
 {
 	lockdep_assert_held(&rq->lock);
 
-	p->on_rq = TASK_ON_RQ_MIGRATING;
+	WRITE_ONCE(p->on_rq, TASK_ON_RQ_MIGRATING);
 	dequeue_task(p, rq, 0);
 	set_task_cpu(p, new_cpu);
 	raw_spin_unlock(&rq->lock);
@@ -4527,12 +4527,10 @@ migrate_pending_tasks(struct rq *rq, struct rq *dest_rq, const int dest_cpu)
 	       (p = sched_rq_next_task(skip, rq)) != rq->idle) {
 		skip = sched_rq_next_task(p, rq);
 		if (cpumask_test_cpu(dest_cpu, p->cpus_ptr)) {
-			p->on_rq = TASK_ON_RQ_MIGRATING;
 			__SCHED_DEQUEUE_TASK(p, rq, 0);
 			set_task_cpu(p, dest_cpu);
 			sched_task_sanity_check(p, dest_rq);
 			__SCHED_ENQUEUE_TASK(p, dest_rq, 0);
-			p->on_rq = TASK_ON_RQ_QUEUED;
 			nr_migrated++;
 		}
 		nr_tries--;
@@ -4648,8 +4646,7 @@ choose_next_task(struct rq *rq, int cpu)
 #ifdef CONFIG_HIGH_RES_TIMERS
 	hrtick_start(rq, next->time_slice);
 #endif
-	/*printk(KERN_INFO "sched: choose_next_task(%d) next %px\n", cpu,
-	 * next);*/
+	/*printk(KERN_INFO "sched: choose_next_task(%d) next %px\n", cpu, next);*/
 	return next;
 }
 
@@ -4807,6 +4804,7 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 		next->last_ran = rq->clock_task;
 		rq->last_ts_switch = rq->clock;
 
+		/*printk(KERN_INFO "sched: %px -> %px\n", prev, next);*/
 		rq->nr_switches++;
 		/*
 		 * RCU users of rcu_dereference(rq->curr) may not see
