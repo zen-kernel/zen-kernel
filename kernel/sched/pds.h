@@ -1,9 +1,15 @@
 #define ALT_SCHED_NAME "PDS"
 
-static int sched_timeslice_shift = 22;
+#define MIN_SCHED_NORMAL_PRIO	(32)
+#define SCHED_NORMAL_PRIO_NUM	(32)
+#define SCHED_EDGE_DELTA	(SCHED_NORMAL_PRIO_NUM - NICE_WIDTH / 2)
 
 /* PDS assume NORMAL_PRIO_NUM is power of 2 */
 #define NORMAL_PRIO_MOD(x)	((x) & (NORMAL_PRIO_NUM - 1))
+#define SCHED_NORMAL_PRIO_MOD(x)	((x) & (SCHED_NORMAL_PRIO_NUM - 1))
+
+/* 4ms -> shift 22, 2 time slice slots -> shift 23 */
+static int sched_timeslice_shift = 23;
 
 /*
  * Common interfaces
@@ -11,18 +17,18 @@ static int sched_timeslice_shift = 22;
 static inline void sched_timeslice_imp(const int timeslice_ms)
 {
 	if (2 == timeslice_ms)
-		sched_timeslice_shift = 21;
+		sched_timeslice_shift = 22;
 }
 
 static inline int
 task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 {
-	s64 delta = p->deadline - rq->time_edge + NORMAL_PRIO_NUM - NICE_WIDTH;
+	s64 delta = p->deadline - rq->time_edge + SCHED_EDGE_DELTA;
 
 #ifdef ALT_SCHED_DEBUG
 	if (WARN_ONCE(delta > NORMAL_PRIO_NUM - 1,
 		      "pds: task_sched_prio_normal() delta %lld\n", delta))
-		return NORMAL_PRIO_NUM - 1;
+		return SCHED_NORMAL_PRIO_NUM - 1;
 #endif
 
 	return max(0LL, delta);
@@ -30,8 +36,8 @@ task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 
 static inline int task_sched_prio(const struct task_struct *p)
 {
-	return (p->prio < MIN_NORMAL_PRIO) ? p->prio :
-		MIN_NORMAL_PRIO + task_sched_prio_normal(p, task_rq(p));
+	return (p->prio < MIN_NORMAL_PRIO) ? (p->prio >> 2) :
+		MIN_SCHED_NORMAL_PRIO + task_sched_prio_normal(p, task_rq(p));
 }
 
 static inline int
@@ -39,30 +45,36 @@ task_sched_prio_idx(const struct task_struct *p, const struct rq *rq)
 {
 	u64 idx;
 
-	if (p->prio < MAX_RT_PRIO)
-		return p->prio;
+	if (p->prio < MIN_NORMAL_PRIO)
+		return p->prio >> 2;
 
-	idx = max(p->deadline + NORMAL_PRIO_NUM - NICE_WIDTH, rq->time_edge);
-	return MIN_NORMAL_PRIO + NORMAL_PRIO_MOD(idx);
+	idx = max(p->deadline + SCHED_EDGE_DELTA, rq->time_edge);
+	/*printk(KERN_INFO "sched: task_sched_prio_idx edge:%llu, deadline=%llu idx=%llu\n", rq->time_edge, p->deadline, idx);*/
+	return MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(idx);
 }
 
-static inline int sched_prio2idx(int prio, struct rq *rq)
+static inline int sched_prio2idx(int sched_prio, struct rq *rq)
 {
-	return (IDLE_TASK_SCHED_PRIO == prio || prio < MAX_RT_PRIO) ? prio :
-		MIN_NORMAL_PRIO + NORMAL_PRIO_MOD(prio + rq->time_edge);
+	return (IDLE_TASK_SCHED_PRIO == sched_prio || sched_prio < MIN_SCHED_NORMAL_PRIO) ?
+		sched_prio :
+		MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(sched_prio + rq->time_edge);
 }
 
-static inline int sched_idx2prio(int idx, struct rq *rq)
+static inline int sched_idx2prio(int sched_idx, struct rq *rq)
 {
-	return (idx < MAX_RT_PRIO) ? idx : MIN_NORMAL_PRIO +
-		NORMAL_PRIO_MOD(idx - rq->time_edge);
+	int ret;
+	ret = (sched_idx < MIN_SCHED_NORMAL_PRIO) ? sched_idx :
+		MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(sched_idx - rq->time_edge);
+	/*printk(KERN_INFO "sched: sched_idx2prio edge:%llu, %d -> %d\n", rq->time_edge, sched_idx, ret);*/
+
+	return ret;
 }
 
 static inline void sched_renew_deadline(struct task_struct *p, const struct rq *rq)
 {
-	if (p->prio >= MAX_RT_PRIO)
+	if (p->prio >= MIN_NORMAL_PRIO)
 		p->deadline = (rq->clock >> sched_timeslice_shift) +
-			p->static_prio - (MAX_PRIO - NICE_WIDTH);
+			(p->static_prio - (MAX_PRIO - NICE_WIDTH)) / 2;
 }
 
 int task_running_nice(struct task_struct *p)
@@ -70,36 +82,44 @@ int task_running_nice(struct task_struct *p)
 	return (p->prio > DEFAULT_PRIO);
 }
 
+const u64 RT_MASK = 0xffffffffULL;
+
 static inline void update_rq_time_edge(struct rq *rq)
 {
 	struct list_head head;
 	u64 old = rq->time_edge;
 	u64 now = rq->clock >> sched_timeslice_shift;
 	u64 prio, delta;
+	DECLARE_BITMAP(normal, SCHED_QUEUE_BITS);
 
 	if (now == old)
 		return;
 
 	rq->time_edge = now;
-	delta = min_t(u64, NORMAL_PRIO_NUM, now - old);
+	delta = min_t(u64, SCHED_NORMAL_PRIO_NUM, now - old);
 	INIT_LIST_HEAD(&head);
 
-	for_each_set_bit(prio, &rq->queue.bitmap[2], delta)
-		list_splice_tail_init(rq->queue.heads + MIN_NORMAL_PRIO +
-				      NORMAL_PRIO_MOD(prio + old), &head);
+	/*printk(KERN_INFO "sched: update_rq_time_edge 0x%016lx %llu\n", rq->queue.bitmap[0], delta);*/
+	prio = MIN_SCHED_NORMAL_PRIO;
+	for_each_set_bit_from(prio, &rq->queue.bitmap[0], MIN_SCHED_NORMAL_PRIO + delta)
+		list_splice_tail_init(rq->queue.heads + MIN_SCHED_NORMAL_PRIO +
+				      SCHED_NORMAL_PRIO_MOD(prio + old), &head);
 
-	rq->queue.bitmap[2] = (NORMAL_PRIO_NUM == delta) ? 0UL :
-		rq->queue.bitmap[2] >> delta;
+	bitmap_shift_right(&normal[0], &rq->queue.bitmap[0], delta, SCHED_QUEUE_BITS);
 	if (!list_empty(&head)) {
 		struct task_struct *p;
-		u64 idx = MIN_NORMAL_PRIO + NORMAL_PRIO_MOD(now);
+		u64 idx = MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(now);
 
 		list_for_each_entry(p, &head, sq_node)
 			p->sq_idx = idx;
 
 		list_splice(&head, rq->queue.heads + idx);
-		rq->queue.bitmap[2] |= 1UL;
+		set_bit(MIN_SCHED_NORMAL_PRIO, &normal[0]);
 	}
+	bitmap_replace(&rq->queue.bitmap[0], &normal[0], &rq->queue.bitmap[0],
+		       (const unsigned long *)&RT_MASK, SCHED_QUEUE_BITS);
+	/*rq->queue.bitmap[0] = (normal & (~0xffffffffUL)) | (rq->queue.bitmap[0] & 0xffffffffUL);*/
+	/*printk(KERN_INFO "sched: update_rq_time_edge 0x%016lx 0x%016lx", rq->queue.bitmap[0], normal);*/
 }
 
 static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
@@ -112,7 +132,7 @@ static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 
 static inline void sched_task_sanity_check(struct task_struct *p, struct rq *rq)
 {
-	u64 max_dl = rq->time_edge + NICE_WIDTH - 1;
+	u64 max_dl = rq->time_edge + NICE_WIDTH / 2 - 1;
 	if (unlikely(p->deadline > max_dl))
 		p->deadline = max_dl;
 }
