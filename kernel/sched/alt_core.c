@@ -69,6 +69,11 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 
 #define ALT_SCHED_VERSION "v6.2-r2"
 
+/*
+ * Compile time debug macro
+ * #define ALT_SCHED_DEBUG
+ */
+
 /* rt_prio(prio) defined in include/linux/sched/rt.h */
 #define rt_task(p)		rt_prio((p)->prio)
 #define rt_policy(policy)	((policy) == SCHED_FIFO || (policy) == SCHED_RR)
@@ -790,11 +795,13 @@ unsigned long get_wchan(struct task_struct *p)
 
 static inline void dequeue_task(struct task_struct *p, struct rq *rq, int flags)
 {
+#ifdef ALT_SCHED_DEBUG
 	lockdep_assert_held(&rq->lock);
 
-	/*printk(KERN_INFO "sched: dequeue(%d) %px %016llx\n", cpu_of(rq), p, p->priodl);*/
+	/*printk(KERN_INFO "sched: dequeue(%d) %px %016llx\n", cpu_of(rq), p, p->deadline);*/
 	WARN_ONCE(task_rq(p) != rq, "sched: dequeue task reside on cpu%d from cpu%d\n",
 		  task_cpu(p), cpu_of(rq));
+#endif
 
 	__SCHED_DEQUEUE_TASK(p, rq, flags);
 	--rq->nr_running;
@@ -808,11 +815,13 @@ static inline void dequeue_task(struct task_struct *p, struct rq *rq, int flags)
 
 static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
 {
+#ifdef ALT_SCHED_DEBUG
 	lockdep_assert_held(&rq->lock);
 
-	/*printk(KERN_INFO "sched: enqueue(%d) %px %016llx\n", cpu_of(rq), p, p->priodl);*/
+	/*printk(KERN_INFO "sched: enqueue(%d) %px %d\n", cpu_of(rq), p, p->prio);*/
 	WARN_ONCE(task_rq(p) != rq, "sched: enqueue task reside on cpu%d to cpu%d\n",
 		  task_cpu(p), cpu_of(rq));
+#endif
 
 	__SCHED_ENQUEUE_TASK(p, rq, flags);
 	++rq->nr_running;
@@ -826,10 +835,12 @@ static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
 
 static inline void requeue_task(struct task_struct *p, struct rq *rq, int idx)
 {
+#ifdef ALT_SCHED_DEBUG
 	lockdep_assert_held(&rq->lock);
-	/*printk(KERN_INFO "sched: requeue(%d) %px %016llx\n", cpu_of(rq), p, p->priodl);*/
+	/*printk(KERN_INFO "sched: requeue(%d) %px %016llx\n", cpu_of(rq), p, p->deadline);*/
 	WARN_ONCE(task_rq(p) != rq, "sched: cpu[%d] requeue task reside on cpu%d\n",
 		  cpu_of(rq), task_cpu(p));
+#endif
 
 	list_del(&p->sq_node);
 	list_add_tail(&p->sq_node, &rq->queue.heads[idx]);
@@ -1328,9 +1339,9 @@ static int effective_prio(struct task_struct *p)
  *
  * Context: rq->lock
  */
-static void activate_task(struct task_struct *p, struct rq *rq, int flags)
+static void activate_task(struct task_struct *p, struct rq *rq)
 {
-	enqueue_task(p, rq, flags);
+	enqueue_task(p, rq, ENQUEUE_WAKEUP);
 	p->on_rq = TASK_ON_RQ_QUEUED;
 
 	/*
@@ -1346,10 +1357,10 @@ static void activate_task(struct task_struct *p, struct rq *rq, int flags)
  *
  * Context: rq->lock
  */
-static void deactivate_task(struct task_struct *p, struct rq *rq, int flags)
+static inline void deactivate_task(struct task_struct *p, struct rq *rq)
 {
-	p->on_rq = (flags & DEQUEUE_SLEEP) ? 0 : TASK_ON_RQ_MIGRATING;
-	dequeue_task(p, rq, flags);
+	dequeue_task(p, rq, DEQUEUE_SLEEP);
+	p->on_rq = 0;
 	cpufreq_update_util(rq, 0);
 }
 
@@ -1566,7 +1577,8 @@ static struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int
 {
 	lockdep_assert_held(&rq->lock);
 
-	deactivate_task(p, rq, 0);
+	WRITE_ONCE(p->on_rq, TASK_ON_RQ_MIGRATING);
+	dequeue_task(p, rq, 0);
 	set_task_cpu(p, new_cpu);
 	raw_spin_unlock(&rq->lock);
 
@@ -1575,7 +1587,8 @@ static struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int
 	raw_spin_lock(&rq->lock);
 	WARN_ON_ONCE(task_cpu(p) != new_cpu);
 	sched_task_sanity_check(p, rq);
-	activate_task(p, rq, 0);
+	enqueue_task(p, rq, 0);
+	p->on_rq = TASK_ON_RQ_QUEUED;
 	check_preempt_curr(rq);
 
 	return rq;
@@ -2410,7 +2423,7 @@ ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags)
 		atomic_dec(&task_rq(p)->nr_iowait);
 	}
 
-	activate_task(p, rq, ENQUEUE_WAKEUP);
+	activate_task(p, rq);
 	ttwu_do_wakeup(rq, p, 0);
 }
 
@@ -3330,7 +3343,7 @@ void wake_up_new_task(struct task_struct *p)
 	raw_spin_lock(&rq->lock);
 	update_rq_clock(rq);
 
-	activate_task(p, rq, flags);
+	activate_task(p, rq);
 	trace_sched_wakeup_new(p);
 	check_preempt_curr(rq);
 
@@ -4475,11 +4488,6 @@ static inline void schedule_debug(struct task_struct *prev, bool preempt)
 	schedstat_inc(this_rq()->sched_count);
 }
 
-/*
- * Compile time debug macro
- * #define ALT_SCHED_DEBUG
- */
-
 #ifdef ALT_SCHED_DEBUG
 void alt_sched_debug(void)
 {
@@ -4638,8 +4646,7 @@ choose_next_task(struct rq *rq, int cpu)
 #ifdef CONFIG_HIGH_RES_TIMERS
 	hrtick_start(rq, next->time_slice);
 #endif
-	/*printk(KERN_INFO "sched: choose_next_task(%d) next %px\n", cpu,
-	 * next);*/
+	/*printk(KERN_INFO "sched: choose_next_task(%d) next %px\n", cpu, next);*/
 	return next;
 }
 
@@ -4771,7 +4778,7 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 			 * After this, schedule() must not care about p->state any more.
 			 */
 			sched_task_deactivate(prev, rq);
-			deactivate_task(prev, rq, DEQUEUE_SLEEP);
+			deactivate_task(prev, rq);
 			deactivated = 1;
 
 			if (prev->in_iowait) {
@@ -4797,6 +4804,7 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 		next->last_ran = rq->clock_task;
 		rq->last_ts_switch = rq->clock;
 
+		/*printk(KERN_INFO "sched: %px -> %px\n", prev, next);*/
 		rq->nr_switches++;
 		/*
 		 * RCU users of rcu_dereference(rq->curr) may not see
@@ -4819,7 +4827,7 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 		 */
 		++*switch_count;
 
-		psi_sched_switch(prev, next, !task_on_rq_queued(prev));
+		psi_sched_switch(prev, next, deactivated);
 
 		trace_sched_switch(sched_mode & SM_MASK_PREEMPT, prev, next, prev_state);
 
@@ -5158,12 +5166,16 @@ EXPORT_SYMBOL(default_wake_function);
 
 static inline void check_task_changed(struct task_struct *p, struct rq *rq)
 {
-	int idx;
-
 	/* Trigger resched if task sched_prio has been modified. */
-	if (task_on_rq_queued(p) && (idx = task_sched_prio_idx(p, rq)) != p->sq_idx) {
-		requeue_task(p, rq, idx);
-		check_preempt_curr(rq);
+	if (task_on_rq_queued(p)) {
+		int idx;
+
+		update_rq_clock(rq);
+		idx = task_sched_prio_idx(p, rq);
+		if (idx != p->sq_idx) {
+			requeue_task(p, rq, idx);
+			check_preempt_curr(rq);
+		}
 	}
 }
 
@@ -5216,7 +5228,6 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
 		return;
 
 	rq = __task_access_lock(p, &lock);
-	update_rq_clock(rq);
 	/*
 	 * Set under pi_lock && rq->lock, such that the value can be used under
 	 * either lock.
