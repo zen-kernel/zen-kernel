@@ -22,8 +22,8 @@
 #endif
 
 #ifdef CONFIG_SCHED_PDS
-/* bits: RT(0-99), reserved(100-127), NORMAL_PRIO_NUM, cpu idle task */
-#define SCHED_BITS	(MIN_NORMAL_PRIO + NORMAL_PRIO_NUM + 1)
+/* bits: RT(0-24), reserved(25-31), SCHED_NORMAL_PRIO_NUM(32), cpu idle task(1) */
+#define SCHED_BITS	(64 + 1)
 #endif /* CONFIG_SCHED_PDS */
 
 #define IDLE_TASK_SCHED_PRIO	(SCHED_BITS - 1)
@@ -142,7 +142,7 @@ struct rq {
 #ifdef CONFIG_SCHED_PDS
 	u64			time_edge;
 #endif
-	unsigned long prio;
+	unsigned long		prio;
 
 	/* switch count */
 	u64 nr_switches;
