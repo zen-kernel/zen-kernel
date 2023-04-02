@@ -22,9 +22,8 @@
 #endif
 
 #ifdef CONFIG_SCHED_PDS
-/* bits: RT(0-24), reserved(25-31), SCHED_NORMAL_PRIO_NUM, cpu idle task */
-/*#define SCHED_BITS	(MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_NUM + 1)*/
-#define SCHED_BITS	(64 + 1)
+/* bits: RT(0-99), reserved(100-127), NORMAL_PRIO_NUM, cpu idle task */
+#define SCHED_BITS	(MIN_NORMAL_PRIO + NORMAL_PRIO_NUM + 1)
 #endif /* CONFIG_SCHED_PDS */
 
 #define IDLE_TASK_SCHED_PRIO	(SCHED_BITS - 1)
