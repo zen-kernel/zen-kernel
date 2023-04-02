@@ -73,8 +73,7 @@ static inline int sched_idx2prio(int sched_idx, struct rq *rq)
 static inline void sched_renew_deadline(struct task_struct *p, const struct rq *rq)
 {
 	if (p->prio >= MIN_NORMAL_PRIO)
-		p->deadline = (rq->clock >> sched_timeslice_shift) +
-			(p->static_prio - (MAX_PRIO - NICE_WIDTH)) / 2;
+		p->deadline = rq->time_edge + (p->static_prio - (MAX_PRIO - NICE_WIDTH)) / 2;
 }
 
 int task_running_nice(struct task_struct *p)
@@ -118,8 +117,12 @@ static inline void update_rq_time_edge(struct rq *rq)
 	}
 	bitmap_replace(&rq->queue.bitmap[0], &normal[0], &rq->queue.bitmap[0],
 		       (const unsigned long *)&RT_MASK, SCHED_QUEUE_BITS);
-	/*rq->queue.bitmap[0] = (normal & (~0xffffffffUL)) | (rq->queue.bitmap[0] & 0xffffffffUL);*/
 	/*printk(KERN_INFO "sched: update_rq_time_edge 0x%016lx 0x%016lx", rq->queue.bitmap[0], normal);*/
+	if (rq->prio < MIN_SCHED_NORMAL_PRIO || IDLE_TASK_SCHED_PRIO == rq->prio)
+		return;
+
+	rq->prio = (rq->prio < MIN_SCHED_NORMAL_PRIO + delta) ?
+		MIN_SCHED_NORMAL_PRIO : rq->prio - delta;
 }
 
 static inline void time_slice_expired(struct task_struct *p, struct rq *rq)

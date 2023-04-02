@@ -262,8 +262,7 @@ static inline void update_sched_preempt_mask(struct rq *rq)
  */
 static inline struct task_struct *sched_rq_first_task(struct rq *rq)
 {
-	unsigned long idx = find_first_bit(rq->queue.bitmap, SCHED_QUEUE_BITS);
-	const struct list_head *head = &rq->queue.heads[sched_prio2idx(idx, rq)];
+	const struct list_head *head = &rq->queue.heads[sched_prio2idx(rq->prio, rq)];
 
 	return list_first_entry(head, struct task_struct, sq_node);
 }
@@ -775,14 +774,15 @@ unsigned long get_wchan(struct task_struct *p)
  * Add/Remove/Requeue task to/from the runqueue routines
  * Context: rq->lock
  */
-#define __SCHED_DEQUEUE_TASK(p, rq, flags)					\
+#define __SCHED_DEQUEUE_TASK(p, rq, flags, func)				\
 	sched_info_dequeue(rq, p);						\
 	psi_dequeue(p, flags & DEQUEUE_SLEEP);					\
 										\
 	list_del(&p->sq_node);							\
-	if (list_empty(&rq->queue.heads[p->sq_idx])) 				\
+	if (list_empty(&rq->queue.heads[p->sq_idx])) { 				\
 		clear_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);	\
-	update_sched_preempt_mask(rq);
+		func;								\
+	}
 
 #define __SCHED_ENQUEUE_TASK(p, rq, flags)				\
 	sched_info_enqueue(rq, p);					\
@@ -790,8 +790,7 @@ unsigned long get_wchan(struct task_struct *p)
 									\
 	p->sq_idx = task_sched_prio_idx(p, rq);				\
 	list_add_tail(&p->sq_node, &rq->queue.heads[p->sq_idx]);	\
-	set_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);	\
-	update_sched_preempt_mask(rq);
+	set_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);
 
 static inline void dequeue_task(struct task_struct *p, struct rq *rq, int flags)
 {
@@ -803,7 +802,7 @@ static inline void dequeue_task(struct task_struct *p, struct rq *rq, int flags)
 		  task_cpu(p), cpu_of(rq));
 #endif
 
-	__SCHED_DEQUEUE_TASK(p, rq, flags);
+	__SCHED_DEQUEUE_TASK(p, rq, flags, update_sched_preempt_mask(rq));
 	--rq->nr_running;
 #ifdef CONFIG_SMP
 	if (1 == rq->nr_running)
@@ -824,6 +823,7 @@ static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
 #endif
 
 	__SCHED_ENQUEUE_TASK(p, rq, flags);
+	update_sched_preempt_mask(rq);
 	++rq->nr_running;
 #ifdef CONFIG_SMP
 	if (2 == rq->nr_running)
@@ -846,8 +846,7 @@ static inline void requeue_task(struct task_struct *p, struct rq *rq, int idx)
 	list_add_tail(&p->sq_node, &rq->queue.heads[idx]);
 	if (idx != p->sq_idx) {
 		if (list_empty(&rq->queue.heads[p->sq_idx]))
-			clear_bit(sched_idx2prio(p->sq_idx, rq),
-				  rq->queue.bitmap);
+			clear_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);
 		p->sq_idx = idx;
 		set_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);
 		update_sched_preempt_mask(rq);
@@ -4527,7 +4526,7 @@ migrate_pending_tasks(struct rq *rq, struct rq *dest_rq, const int dest_cpu)
 	       (p = sched_rq_next_task(skip, rq)) != rq->idle) {
 		skip = sched_rq_next_task(p, rq);
 		if (cpumask_test_cpu(dest_cpu, p->cpus_ptr)) {
-			__SCHED_DEQUEUE_TASK(p, rq, 0);
+			__SCHED_DEQUEUE_TASK(p, rq, 0, );
 			set_task_cpu(p, dest_cpu);
 			sched_task_sanity_check(p, dest_rq);
 			__SCHED_ENQUEUE_TASK(p, dest_rq, 0);
@@ -4575,6 +4574,7 @@ static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 				if (rq->nr_running > 1)
 					cpumask_set_cpu(cpu, &sched_rq_pending_mask);
 
+				update_sched_preempt_mask(rq);
 				cpufreq_update_util(rq, 0);
 
 				return 1;
@@ -4714,7 +4714,6 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 	unsigned long prev_state;
 	struct rq *rq;
 	int cpu;
-	int deactivated = 0;
 
 	cpu = smp_processor_id();
 	rq = cpu_rq(cpu);
@@ -4779,7 +4778,6 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 			 */
 			sched_task_deactivate(prev, rq);
 			deactivate_task(prev, rq);
-			deactivated = 1;
 
 			if (prev->in_iowait) {
 				atomic_inc(&rq->nr_iowait);
@@ -4799,8 +4797,6 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 #endif
 
 	if (likely(prev != next)) {
-		if (deactivated)
-			update_sched_preempt_mask(rq);
 		next->last_ran = rq->clock_task;
 		rq->last_ts_switch = rq->clock;
 
@@ -4827,7 +4823,7 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 		 */
 		++*switch_count;
 
-		psi_sched_switch(prev, next, deactivated);
+		psi_sched_switch(prev, next, !task_on_rq_queued(prev));
 
 		trace_sched_switch(sched_mode & SM_MASK_PREEMPT, prev, next, prev_state);
 
@@ -7488,7 +7484,6 @@ static void sched_init_topology_cpumask_early(void)
 		cpumask_copy(tmp, cpumask_of(cpu));
 		tmp++;
 		cpumask_copy(tmp, cpu_possible_mask);
-		cpumask_clear_cpu(cpu, tmp);
 		per_cpu(sched_cpu_llc_mask, cpu) = tmp;
 		per_cpu(sched_cpu_topo_end_mask, cpu) = ++tmp;
 		/*per_cpu(sd_llc_id, cpu) = cpu;*/
@@ -7599,6 +7594,7 @@ static struct kmem_cache *task_group_cache __read_mostly;
 void __init sched_init(void)
 {
 	int i;
+	struct rq *rq;
 
 	printk(KERN_INFO "sched/alt: "ALT_SCHED_NAME" CPU Scheduler "ALT_SCHED_VERSION\
 			 " by Alfred Chen.\n");
@@ -7618,7 +7614,6 @@ void __init sched_init(void)
 	INIT_LIST_HEAD(&root_task_group.siblings);
 #endif /* CONFIG_CGROUP_SCHED */
 	for_each_possible_cpu(i) {
-		struct rq *rq;
 		rq = cpu_rq(i);
 
 		sched_queue_init(&rq->queue);
