@@ -7484,7 +7484,6 @@ static void sched_init_topology_cpumask_early(void)
 		cpumask_copy(tmp, cpumask_of(cpu));
 		tmp++;
 		cpumask_copy(tmp, cpu_possible_mask);
-		cpumask_clear_cpu(cpu, tmp);
 		per_cpu(sched_cpu_llc_mask, cpu) = tmp;
 		per_cpu(sched_cpu_topo_end_mask, cpu) = ++tmp;
 		/*per_cpu(sd_llc_id, cpu) = cpu;*/
