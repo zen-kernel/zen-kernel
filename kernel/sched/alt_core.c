@@ -7594,6 +7594,7 @@ static struct kmem_cache *task_group_cache __read_mostly;
 void __init sched_init(void)
 {
 	int i;
+	struct rq *rq;
 
 	printk(KERN_INFO "sched/alt: "ALT_SCHED_NAME" CPU Scheduler "ALT_SCHED_VERSION\
 			 " by Alfred Chen.\n");
@@ -7613,7 +7614,6 @@ void __init sched_init(void)
 	INIT_LIST_HEAD(&root_task_group.siblings);
 #endif /* CONFIG_CGROUP_SCHED */
 	for_each_possible_cpu(i) {
-		struct rq *rq;
 		rq = cpu_rq(i);
 
 		sched_queue_init(&rq->queue);
