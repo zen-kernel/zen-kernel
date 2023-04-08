@@ -669,4 +669,62 @@ unsigned long uclamp_rq_util_with(struct rq *rq, unsigned long util,
 
 static inline bool uclamp_rq_is_capped(struct rq *rq) { return false; }
 
+#ifdef CONFIG_SCHED_MM_CID
+static inline int __mm_cid_get(struct mm_struct *mm)
+{
+	struct cpumask *cpumask;
+	int cid;
+
+	cpumask = mm_cidmask(mm);
+	cid = cpumask_first_zero(cpumask);
+	if (cid >= nr_cpu_ids)
+		return -1;
+	__cpumask_set_cpu(cid, cpumask);
+	return cid;
+}
+
+static inline void mm_cid_put(struct mm_struct *mm, int cid)
+{
+	lockdep_assert_irqs_disabled();
+	if (cid < 0)
+		return;
+	raw_spin_lock(&mm->cid_lock);
+	__cpumask_clear_cpu(cid, mm_cidmask(mm));
+	raw_spin_unlock(&mm->cid_lock);
+}
+
+static inline int mm_cid_get(struct mm_struct *mm)
+{
+	int ret;
+
+	lockdep_assert_irqs_disabled();
+	raw_spin_lock(&mm->cid_lock);
+	ret = __mm_cid_get(mm);
+	raw_spin_unlock(&mm->cid_lock);
+	return ret;
+}
+
+static inline void switch_mm_cid(struct task_struct *prev, struct task_struct *next)
+{
+	if (prev->mm_cid_active) {
+		if (next->mm_cid_active && next->mm == prev->mm) {
+			/*
+			 * Context switch between threads in same mm, hand over
+			 * the mm_cid from prev to next.
+			 */
+			next->mm_cid = prev->mm_cid;
+			prev->mm_cid = -1;
+			return;
+		}
+		mm_cid_put(prev->mm, prev->mm_cid);
+		prev->mm_cid = -1;
+	}
+	if (next->mm_cid_active)
+		next->mm_cid = mm_cid_get(next->mm);
+}
+
+#else
+static inline void switch_mm_cid(struct task_struct *prev, struct task_struct *next) { }
+#endif
+
 #endif /* ALT_SCHED_H */
