@@ -2391,12 +2391,10 @@ ttwu_stat(struct task_struct *p, int cpu, int wake_flags)
 }
 
 /*
- * Mark the task runnable and perform wakeup-preemption.
+ * Mark the task runnable.
  */
-static inline void
-ttwu_do_wakeup(struct rq *rq, struct task_struct *p, int wake_flags)
+static inline void ttwu_do_wakeup(struct task_struct *p)
 {
-	check_preempt_curr(rq);
 	WRITE_ONCE(p->__state, TASK_RUNNING);
 	trace_sched_wakeup(p);
 }
@@ -2417,7 +2415,9 @@ ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags)
 	}
 
 	activate_task(p, rq);
-	ttwu_do_wakeup(rq, p, 0);
+	check_preempt_curr(rq);
+
+	ttwu_do_wakeup(p);
 }
 
 /*
@@ -2461,8 +2461,7 @@ static int ttwu_runnable(struct task_struct *p, int wake_flags)
 			update_rq_clock(rq);
 			check_preempt_curr(rq);
 		}
-		WRITE_ONCE(p->__state, TASK_RUNNING);
-		trace_sched_wakeup(p);
+		ttwu_do_wakeup(p);
 		ret = 1;
 	}
 	__task_access_unlock(p, lock);
@@ -2834,8 +2833,7 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 			goto out;
 
 		trace_sched_waking(p);
-		WRITE_ONCE(p->__state, TASK_RUNNING);
-		trace_sched_wakeup(p);
+		ttwu_do_wakeup(p);
 		goto out;
 	}
 
