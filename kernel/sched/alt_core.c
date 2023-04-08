@@ -11,6 +11,7 @@
  *		scheduler by Alfred Chen.
  *  2019-02-20	BMQ(BitMap Queue) kernel scheduler by Alfred Chen.
  */
+#include <linux/sched/clock.h>
 #include <linux/sched/cputime.h>
 #include <linux/sched/debug.h>
 #include <linux/sched/isolation.h>
@@ -2005,7 +2006,7 @@ sched_preempt_mask_flush(cpumask_t *mask, int prio)
 
 	cpumask_copy(mask, sched_idle_mask);
 
-	for_each_cpu_not(cpu, mask) {
+	for_each_clear_bit(cpu, cpumask_bits(mask), nr_cpumask_bits) {
 		if (prio < cpu_rq(cpu)->prio)
 			cpumask_set_cpu(cpu, mask);
 	}
@@ -7492,7 +7493,8 @@ static void sched_init_topology_cpumask_early(void)
 		       cpu, (topo++)->bits[0]);					\
 	}									\
 	if (!last)								\
-		cpumask_complement(topo, mask)
+		bitmap_complement(cpumask_bits(topo), cpumask_bits(mask),	\
+				  nr_cpumask_bits);
 
 static void sched_init_topology_cpumask(void)
 {
@@ -7505,7 +7507,8 @@ static void sched_init_topology_cpumask(void)
 
 		topo = per_cpu(sched_cpu_topo_masks, cpu) + 1;
 
-		cpumask_complement(topo, cpumask_of(cpu));
+		bitmap_complement(cpumask_bits(topo), cpumask_bits(cpumask_of(cpu)),
+				  nr_cpumask_bits);
 #ifdef CONFIG_SCHED_SMT
 		TOPOLOGY_CPUMASK(smt, topology_sibling_cpumask(cpu), false);
 #endif
