@@ -172,6 +172,21 @@ static int kvm_host_page_count(void *addr)
 	return page_count(virt_to_page(addr));
 }
 
+static void kvm_s2_rcu_put_page(struct rcu_head *head)
+{
+	put_page(container_of(head, struct page, rcu_head));
+}
+
+static void kvm_s2_put_page_rcu(void *addr)
+{
+	struct page *page = virt_to_page(addr);
+
+	if (kvm_host_page_count(addr) == 1)
+		kvm_account_pgtable_pages(addr, -1);
+
+	call_rcu(&page->rcu_head, kvm_s2_rcu_put_page);
+}
+
 static phys_addr_t kvm_host_pa(void *addr)
 {
 	return __pa(addr);
@@ -704,6 +719,7 @@ static struct kvm_pgtable_mm_ops kvm_s2_mm_ops = {
 	.free_removed_table	= stage2_free_removed_table,
 	.get_page		= kvm_host_get_page,
 	.put_page		= kvm_s2_put_page,
+	.put_page_rcu		= kvm_s2_put_page_rcu,
 	.page_count		= kvm_host_page_count,
 	.phys_to_virt		= kvm_host_va,
 	.virt_to_phys		= kvm_host_pa,
@@ -1877,7 +1893,6 @@ void kvm_arch_memslots_updated(struct kvm *kvm, u64 gen)
 
 void kvm_arch_flush_shadow_all(struct kvm *kvm)
 {
-	kvm_free_stage2_pgd(&kvm->arch.mmu);
 }
 
 void kvm_arch_flush_shadow_memslot(struct kvm *kvm,

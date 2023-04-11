@@ -988,8 +988,12 @@ static int stage2_unmap_walker(const struct kvm_pgtable_visit_ctx *ctx,
 		mm_ops->dcache_clean_inval_poc(kvm_pte_follow(ctx->old, mm_ops),
 					       kvm_granule_size(ctx->level));
 
-	if (childp)
-		mm_ops->put_page(childp);
+	if (childp) {
+		if (mm_ops->put_page_rcu)
+			mm_ops->put_page_rcu(childp);
+		else
+			mm_ops->put_page(childp);
+	}
 
 	return 0;
 }
