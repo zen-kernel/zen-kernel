@@ -258,6 +258,7 @@ int kvm_async_pf_wakeup_all(struct kvm_vcpu *vcpu);
 #ifdef KVM_ARCH_WANT_MMU_NOTIFIER
 struct kvm_gfn_range {
 	struct kvm_memory_slot *slot;
+	void *args;
 	gfn_t start;
 	gfn_t end;
 	pte_t pte;
@@ -267,6 +268,27 @@ bool kvm_unmap_gfn_range(struct kvm *kvm, struct kvm_gfn_range *range);
 bool kvm_age_gfn(struct kvm *kvm, struct kvm_gfn_range *range);
 bool kvm_test_age_gfn(struct kvm *kvm, struct kvm_gfn_range *range);
 bool kvm_set_spte_gfn(struct kvm *kvm, struct kvm_gfn_range *range);
+bool kvm_should_clear_young(struct kvm_gfn_range *range, gfn_t gfn);
+bool kvm_arch_test_clear_young(struct kvm *kvm, struct kvm_gfn_range *range);
+#endif
+
+/*
+ * Architectures that implement kvm_arch_test_clear_young() should override
+ * kvm_arch_has_test_clear_young().
+ *
+ * kvm_arch_has_test_clear_young() is allowed to return false positive, i.e., it
+ * can return true if kvm_arch_test_clear_young() is supported but disabled due
+ * to some runtime constraint. In this case, kvm_arch_test_clear_young() should
+ * return true; otherwise, it should return false.
+ *
+ * For each young KVM PTE, kvm_arch_test_clear_young() should call
+ * kvm_should_clear_young() to decide whether to clear the accessed bit.
+ */
+#ifndef kvm_arch_has_test_clear_young
+static inline bool kvm_arch_has_test_clear_young(void)
+{
+	return false;
+}
 #endif
 
 enum {
