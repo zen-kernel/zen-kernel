@@ -1088,6 +1088,65 @@ bool kvm_test_age_radix(struct kvm *kvm, struct kvm_memory_slot *memslot,
 	return ref;
 }
 
+bool kvm_test_clear_young_hv(struct kvm *kvm, struct kvm_gfn_range *range)
+{
+	bool err;
+	gfn_t gfn = range->start;
+
+	rcu_read_lock();
+
+	err = !kvm_is_radix(kvm);
+	if (err)
+		goto unlock;
+
+	/*
+	 * Case 1:  This function          kvmppc_switch_mmu_to_hpt()
+	 *
+	 *          rcu_read_lock()
+	 *          Test kvm_is_radix()    kvm->arch.radix = 0
+	 *          Use kvm->arch.pgtable  synchronize_rcu()
+	 *          rcu_read_unlock()
+	 *                                 kvmppc_free_radix()
+	 *
+	 *
+	 * Case 2:  This function          kvmppc_switch_mmu_to_radix()
+	 *
+	 *                                 kvmppc_init_vm_radix()
+	 *                                 smp_wmb()
+	 *          Test kvm_is_radix()    kvm->arch.radix = 1
+	 *          smp_rmb()
+	 *          Use kvm->arch.pgtable
+	 */
+	smp_rmb();
+
+	while (gfn < range->end) {
+		pte_t *ptep;
+		pte_t old, new;
+		unsigned int shift;
+
+		ptep = find_kvm_secondary_pte_unlocked(kvm, gfn * PAGE_SIZE, &shift);
+		if (!ptep)
+			goto next;
+
+		VM_WARN_ON_ONCE(!page_count(virt_to_page(ptep)));
+
+		old = READ_ONCE(*ptep);
+		if (!pte_present(old) || !pte_young(old))
+			goto next;
+
+		new = pte_mkold(old);
+
+		if (kvm_should_clear_young(range, gfn))
+			pte_xchg(ptep, old, new);
+next:
+		gfn += shift ? BIT(shift - PAGE_SHIFT) : 1;
+	}
+unlock:
+	rcu_read_unlock();
+
+	return err;
+}
+
 /* Returns the number of PAGE_SIZE pages that are dirty */
 static int kvm_radix_test_clear_dirty(struct kvm *kvm,
 				struct kvm_memory_slot *memslot, int pagenum)
