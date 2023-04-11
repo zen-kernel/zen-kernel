@@ -1232,6 +1232,40 @@ bool kvm_tdp_mmu_test_age_gfn(struct kvm *kvm, struct kvm_gfn_range *range)
 	return kvm_tdp_mmu_handle_gfn(kvm, range, test_age_gfn);
 }
 
+bool kvm_arch_test_clear_young(struct kvm *kvm, struct kvm_gfn_range *range)
+{
+	struct kvm_mmu_page *root;
+	int offset = ffs(shadow_accessed_mask) - 1;
+
+	if (kvm_shadow_root_allocated(kvm))
+		return true;
+
+	rcu_read_lock();
+
+	list_for_each_entry_rcu(root, &kvm->arch.tdp_mmu_roots, link) {
+		struct tdp_iter iter;
+
+		if (kvm_mmu_page_as_id(root) != range->slot->as_id)
+			continue;
+
+		tdp_root_for_each_leaf_pte(iter, root, range->start, range->end) {
+			u64 *sptep = rcu_dereference(iter.sptep);
+
+			VM_WARN_ON_ONCE(!page_count(virt_to_page(sptep)));
+
+			if (!(iter.old_spte & shadow_accessed_mask))
+				continue;
+
+			if (kvm_should_clear_young(range, iter.gfn))
+				clear_bit(offset, (unsigned long *)sptep);
+		}
+	}
+
+	rcu_read_unlock();
+
+	return false;
+}
+
 static bool set_spte_gfn(struct kvm *kvm, struct tdp_iter *iter,
 			 struct kvm_gfn_range *range)
 {
