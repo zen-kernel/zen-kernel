@@ -424,6 +424,30 @@ int __mmu_notifier_test_young(struct mm_struct *mm,
 	return young;
 }
 
+int __mmu_notifier_test_clear_young(struct mm_struct *mm,
+				    unsigned long start, unsigned long end,
+				    bool clear, unsigned long *bitmap)
+{
+	int idx;
+	struct mmu_notifier *mn;
+	int young = 0;
+
+	idx = srcu_read_lock(&srcu);
+
+	hlist_for_each_entry_srcu(mn, &mm->notifier_subscriptions->list, hlist,
+				  srcu_read_lock_held(&srcu)) {
+		if (mn->ops->test_clear_young)
+			young |= mn->ops->test_clear_young(mn, mm, start, end, clear, bitmap);
+
+		if (young && !clear)
+			break;
+	}
+
+	srcu_read_unlock(&srcu, idx);
+
+	return young;
+}
+
 void __mmu_notifier_change_pte(struct mm_struct *mm, unsigned long address,
 			       pte_t pte)
 {
