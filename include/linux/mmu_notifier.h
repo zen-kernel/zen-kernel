@@ -104,26 +104,6 @@ struct mmu_notifier_ops {
 				 unsigned long start,
 				 unsigned long end);
 
-	/*
-	 * clear_young is a lightweight version of clear_flush_young. Like the
-	 * latter, it is supposed to test-and-clear the young/accessed bitflag
-	 * in the secondary pte, but it may omit flushing the secondary tlb.
-	 */
-	int (*clear_young)(struct mmu_notifier *subscription,
-			   struct mm_struct *mm,
-			   unsigned long start,
-			   unsigned long end);
-
-	/*
-	 * test_young is called to check the young/accessed bitflag in
-	 * the secondary pte. This is used to know if the page is
-	 * frequently used without actually clearing the flag or tearing
-	 * down the secondary mapping on the page.
-	 */
-	int (*test_young)(struct mmu_notifier *subscription,
-			  struct mm_struct *mm,
-			  unsigned long address);
-
 	int (*test_clear_young)(struct mmu_notifier *mn, struct mm_struct *mm,
 				unsigned long start, unsigned long end,
 				bool clear, unsigned long *bitmap);
@@ -393,11 +373,6 @@ extern void __mmu_notifier_release(struct mm_struct *mm);
 extern int __mmu_notifier_clear_flush_young(struct mm_struct *mm,
 					  unsigned long start,
 					  unsigned long end);
-extern int __mmu_notifier_clear_young(struct mm_struct *mm,
-				      unsigned long start,
-				      unsigned long end);
-extern int __mmu_notifier_test_young(struct mm_struct *mm,
-				     unsigned long address);
 extern int __mmu_notifier_test_clear_young(struct mm_struct *mm,
 					   unsigned long start, unsigned long end,
 					   bool clear, unsigned long *bitmap);
@@ -437,7 +412,7 @@ static inline int mmu_notifier_clear_young(struct mm_struct *mm,
 					   unsigned long end)
 {
 	if (mm_has_notifiers(mm))
-		return __mmu_notifier_clear_young(mm, start, end);
+		return __mmu_notifier_test_clear_young(mm, start, end, true, NULL);
 	return 0;
 }
 
@@ -445,7 +420,7 @@ static inline int mmu_notifier_test_young(struct mm_struct *mm,
 					  unsigned long address)
 {
 	if (mm_has_notifiers(mm))
-		return __mmu_notifier_test_young(mm, address);
+		return __mmu_notifier_test_clear_young(mm, address, address + 1, false, NULL);
 	return 0;
 }
 
