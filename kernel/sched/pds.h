@@ -1,15 +1,16 @@
 #define ALT_SCHED_NAME "PDS"
 
 #define MIN_SCHED_NORMAL_PRIO	(32)
+static const u64 RT_MASK = ((1ULL << MIN_SCHED_NORMAL_PRIO) - 1);
+
 #define SCHED_NORMAL_PRIO_NUM	(32)
 #define SCHED_EDGE_DELTA	(SCHED_NORMAL_PRIO_NUM - NICE_WIDTH / 2)
 
 /* PDS assume NORMAL_PRIO_NUM is power of 2 */
-#define NORMAL_PRIO_MOD(x)	((x) & (NORMAL_PRIO_NUM - 1))
 #define SCHED_NORMAL_PRIO_MOD(x)	((x) & (SCHED_NORMAL_PRIO_NUM - 1))
 
-/* 4ms -> shift 22, 2 time slice slots -> shift 23 */
-static int sched_timeslice_shift = 23;
+/* default time slice 4ms -> shift 22, 2 time slice slots -> shift 23 */
+static __read_mostly int sched_timeslice_shift = 23;
 
 /*
  * Common interfaces
@@ -62,12 +63,9 @@ static inline int sched_prio2idx(int sched_prio, struct rq *rq)
 
 static inline int sched_idx2prio(int sched_idx, struct rq *rq)
 {
-	int ret;
-	ret = (sched_idx < MIN_SCHED_NORMAL_PRIO) ? sched_idx :
+	return (sched_idx < MIN_SCHED_NORMAL_PRIO) ?
+		sched_idx :
 		MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(sched_idx - rq->time_edge);
-	/*printk(KERN_INFO "sched: sched_idx2prio edge:%llu, %d -> %d\n", rq->time_edge, sched_idx, ret);*/
-
-	return ret;
 }
 
 static inline void sched_renew_deadline(struct task_struct *p, const struct rq *rq)
@@ -80,8 +78,6 @@ int task_running_nice(struct task_struct *p)
 {
 	return (p->prio > DEFAULT_PRIO);
 }
-
-const u64 RT_MASK = 0xffffffffULL;
 
 static inline void update_rq_time_edge(struct rq *rq)
 {
@@ -100,11 +96,11 @@ static inline void update_rq_time_edge(struct rq *rq)
 
 	/*printk(KERN_INFO "sched: update_rq_time_edge 0x%016lx %llu\n", rq->queue.bitmap[0], delta);*/
 	prio = MIN_SCHED_NORMAL_PRIO;
-	for_each_set_bit_from(prio, &rq->queue.bitmap[0], MIN_SCHED_NORMAL_PRIO + delta)
+	for_each_set_bit_from(prio, rq->queue.bitmap, MIN_SCHED_NORMAL_PRIO + delta)
 		list_splice_tail_init(rq->queue.heads + MIN_SCHED_NORMAL_PRIO +
 				      SCHED_NORMAL_PRIO_MOD(prio + old), &head);
 
-	bitmap_shift_right(&normal[0], &rq->queue.bitmap[0], delta, SCHED_QUEUE_BITS);
+	bitmap_shift_right(normal, rq->queue.bitmap, delta, SCHED_QUEUE_BITS);
 	if (!list_empty(&head)) {
 		struct task_struct *p;
 		u64 idx = MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(now);
@@ -113,11 +109,11 @@ static inline void update_rq_time_edge(struct rq *rq)
 			p->sq_idx = idx;
 
 		list_splice(&head, rq->queue.heads + idx);
-		set_bit(MIN_SCHED_NORMAL_PRIO, &normal[0]);
+		set_bit(MIN_SCHED_NORMAL_PRIO, normal);
 	}
-	bitmap_replace(&rq->queue.bitmap[0], &normal[0], &rq->queue.bitmap[0],
+	bitmap_replace(rq->queue.bitmap, normal, rq->queue.bitmap,
 		       (const unsigned long *)&RT_MASK, SCHED_QUEUE_BITS);
-	/*printk(KERN_INFO "sched: update_rq_time_edge 0x%016lx 0x%016lx", rq->queue.bitmap[0], normal);*/
+
 	if (rq->prio < MIN_SCHED_NORMAL_PRIO || IDLE_TASK_SCHED_PRIO == rq->prio)
 		return;
 
