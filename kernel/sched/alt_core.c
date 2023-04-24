@@ -4524,6 +4524,10 @@ migrate_pending_tasks(struct rq *rq, struct rq *dest_rq, const int dest_cpu)
 	int nr_migrated = 0;
 	int nr_tries = min(rq->nr_running / 2, sysctl_sched_nr_migrate);
 
+	/* WA to check rq->curr is still on rq */
+	if (!task_on_rq_queued(skip))
+		return 0;
+
 	while (skip != rq->idle && nr_tries &&
 	       (p = sched_rq_next_task(skip, rq)) != rq->idle) {
 		skip = sched_rq_next_task(p, rq);
