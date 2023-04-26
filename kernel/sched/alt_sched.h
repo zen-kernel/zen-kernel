@@ -18,15 +18,15 @@
 #ifdef CONFIG_SCHED_BMQ
 /* bits:
  * RT(0-99), (Low prio adj range, nice width, high prio adj range) / 2, cpu idle task */
-#define SCHED_BITS	(MAX_RT_PRIO + NICE_WIDTH / 2 + MAX_PRIORITY_ADJ + 1)
+#define SCHED_LEVELS	(MAX_RT_PRIO + NICE_WIDTH / 2 + MAX_PRIORITY_ADJ + 1)
 #endif
 
 #ifdef CONFIG_SCHED_PDS
-/* bits: RT(0-99), reserved(100-127), NORMAL_PRIO_NUM, cpu idle task */
-#define SCHED_BITS	(MIN_NORMAL_PRIO + NORMAL_PRIO_NUM + 1)
+/* bits: RT(0-24), reserved(25-31), SCHED_NORMAL_PRIO_NUM(32), cpu idle task(1) */
+#define SCHED_LEVELS	(64 + 1)
 #endif /* CONFIG_SCHED_PDS */
 
-#define IDLE_TASK_SCHED_PRIO	(SCHED_BITS - 1)
+#define IDLE_TASK_SCHED_PRIO	(SCHED_LEVELS - 1)
 
 #ifdef CONFIG_SCHED_DEBUG
 # define SCHED_WARN_ON(x)	WARN_ONCE(x, #x)
@@ -111,11 +111,11 @@ static inline int task_on_rq_migrating(struct task_struct *p)
 #define WF_FORK		0x02		/* child wakeup after fork */
 #define WF_MIGRATED	0x04		/* internal use, task got migrated */
 
-#define SCHED_QUEUE_BITS	(SCHED_BITS - 1)
+#define SCHED_QUEUE_BITS	(SCHED_LEVELS - 1)
 
 struct sched_queue {
 	DECLARE_BITMAP(bitmap, SCHED_QUEUE_BITS);
-	struct list_head heads[SCHED_BITS];
+	struct list_head heads[SCHED_LEVELS];
 };
 
 struct rq;
@@ -142,7 +142,7 @@ struct rq {
 #ifdef CONFIG_SCHED_PDS
 	u64			time_edge;
 #endif
-	unsigned long prio;
+	unsigned long		prio;
 
 	/* switch count */
 	u64 nr_switches;
