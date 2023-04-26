@@ -588,7 +588,6 @@ static void update_rq_clock_task(struct rq *rq, s64 delta)
 
 	rq->prev_irq_time += irq_delta;
 	delta -= irq_delta;
-	psi_account_irqtime(rq->curr, irq_delta);
 #endif
 #ifdef CONFIG_PARAVIRT_TIME_ACCOUNTING
 	if (static_key_false((&paravirt_steal_rq_enabled))) {
@@ -769,7 +768,6 @@ unsigned long get_wchan(struct task_struct *p)
  */
 #define __SCHED_DEQUEUE_TASK(p, rq, flags, func)				\
 	sched_info_dequeue(rq, p);						\
-	psi_dequeue(p, flags & DEQUEUE_SLEEP);					\
 										\
 	list_del(&p->sq_node);							\
 	if (list_empty(&rq->queue.heads[p->sq_idx])) { 				\
@@ -779,7 +777,6 @@ unsigned long get_wchan(struct task_struct *p)
 
 #define __SCHED_ENQUEUE_TASK(p, rq, flags)				\
 	sched_info_enqueue(rq, p);					\
-	psi_enqueue(p, flags & ENQUEUE_WAKEUP);				\
 									\
 	p->sq_idx = task_sched_prio_idx(p, rq);				\
 	list_add_tail(&p->sq_node, &rq->queue.heads[p->sq_idx]);	\
@@ -2954,7 +2951,6 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 		}
 
 		wake_flags |= WF_MIGRATED;
-		psi_ttwu_dequeue(p);
 		set_task_cpu(p, cpu);
 	}
 #else
@@ -4827,8 +4823,6 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 		 *   is a RELEASE barrier),
 		 */
 		++*switch_count;
-
-		psi_sched_switch(prev, next, !task_on_rq_queued(prev));
 
 		trace_sched_switch(sched_mode & SM_MASK_PREEMPT, prev, next, prev_state);
 
@@ -7688,8 +7682,6 @@ void __init sched_init(void)
 
 	sched_init_topology_cpumask_early();
 #endif /* SMP */
-
-	psi_init();
 
 	preempt_dynamic_init();
 }
