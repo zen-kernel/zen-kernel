@@ -678,6 +678,7 @@ config TASK_IO_ACCOUNTING
 
 config PSI
 	bool "Pressure stall information tracking"
+	depends on !SCHED_ALT
 	select KERNFS
 	help
 	  Collect metrics that indicate how overcommitted the CPU, memory,
