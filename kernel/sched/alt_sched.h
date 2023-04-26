@@ -3,7 +3,6 @@
 
 #include <linux/context_tracking.h>
 #include <linux/profile.h>
-#include <linux/psi.h>
 #include <linux/stop_machine.h>
 #include <linux/syscalls.h>
 #include <linux/tick.h>
