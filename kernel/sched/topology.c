@@ -2755,5 +2755,10 @@ int sched_numa_find_closest(const struct cpumask *cpus, int cpu)
 {
 	return best_mask_cpu(cpu, cpus);
 }
+
+int sched_numa_find_nth_cpu(const struct cpumask *cpus, int cpu, int node)
+{
+	return cpumask_nth(cpu, cpus);
+}
 #endif /* CONFIG_NUMA */
 #endif
