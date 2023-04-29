@@ -2088,8 +2088,10 @@ long hrtimer_nanosleep(ktime_t rqtp, const enum hrtimer_mode mode,
 	int ret = 0;
 	u64 slack;
 
+#ifndef CONFIG_SCHED_ALT
 	slack = current->timer_slack_ns;
-	if (rt_task(current))
+	if (dl_task(current) || rt_task(current))
+#endif
 		slack = 0;
 
 	hrtimer_init_sleeper_on_stack(&t, clockid, mode);
