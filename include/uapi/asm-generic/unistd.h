@@ -886,8 +886,17 @@ __SYSCALL(__NR_futex_waitv, sys_futex_waitv)
 #define __NR_set_mempolicy_home_node 450
 __SYSCALL(__NR_set_mempolicy_home_node, sys_set_mempolicy_home_node)
 
+#define __NR_process_ksm_enable 451
+__SYSCALL(__NR_process_ksm_enable, sys_process_ksm_enable)
+
+#define __NR_process_ksm_disable 452
+__SYSCALL(__NR_process_ksm_disable, sys_process_ksm_disable)
+
+#define __NR_process_ksm_status 453
+__SYSCALL(__NR_process_ksm_status, sys_process_ksm_status)
+
 #undef __NR_syscalls
-#define __NR_syscalls 451
+#define __NR_syscalls 454
 
 /*
  * 32 bit systems traditionally used different

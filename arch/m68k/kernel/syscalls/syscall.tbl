@@ -450,3 +450,6 @@
 448	common	process_mrelease		sys_process_mrelease
 449	common  futex_waitv                     sys_futex_waitv
 450	common	set_mempolicy_home_node		sys_set_mempolicy_home_node
+451	common	process_ksm_enable		sys_process_ksm_enable
+452	common	process_ksm_disable		sys_process_ksm_disable
+453	common	process_ksm_status		sys_process_ksm_status
