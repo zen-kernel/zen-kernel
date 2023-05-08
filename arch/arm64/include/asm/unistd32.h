@@ -911,6 +911,12 @@ __SYSCALL(__NR_set_mempolicy_home_node, sys_set_mempolicy_home_node)
 __SYSCALL(__NR_cachestat, sys_cachestat)
 #define __NR_fchmodat2 452
 __SYSCALL(__NR_fchmodat2, sys_fchmodat2)
+#define __NR_process_ksm_enable 453
+__SYSCALL(__NR_process_ksm_enable, sys_process_ksm_enable)
+#define __NR_process_ksm_disable 454
+__SYSCALL(__NR_process_ksm_disable, sys_process_ksm_disable)
+#define __NR_process_ksm_status 455
+__SYSCALL(__NR_process_ksm_status, sys_process_ksm_status)
 
 /*
  * Please add new compat syscalls above this comment and update

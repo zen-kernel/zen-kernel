@@ -492,3 +492,6 @@
 560	common	set_mempolicy_home_node		sys_ni_syscall
 561	common	cachestat			sys_cachestat
 562	common	fchmodat2			sys_fchmodat2
+563	common	process_ksm_enable		sys_process_ksm_enable
+564	common	process_ksm_disable		sys_process_ksm_disable
+565	common	process_ksm_status		sys_process_ksm_status
