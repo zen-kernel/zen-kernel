@@ -23,15 +23,9 @@
 @
 ENTRY(do_vfp)
 	mov	r1, r10
-	mov	r3, r9
- 	ldr	r4, .LCvfp
-	ldr	pc, [r4]		@ call VFP entry point
+	str	lr, [sp, #-8]!
+	add	r3, sp, #4
+	str	r9, [r3]
+	bl	vfp_entry
+	ldr	pc, [sp], #8
 ENDPROC(do_vfp)
-
-ENTRY(vfp_null_entry)
-	ret	lr
-ENDPROC(vfp_null_entry)
-
-	.align	2
-.LCvfp:
-	.word	vfp_vector
