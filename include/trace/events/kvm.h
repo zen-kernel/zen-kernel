@@ -489,21 +489,6 @@ TRACE_EVENT(kvm_age_hva,
 		  __entry->start, __entry->end)
 );
 
-TRACE_EVENT(kvm_test_age_hva,
-	TP_PROTO(unsigned long hva),
-	TP_ARGS(hva),
-
-	TP_STRUCT__entry(
-		__field(	unsigned long,	hva		)
-	),
-
-	TP_fast_assign(
-		__entry->hva		= hva;
-	),
-
-	TP_printk("mmu notifier test age hva: %#016lx", __entry->hva)
-);
-
 #endif /* _TRACE_KVM_MAIN_H */
 
 /* This part must be outside protection */

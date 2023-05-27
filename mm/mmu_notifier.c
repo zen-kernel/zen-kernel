@@ -382,44 +382,26 @@ int __mmu_notifier_clear_flush_young(struct mm_struct *mm,
 	return young;
 }
 
-int __mmu_notifier_clear_young(struct mm_struct *mm,
-			       unsigned long start,
-			       unsigned long end)
+int __mmu_notifier_test_clear_young(struct mm_struct *mm,
+				    unsigned long start, unsigned long end,
+				    bool clear, unsigned long *bitmap)
 {
-	struct mmu_notifier *subscription;
-	int young = 0, id;
+	int idx;
+	struct mmu_notifier *mn;
+	int young = 0;
 
-	id = srcu_read_lock(&srcu);
-	hlist_for_each_entry_rcu(subscription,
-				 &mm->notifier_subscriptions->list, hlist,
-				 srcu_read_lock_held(&srcu)) {
-		if (subscription->ops->clear_young)
-			young |= subscription->ops->clear_young(subscription,
-								mm, start, end);
+	idx = srcu_read_lock(&srcu);
+
+	hlist_for_each_entry_srcu(mn, &mm->notifier_subscriptions->list, hlist,
+				  srcu_read_lock_held(&srcu)) {
+		if (mn->ops->test_clear_young)
+			young |= mn->ops->test_clear_young(mn, mm, start, end, clear, bitmap);
+
+		if (young && !clear)
+			break;
 	}
-	srcu_read_unlock(&srcu, id);
 
-	return young;
-}
-
-int __mmu_notifier_test_young(struct mm_struct *mm,
-			      unsigned long address)
-{
-	struct mmu_notifier *subscription;
-	int young = 0, id;
-
-	id = srcu_read_lock(&srcu);
-	hlist_for_each_entry_rcu(subscription,
-				 &mm->notifier_subscriptions->list, hlist,
-				 srcu_read_lock_held(&srcu)) {
-		if (subscription->ops->test_young) {
-			young = subscription->ops->test_young(subscription, mm,
-							      address);
-			if (young)
-				break;
-		}
-	}
-	srcu_read_unlock(&srcu, id);
+	srcu_read_unlock(&srcu, idx);
 
 	return young;
 }

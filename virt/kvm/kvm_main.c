@@ -538,6 +538,7 @@ typedef void (*on_lock_fn_t)(struct kvm *kvm, unsigned long start,
 typedef void (*on_unlock_fn_t)(struct kvm *kvm);
 
 struct kvm_hva_range {
+	void *args;
 	unsigned long start;
 	unsigned long end;
 	pte_t pte;
@@ -546,6 +547,7 @@ struct kvm_hva_range {
 	on_unlock_fn_t on_unlock;
 	bool flush_on_ret;
 	bool may_block;
+	bool lockless;
 };
 
 /*
@@ -599,6 +601,8 @@ static __always_inline int __kvm_handle_hva_range(struct kvm *kvm,
 			hva_end = min(range->end, slot->userspace_addr +
 						  (slot->npages << PAGE_SHIFT));
 
+			gfn_range.args = range->args;
+
 			/*
 			 * To optimize for the likely case where the address
 			 * range is covered by zero or one memslots, don't
@@ -616,7 +620,7 @@ static __always_inline int __kvm_handle_hva_range(struct kvm *kvm,
 			gfn_range.end = hva_to_gfn_memslot(hva_end + PAGE_SIZE - 1, slot);
 			gfn_range.slot = slot;
 
-			if (!locked) {
+			if (!range->lockless && !locked) {
 				locked = true;
 				KVM_MMU_LOCK(kvm);
 				if (!IS_KVM_NULL_FN(range->on_lock))
@@ -625,6 +629,9 @@ static __always_inline int __kvm_handle_hva_range(struct kvm *kvm,
 					break;
 			}
 			ret |= range->handler(kvm, &gfn_range);
+
+			if (range->lockless && ret)
+				break;
 		}
 	}
 
@@ -664,25 +671,6 @@ static __always_inline int kvm_handle_hva_range(struct mmu_notifier *mn,
 	return __kvm_handle_hva_range(kvm, &range);
 }
 
-static __always_inline int kvm_handle_hva_range_no_flush(struct mmu_notifier *mn,
-							 unsigned long start,
-							 unsigned long end,
-							 hva_handler_t handler)
-{
-	struct kvm *kvm = mmu_notifier_to_kvm(mn);
-	const struct kvm_hva_range range = {
-		.start		= start,
-		.end		= end,
-		.pte		= __pte(0),
-		.handler	= handler,
-		.on_lock	= (void *)kvm_null_fn,
-		.on_unlock	= (void *)kvm_null_fn,
-		.flush_on_ret	= false,
-		.may_block	= false,
-	};
-
-	return __kvm_handle_hva_range(kvm, &range);
-}
 static void kvm_mmu_notifier_change_pte(struct mmu_notifier *mn,
 					struct mm_struct *mm,
 					unsigned long address,
@@ -844,37 +832,70 @@ static int kvm_mmu_notifier_clear_flush_young(struct mmu_notifier *mn,
 	return kvm_handle_hva_range(mn, start, end, __pte(0), kvm_age_gfn);
 }
 
-static int kvm_mmu_notifier_clear_young(struct mmu_notifier *mn,
-					struct mm_struct *mm,
-					unsigned long start,
-					unsigned long end)
-{
-	trace_kvm_age_hva(start, end);
+struct test_clear_young_args {
+	unsigned long *bitmap;
+	unsigned long end;
+	bool clear;
+	bool young;
+};
 
-	/*
-	 * Even though we do not flush TLB, this will still adversely
-	 * affect performance on pre-Haswell Intel EPT, where there is
-	 * no EPT Access Bit to clear so that we have to tear down EPT
-	 * tables instead. If we find this unacceptable, we can always
-	 * add a parameter to kvm_age_hva so that it effectively doesn't
-	 * do anything on clear_young.
-	 *
-	 * Also note that currently we never issue secondary TLB flushes
-	 * from clear_young, leaving this job up to the regular system
-	 * cadence. If we find this inaccurate, we might come up with a
-	 * more sophisticated heuristic later.
-	 */
-	return kvm_handle_hva_range_no_flush(mn, start, end, kvm_age_gfn);
+bool kvm_should_clear_young(struct kvm_gfn_range *range, gfn_t gfn)
+{
+	struct test_clear_young_args *args = range->args;
+
+	VM_WARN_ON_ONCE(gfn < range->start || gfn >= range->end);
+
+	args->young = true;
+
+	if (args->bitmap) {
+		int offset = hva_to_gfn_memslot(args->end - 1, range->slot) - gfn;
+
+		if (args->clear)
+			return test_bit(offset, args->bitmap);
+
+		__set_bit(offset, args->bitmap);
+	}
+
+	return args->clear;
 }
 
-static int kvm_mmu_notifier_test_young(struct mmu_notifier *mn,
-				       struct mm_struct *mm,
-				       unsigned long address)
+static int kvm_mmu_notifier_test_clear_young(struct mmu_notifier *mn, struct mm_struct *mm,
+					     unsigned long start, unsigned long end,
+					     bool clear, unsigned long *bitmap)
 {
-	trace_kvm_test_age_hva(address);
+	struct kvm *kvm = mmu_notifier_to_kvm(mn);
+	struct kvm_hva_range range = {
+		.start		= start,
+		.end		= end,
+		.on_lock	= (void *)kvm_null_fn,
+		.on_unlock	= (void *)kvm_null_fn,
+	};
 
-	return kvm_handle_hva_range_no_flush(mn, address, address + 1,
-					     kvm_test_age_gfn);
+	trace_kvm_age_hva(start, end);
+
+	if (kvm_arch_has_test_clear_young()) {
+		struct test_clear_young_args args = {
+			.bitmap	= bitmap,
+			.end	= end,
+			.clear	= clear,
+		};
+
+		range.args = &args;
+		range.lockless = true;
+		range.handler = kvm_arch_test_clear_young;
+
+		if (!__kvm_handle_hva_range(kvm, &range))
+			return args.young ? MMU_NOTIFIER_RANGE_LOCKLESS : 0;
+	}
+
+	if (bitmap)
+		return 0;
+
+	range.args = NULL;
+	range.lockless = false;
+	range.handler = clear ? kvm_age_gfn : kvm_test_age_gfn;
+
+	return __kvm_handle_hva_range(kvm, &range) ? MMU_NOTIFIER_RANGE_YOUNG : 0;
 }
 
 static void kvm_mmu_notifier_release(struct mmu_notifier *mn,
@@ -893,8 +914,7 @@ static const struct mmu_notifier_ops kvm_mmu_notifier_ops = {
 	.invalidate_range_start	= kvm_mmu_notifier_invalidate_range_start,
 	.invalidate_range_end	= kvm_mmu_notifier_invalidate_range_end,
 	.clear_flush_young	= kvm_mmu_notifier_clear_flush_young,
-	.clear_young		= kvm_mmu_notifier_clear_young,
-	.test_young		= kvm_mmu_notifier_test_young,
+	.test_clear_young	= kvm_mmu_notifier_test_clear_young,
 	.change_pte		= kvm_mmu_notifier_change_pte,
 	.release		= kvm_mmu_notifier_release,
 };
