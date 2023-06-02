@@ -774,16 +774,6 @@ config CRYPTO_XTS
 	  implementation currently can't handle a sectorsize which is not a
 	  multiple of 16 bytes.
 
-config CRYPTO_XTS_AES_SYNC
-	tristate "XTS AES synchronous implementation"
-	depends on X86 && 64BIT
-	select CRYPTO_AES
-	select CRYPTO_AES_NI_INTEL
-	help
-	  A synchronous AES-XTS implementaion, which uses AES NI as a
-	  backend implementation and falls back to generic implementation,
-	  when FPU is not usable.
-
 config CRYPTO_NHPOLY1305
 	tristate
 	select CRYPTO_HASH
