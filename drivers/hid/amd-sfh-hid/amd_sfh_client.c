@@ -25,6 +25,9 @@ void amd_sfh_set_report(struct hid_device *hid, int report_id,
 	struct amdtp_cl_data *cli_data = hid_data->cli_data;
 	int i;
 
+	if (!cli_data->is_any_sensor_enabled)
+		return;
+
 	for (i = 0; i < cli_data->num_hid_devices; i++) {
 		if (cli_data->hid_sensor_hubs[i] == hid) {
 			cli_data->cur_hid_dev = i;
@@ -40,6 +43,9 @@ int amd_sfh_get_report(struct hid_device *hid, int report_id, int report_type)
 	struct amdtp_cl_data *cli_data = hid_data->cli_data;
 	struct request_list *req_list = &cli_data->req_list;
 	int i;
+
+	if (!cli_data->is_any_sensor_enabled)
+		return -ENODEV;
 
 	for (i = 0; i < cli_data->num_hid_devices; i++) {
 		if (cli_data->hid_sensor_hubs[i] == hid) {
