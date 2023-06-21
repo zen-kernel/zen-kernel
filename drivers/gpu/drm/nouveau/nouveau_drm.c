@@ -137,16 +137,10 @@ nouveau_name(struct drm_device *dev)
 static inline bool
 nouveau_cli_work_ready(struct dma_fence *fence)
 {
-	unsigned long flags;
-	bool ret = true;
-	spin_lock_irqsave(fence->lock, flags);
-	if (!dma_fence_is_signaled_locked(fence))
-		ret = false;
-	spin_unlock_irqrestore(fence->lock, flags);
-
-	if (ret == true)
-		dma_fence_put(fence);
-	return ret;
+	if (!dma_fence_is_signaled(fence))
+		return false;
+	dma_fence_put(fence);
+	return true;
 }
 
 static void
