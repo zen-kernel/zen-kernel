@@ -490,3 +490,6 @@
 558	common	process_mrelease		sys_process_mrelease
 559	common  futex_waitv                     sys_futex_waitv
 560	common	set_mempolicy_home_node		sys_ni_syscall
+561	common	process_ksm_enable		sys_process_ksm_enable
+562	common	process_ksm_disable		sys_process_ksm_disable
+563	common	process_ksm_status		sys_process_ksm_status

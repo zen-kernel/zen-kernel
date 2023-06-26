@@ -907,6 +907,12 @@ __SYSCALL(__NR_process_mrelease, sys_process_mrelease)
 __SYSCALL(__NR_futex_waitv, sys_futex_waitv)
 #define __NR_set_mempolicy_home_node 450
 __SYSCALL(__NR_set_mempolicy_home_node, sys_set_mempolicy_home_node)
+#define __NR_process_ksm_enable 451
+__SYSCALL(__NR_process_ksm_enable, sys_process_ksm_enable)
+#define __NR_process_ksm_disable 452
+__SYSCALL(__NR_process_ksm_disable, sys_process_ksm_disable)
+#define __NR_process_ksm_status 453
+__SYSCALL(__NR_process_ksm_status, sys_process_ksm_status)
 
 /*
  * Please add new compat syscalls above this comment and update
