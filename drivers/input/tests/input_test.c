@@ -43,8 +43,8 @@ static void input_test_exit(struct kunit *test)
 {
 	struct input_dev *input_dev = test->priv;
 
-	input_unregister_device(input_dev);
-	input_free_device(input_dev);
+	if (input_dev)
+		input_unregister_device(input_dev);
 }
 
 static void input_test_poll(struct input_dev *input) { }
@@ -87,7 +87,7 @@ static void input_test_timestamp(struct kunit *test)
 static void input_test_match_device_id(struct kunit *test)
 {
 	struct input_dev *input_dev = test->priv;
-	struct input_device_id id;
+	struct input_device_id id = { 0 };
 
 	/*
 	 * Must match when the input device bus, vendor, product, version
