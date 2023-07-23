@@ -1221,11 +1221,13 @@ static u32 vsc9959_tas_tc_max_sdu(struct tc_taprio_qopt_offload *taprio, int tc)
 static void vsc9959_tas_guard_bands_update(struct ocelot *ocelot, int port)
 {
 	struct ocelot_port *ocelot_port = ocelot->ports[port];
+	struct ocelot_mm_state *mm = &ocelot->mm[port];
 	struct tc_taprio_qopt_offload *taprio;
 	u64 min_gate_len[OCELOT_NUM_TC];
+	u32 val, maxlen, add_frag_size;
+	u64 needed_min_frag_time_ps;
 	int speed, picos_per_byte;
 	u64 needed_bit_time_ps;
-	u32 val, maxlen;
 	u8 tas_speed;
 	int tc;
 
@@ -1265,9 +1267,18 @@ static void vsc9959_tas_guard_bands_update(struct ocelot *ocelot, int port)
 	 */
 	needed_bit_time_ps = (u64)(maxlen + 24) * picos_per_byte;
 
+	/* Preemptible TCs don't need to pass a full MTU, the port will
+	 * automatically emit a HOLD request when a preemptible TC gate closes
+	 */
+	val = ocelot_read_rix(ocelot, QSYS_PREEMPTION_CFG, port);
+	add_frag_size = QSYS_PREEMPTION_CFG_MM_ADD_FRAG_SIZE_X(val);
+	needed_min_frag_time_ps = picos_per_byte *
+		(u64)(24 + 2 * ethtool_mm_frag_size_add_to_min(add_frag_size));
+
 	dev_dbg(ocelot->dev,
-		"port %d: max frame size %d needs %llu ps at speed %d\n",
-		port, maxlen, needed_bit_time_ps, speed);
+		"port %d: max frame size %d needs %llu ps, %llu ps for mPackets at speed %d\n",
+		port, maxlen, needed_bit_time_ps, needed_min_frag_time_ps,
+		speed);
 
 	vsc9959_tas_min_gate_lengths(taprio, min_gate_len);
 
@@ -1281,7 +1292,9 @@ static void vsc9959_tas_guard_bands_update(struct ocelot *ocelot, int port)
 		remaining_gate_len_ps =
 			vsc9959_tas_remaining_gate_len_ps(min_gate_len[tc]);
 
-		if (remaining_gate_len_ps > needed_bit_time_ps) {
+		if ((mm->active_preemptible_tcs & BIT(tc)) ?
+		    remaining_gate_len_ps > needed_min_frag_time_ps :
+		    remaining_gate_len_ps > needed_bit_time_ps) {
 			/* Setting QMAXSDU_CFG to 0 disables oversized frame
 			 * dropping.
 			 */
@@ -1423,7 +1436,7 @@ static int vsc9959_qos_port_tas_set(struct ocelot *ocelot, int port,
 
 	mutex_lock(&ocelot->tas_lock);
 
-	if (!taprio->enable) {
+	if (taprio->cmd == TAPRIO_CMD_DESTROY) {
 		ocelot_port_mqprio(ocelot, port, &taprio->mqprio);
 		ocelot_rmw_rix(ocelot, 0, QSYS_TAG_CONFIG_ENABLE,
 			       QSYS_TAG_CONFIG, port);
@@ -1435,6 +1448,9 @@ static int vsc9959_qos_port_tas_set(struct ocelot *ocelot, int port,
 
 		mutex_unlock(&ocelot->tas_lock);
 		return 0;
+	} else if (taprio->cmd != TAPRIO_CMD_REPLACE) {
+		ret = -EOPNOTSUPP;
+		goto err_unlock;
 	}
 
 	ret = ocelot_port_mqprio(ocelot, port, &taprio->mqprio);
@@ -2600,6 +2616,7 @@ static const struct ocelot_ops vsc9959_ops = {
 	.cut_through_fwd	= vsc9959_cut_through_fwd,
 	.tas_clock_adjust	= vsc9959_tas_clock_adjust,
 	.update_stats		= vsc9959_update_stats,
+	.tas_guard_bands_update	= vsc9959_tas_guard_bands_update,
 };
 
 static const struct felix_info felix_info_vsc9959 = {
@@ -2625,7 +2642,6 @@ static const struct felix_info felix_info_vsc9959 = {
 	.port_modes		= vsc9959_port_modes,
 	.port_setup_tc		= vsc9959_port_setup_tc,
 	.port_sched_speed_set	= vsc9959_sched_speed_set,
-	.tas_guard_bands_update	= vsc9959_tas_guard_bands_update,
 };
 
 /* The INTB interrupt is shared between for PTP TX timestamp availability
