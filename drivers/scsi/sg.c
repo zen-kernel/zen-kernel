@@ -1496,6 +1496,11 @@ sg_add_device(struct device *cl_dev)
 	int error;
 	unsigned long iflags;
 
+	if (!blk_get_queue(scsidp->request_queue)) {
+		pr_warn("%s: get scsi_device queue failed\n", __func__);
+		return -ENODEV;
+	}
+
 	error = -ENOMEM;
 	cdev = cdev_alloc();
 	if (!cdev) {
@@ -1553,6 +1558,7 @@ cdev_add_err:
 out:
 	if (cdev)
 		cdev_del(cdev);
+	blk_put_queue(scsidp->request_queue);
 	return error;
 }
 
@@ -1560,12 +1566,16 @@ static void
 sg_device_destroy(struct kref *kref)
 {
 	struct sg_device *sdp = container_of(kref, struct sg_device, d_ref);
+	struct request_queue *q = sdp->device->request_queue;
 	unsigned long flags;
 
 	/* CAUTION!  Note that the device can still be found via idr_find()
 	 * even though the refcount is 0.  Therefore, do idr_remove() BEFORE
 	 * any other cleanup.
 	 */
+
+	blk_trace_remove(q);
+	blk_put_queue(q);
 
 	write_lock_irqsave(&sg_index_lock, flags);
 	idr_remove(&sg_index_idr, sdp->index);
