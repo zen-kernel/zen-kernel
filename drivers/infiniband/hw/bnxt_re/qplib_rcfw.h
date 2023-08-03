@@ -67,6 +67,8 @@ static inline void bnxt_qplib_rcfw_cmd_prep(struct cmdq_base *req,
 	req->cmd_size = cmd_size;
 }
 
+/* Shadow queue depth for non blocking command */
+#define RCFW_CMD_NON_BLOCKING_SHADOW_QD	64
 #define RCFW_CMD_WAIT_TIME_MS		20000 /* 20 Seconds timeout */
 
 /* CMDQ elements */
@@ -87,6 +89,26 @@ static inline u32 bnxt_qplib_cmdqe_npages(u32 depth)
 static inline u32 bnxt_qplib_cmdqe_page_size(u32 depth)
 {
 	return (bnxt_qplib_cmdqe_npages(depth) * PAGE_SIZE);
+}
+
+/* Get the number of command units required for the req. The
+ * function returns correct value only if called before
+ * setting using bnxt_qplib_set_cmd_slots
+ */
+static inline u32 bnxt_qplib_get_cmd_slots(struct cmdq_base *req)
+{
+	u32 cmd_units = 0;
+
+	if (HAS_TLV_HEADER(req)) {
+		struct roce_tlv *tlv_req = (struct roce_tlv *)req;
+
+		cmd_units = tlv_req->total_size;
+	} else {
+		cmd_units = (req->cmd_size + BNXT_QPLIB_CMDQE_UNITS - 1) /
+			    BNXT_QPLIB_CMDQE_UNITS;
+	}
+
+	return cmd_units;
 }
 
 static inline u32 bnxt_qplib_set_cmd_slots(struct cmdq_base *req)
@@ -132,6 +154,8 @@ typedef int (*aeq_handler_t)(struct bnxt_qplib_rcfw *, void *, void *);
 struct bnxt_qplib_crsqe {
 	struct creq_qp_event	*resp;
 	u32			req_size;
+	/* Free slots at the time of submission */
+	u32			free_slots;
 };
 
 struct bnxt_qplib_rcfw_sbuf {
@@ -201,6 +225,8 @@ struct bnxt_qplib_rcfw {
 	u64 oos_prev;
 	u32 init_oos_stats;
 	u32 cmdq_depth;
+	atomic_t rcfw_intr_enabled;
+	struct semaphore rcfw_inflight;
 };
 
 struct bnxt_qplib_cmdqmsg {
