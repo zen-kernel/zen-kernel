@@ -5576,6 +5576,7 @@ static int __sched_setscheduler(struct task_struct *p,
 	struct balance_callback *head;
 	unsigned long flags;
 	struct rq *rq;
+	bool cpuset_locked = false;
 	int reset_on_fork;
 	raw_spinlock_t *lock;
 
@@ -5627,8 +5628,10 @@ recheck:
 			return retval;
 	}
 
-	if (pi)
-		cpuset_read_lock();
+	if (pi) {
+		cpuset_locked = true;
+		cpuset_lock();
+	}
 
 	/*
 	 * Make sure no PI-waiters arrive (or leave) while we are
@@ -5675,8 +5678,8 @@ change:
 		policy = oldpolicy = -1;
 		__task_access_unlock(p, lock);
 		raw_spin_unlock_irqrestore(&p->pi_lock, flags);
-		if (pi)
-			cpuset_read_unlock();
+		if (cpuset_locked)
+			cpuset_unlock();
 		goto recheck;
 	}
 
@@ -5708,7 +5711,8 @@ change:
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 
 	if (pi) {
-		cpuset_read_unlock();
+		if (cpuset_locked)
+			cpuset_unlock();
 		rt_mutex_adjust_pi(p);
 	}
 
@@ -5721,8 +5725,8 @@ change:
 unlock:
 	__task_access_unlock(p, lock);
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
-	if (pi)
-		cpuset_read_unlock();
+	if (cpuset_locked)
+		cpuset_unlock();
 	return retval;
 }
 
