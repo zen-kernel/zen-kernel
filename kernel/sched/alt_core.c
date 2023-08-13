@@ -7340,8 +7340,10 @@ static inline void balance_hotplug_wait(void)
 
 static void set_rq_offline(struct rq *rq)
 {
-	if (rq->online)
+	if (rq->online) {
+		update_rq_clock(rq);
 		rq->online = false;
+	}
 }
 
 static void set_rq_online(struct rq *rq)
@@ -7465,7 +7467,6 @@ int sched_cpu_deactivate(unsigned int cpu)
 	synchronize_rcu();
 
 	raw_spin_lock_irqsave(&rq->lock, flags);
-	update_rq_clock(rq);
 	set_rq_offline(rq);
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
 
