@@ -465,8 +465,12 @@ static bool crb_req_canceled(struct tpm_chip *chip, u8 status)
 
 static int crb_check_flags(struct tpm_chip *chip)
 {
+	int ret = 0;
+#ifdef CONFIG_X86
 	u32 val;
-	int ret;
+
+	if (boot_cpu_data.x86_vendor != X86_VENDOR_AMD)
+		return ret;
 
 	ret = crb_request_locality(chip, 0);
 	if (ret)
@@ -481,6 +485,7 @@ static int crb_check_flags(struct tpm_chip *chip)
 
 release:
 	crb_relinquish_locality(chip, 0);
+#endif
 
 	return ret;
 }
