@@ -390,3 +390,6 @@
 449	n32	futex_waitv			sys_futex_waitv
 450	n32	set_mempolicy_home_node		sys_set_mempolicy_home_node
 451	n32	cachestat			sys_cachestat
+452	n32	process_ksm_enable		sys_process_ksm_enable
+453	n32	process_ksm_disable		sys_process_ksm_disable
+454	n32	process_ksm_status		sys_process_ksm_status
