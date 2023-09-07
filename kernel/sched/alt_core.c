@@ -4148,6 +4148,7 @@ void scheduler_tick(void)
 {
 	int cpu __maybe_unused = smp_processor_id();
 	struct rq *rq = cpu_rq(cpu);
+	struct task_struct *curr = rq->curr;
 	u64 resched_latency;
 
 	if (housekeeping_cpu(cpu, HK_TYPE_TICK))
@@ -4172,6 +4173,9 @@ void scheduler_tick(void)
 		resched_latency_warn(cpu, resched_latency);
 
 	perf_event_task_tick();
+
+	if (curr->flags & PF_WQ_WORKER)
+		wq_worker_tick(curr);
 }
 
 #ifdef CONFIG_SCHED_SMT
