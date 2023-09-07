@@ -1758,7 +1758,6 @@ static struct rq *__migrate_task(struct rq *rq, struct task_struct *p, int
 	if (!is_cpu_allowed(p, dest_cpu))
 		return rq;
 
-	update_rq_clock(rq);
 	return move_queued_task(rq, p, dest_cpu);
 }
 
@@ -1793,8 +1792,10 @@ static int migration_cpu_stop(void *data)
 	 * holding rq->lock, if p->on_rq == 0 it cannot get enqueued because
 	 * we're holding p->pi_lock.
 	 */
-	if (task_rq(p) == rq && task_on_rq_queued(p))
+	if (task_rq(p) == rq && task_on_rq_queued(p)) {
+		update_rq_clock(rq);
 		rq = __migrate_task(rq, p, arg->dest_cpu);
+	}
 	raw_spin_unlock(&rq->lock);
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 
