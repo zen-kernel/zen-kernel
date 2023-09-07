@@ -231,7 +231,6 @@ static void sugov_get_util(struct sugov_cpu *sg_cpu, unsigned long boost)
 		util += cpu_util_cfs_boost(sg_cpu->cpu);
 	util = effective_cpu_util(sg_cpu->cpu, util, &min, &max);
 	util = max(util, boost);
-#ifndef CONFIG_SCHED_ALT
 	sg_cpu->bw_min = min;
 	sg_cpu->util = sugov_effective_cpu_perf(sg_cpu->cpu, util, min, max);
 #else /* CONFIG_SCHED_ALT */
