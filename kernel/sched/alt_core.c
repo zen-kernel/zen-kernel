@@ -5661,9 +5661,6 @@ recheck:
 			return retval;
 	}
 
-	if (pi)
-		cpuset_read_lock();
-
 	/*
 	 * Make sure no PI-waiters arrive (or leave) while we are
 	 * changing the priority of the task:
@@ -5709,8 +5706,6 @@ change:
 		policy = oldpolicy = -1;
 		__task_access_unlock(p, lock);
 		raw_spin_unlock_irqrestore(&p->pi_lock, flags);
-		if (pi)
-			cpuset_read_unlock();
 		goto recheck;
 	}
 
@@ -5741,10 +5736,8 @@ change:
 	__task_access_unlock(p, lock);
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 
-	if (pi) {
-		cpuset_read_unlock();
+	if (pi)
 		rt_mutex_adjust_pi(p);
-	}
 
 	/* Run balance callbacks after we've adjusted the PI chain: */
 	balance_callbacks(rq, head);
@@ -5755,8 +5748,6 @@ change:
 unlock:
 	__task_access_unlock(p, lock);
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
-	if (pi)
-		cpuset_read_unlock();
 	return retval;
 }
 
