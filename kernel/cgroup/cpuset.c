@@ -3245,6 +3245,7 @@ static int cpuset_can_attach(struct cgroup_taskset *tset)
 				goto out_unlock;
 		}
 
+#ifndef CONFIG_SCHED_ALT
 		if (dl_task(task)) {
 			/*
 			 * Count all migrating DL tasks for cpuset task accounting.
@@ -3256,6 +3257,7 @@ static int cpuset_can_attach(struct cgroup_taskset *tset)
 			if (dl_task_needs_bw_move(task, cs->effective_cpus))
 				cs->sum_migrate_dl_bw += task->dl.dl_bw;
 		}
+#endif
 	}
 
 	/*
@@ -3294,7 +3296,6 @@ static void cpuset_cancel_attach(struct cgroup_taskset *tset)
 	dec_attach_in_progress_locked();
 	clear_attach_data(&src_cs_head, true);
 	clear_attach_data(&dst_cs_head, true);
-	mutex_unlock(&cpuset_mutex);
 }
 
 /*
