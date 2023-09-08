@@ -622,7 +622,7 @@ static inline void update_rq_clock(struct rq *rq)
 	if (unlikely(delta <= 0))
 		return;
 	rq->clock += delta;
-	update_rq_time_edge(rq);
+	sched_update_rq_clock(rq);
 	update_rq_clock_task(rq, delta);
 }
 
@@ -3009,6 +3009,8 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 		set_task_cpu(p, cpu);
 	}
 #else
+	sched_task_ttwu(p);
+
 	cpu = task_cpu(p);
 #endif /* CONFIG_SMP */
 
@@ -4166,7 +4168,6 @@ void scheduler_tick(void)
 
 	task_tick_mm_cid(rq, rq->curr);
 
-	rq->last_tick = rq->clock;
 	raw_spin_unlock(&rq->lock);
 
 	if (sched_feat(LATENCY_WARN) && resched_latency)
@@ -4658,6 +4659,16 @@ static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 }
 #endif
 
+static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
+{
+	p->time_slice = sched_timeslice_ns;
+
+	sched_task_renew(p, rq);
+
+	if (SCHED_FIFO != p->policy && task_on_rq_queued(p))
+		requeue_task(p, rq, task_sched_prio_idx(p, rq));
+}
+
 /*
  * Timeslices below RESCHED_NS are considered as good as expired as there's no
  * point rescheduling when there's so little time left.
@@ -4866,8 +4877,10 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 #endif
 
 	if (likely(prev != next)) {
-		next->last_ran = rq->clock_task;
+#ifdef CONFIG_SCHED_BMQ
 		rq->last_ts_switch = rq->clock;
+#endif
+		next->last_ran = rq->clock_task;
 
 		/*printk(KERN_INFO "sched: %px -> %px\n", prev, next);*/
 		rq->nr_switches++;
