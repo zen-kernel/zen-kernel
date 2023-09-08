@@ -14,16 +14,16 @@
 
 #include "cpupri.h"
 
-#ifdef CONFIG_SCHED_BMQ
-/* bits:
- * RT(0-99), (Low prio adj range, nice width, high prio adj range) / 2, cpu idle task */
-#define SCHED_LEVELS	(MAX_RT_PRIO + NICE_WIDTH / 2 + MAX_PRIORITY_ADJ + 1)
-#endif
-
-#ifdef CONFIG_SCHED_PDS
-/* bits: RT(0-24), reserved(25-31), SCHED_NORMAL_PRIO_NUM(32), cpu idle task(1) */
-#define SCHED_LEVELS	(64 + 1)
-#endif /* CONFIG_SCHED_PDS */
+#define MIN_SCHED_NORMAL_PRIO	(32)
+/*
+ * levels: RT(0-24), reserved(25-31), NORMAL(32-63), cpu idle task(64)
+ *
+ * -- BMQ --
+ * NORMAL: (lower boost range 12, NICE_WIDTH 40, higher boost range 12) / 2
+ * -- PDS --
+ * NORMAL: SCHED_EDGE_DELTA + ((NICE_WIDTH 40) / 2)
+ */
+#define SCHED_LEVELS		(64 + 1)
 
 #define IDLE_TASK_SCHED_PRIO	(SCHED_LEVELS - 1)
 
@@ -131,11 +131,13 @@ struct balance_callback {
  */
 struct rq {
 	/* runqueue lock: */
-	raw_spinlock_t lock;
+	raw_spinlock_t			lock;
 
-	struct task_struct __rcu *curr;
-	struct task_struct *idle, *stop, *skip;
-	struct mm_struct *prev_mm;
+	struct task_struct __rcu	*curr;
+	struct task_struct		*idle;
+	struct task_struct		*stop;
+	struct task_struct		*skip;
+	struct mm_struct		*prev_mm;
 
 	struct sched_queue	queue;
 #ifdef CONFIG_SCHED_PDS
@@ -199,9 +201,12 @@ struct rq {
 	unsigned long calc_load_update;
 	long calc_load_active;
 
-	u64 clock, last_tick;
-	u64 last_ts_switch;
-	u64 clock_task;
+	/* Ensure that all clocks are in the same cache line */
+	u64			clock ____cacheline_aligned;
+	u64			clock_task;
+#ifdef CONFIG_SCHED_BMQ
+	u64			last_ts_switch;
+#endif
 
 	unsigned int  nr_running;
 	unsigned long nr_uninterruptible;
