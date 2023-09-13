@@ -164,7 +164,7 @@ static struct input_dev *shield_allocate_input_dev(struct hid_device *hdev,
 	idev->id.product = hdev->product;
 	idev->id.version = hdev->version;
 	idev->uniq = hdev->uniq;
-	idev->name = devm_kasprintf(&idev->dev, GFP_KERNEL, "%s %s", hdev->name,
+	idev->name = devm_kasprintf(&hdev->dev, GFP_KERNEL, "%s %s", hdev->name,
 				    name_suffix);
 	if (!idev->name)
 		goto err_name;
@@ -513,21 +513,22 @@ static struct shield_device *thunderstrike_create(struct hid_device *hdev)
 
 	hid_set_drvdata(hdev, shield_dev);
 
+	ts->haptics_dev = shield_haptics_create(shield_dev, thunderstrike_play_effect);
+	if (IS_ERR(ts->haptics_dev))
+		return ERR_CAST(ts->haptics_dev);
+
 	ret = thunderstrike_led_create(ts);
 	if (ret) {
 		hid_err(hdev, "Failed to create Thunderstrike LED instance\n");
-		return ERR_PTR(ret);
-	}
-
-	ts->haptics_dev = shield_haptics_create(shield_dev, thunderstrike_play_effect);
-	if (IS_ERR(ts->haptics_dev))
 		goto err;
+	}
 
 	hid_info(hdev, "Registered Thunderstrike controller\n");
 	return shield_dev;
 
 err:
-	led_classdev_unregister(&ts->led_dev);
+	if (ts->haptics_dev)
+		input_unregister_device(ts->haptics_dev);
 	return ERR_CAST(ts->haptics_dev);
 }
 

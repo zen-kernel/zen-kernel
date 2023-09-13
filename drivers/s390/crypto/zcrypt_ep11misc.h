@@ -29,14 +29,7 @@ struct ep11keyblob {
 	union {
 		u8 session[32];
 		/* only used for PKEY_TYPE_EP11: */
-		struct {
-			u8  type;      /* 0x00 (TOKTYPE_NON_CCA) */
-			u8  res0;      /* unused */
-			u16 len;       /* total length in bytes of this blob */
-			u8  version;   /* 0x03 (TOKVER_EP11_AES) */
-			u8  res1;      /* unused */
-			u16 keybitlen; /* clear key bit len, 0 for unknown */
-		} head;
+		struct ep11kblob_header head;
 	};
 	u8  wkvp[16];  /* wrapping key verification pattern */
 	u64 attr;      /* boolean key attributes */
@@ -54,6 +47,12 @@ static inline bool is_ep11_keyblob(const u8 *key)
 
 	return (kb->version == EP11_STRUCT_MAGIC);
 }
+
+/*
+ * For valid ep11 keyblobs, returns a reference to the wrappingkey verification
+ * pattern. Otherwise NULL.
+ */
+const u8 *ep11_kb_wkvp(const u8 *kblob, size_t kbloblen);
 
 /*
  * Simple check if the key blob is a valid EP11 AES key blob with header.
@@ -114,13 +113,14 @@ int ep11_get_domain_info(u16 card, u16 domain, struct ep11_domain_info *info);
  * Generate (random) EP11 AES secure key.
  */
 int ep11_genaeskey(u16 card, u16 domain, u32 keybitsize, u32 keygenflags,
-		   u8 *keybuf, size_t *keybufsize);
+		   u8 *keybuf, size_t *keybufsize, u32 keybufver);
 
 /*
  * Generate EP11 AES secure key with given clear key value.
  */
 int ep11_clr2keyblob(u16 cardnr, u16 domain, u32 keybitsize, u32 keygenflags,
-		     const u8 *clrkey, u8 *keybuf, size_t *keybufsize);
+		     const u8 *clrkey, u8 *keybuf, size_t *keybufsize,
+		     u32 keytype);
 
 /*
  * Build a list of ep11 apqns meeting the following constrains:
