@@ -423,11 +423,10 @@ static inline void btrfs_cleanup_ordered_extents(struct btrfs_inode *inode,
 
 	while (index <= end_index) {
 		/*
-		 * For locked page, we will call end_extent_writepage() on it
-		 * in run_delalloc_range() for the error handling.  That
-		 * end_extent_writepage() function will call
-		 * btrfs_mark_ordered_io_finished() to clear page Ordered and
-		 * run the ordered extent accounting.
+		 * For locked page, we will call btrfs_mark_ordered_io_finished
+		 * through btrfs_mark_ordered_io_finished() on it
+		 * in run_delalloc_range() for the error handling, which will
+		 * clear page Ordered and run the ordered extent accounting.
 		 *
 		 * Here we can't just clear the Ordered bit, or
 		 * btrfs_mark_ordered_io_finished() would skip the accounting
@@ -1157,11 +1156,13 @@ static int submit_uncompressed_range(struct btrfs_inode *inode,
 		btrfs_cleanup_ordered_extents(inode, locked_page, start, end - start + 1);
 		if (locked_page) {
 			const u64 page_start = page_offset(locked_page);
-			const u64 page_end = page_start + PAGE_SIZE - 1;
 
 			set_page_writeback(locked_page);
 			end_page_writeback(locked_page);
-			end_extent_writepage(locked_page, ret, page_start, page_end);
+			btrfs_mark_ordered_io_finished(inode, locked_page,
+						       page_start, PAGE_SIZE,
+						       !ret);
+			mapping_set_error(locked_page->mapping, ret);
 			unlock_page(locked_page);
 		}
 		return ret;
@@ -2840,22 +2841,18 @@ struct btrfs_writepage_fixup {
 
 static void btrfs_writepage_fixup_worker(struct btrfs_work *work)
 {
-	struct btrfs_writepage_fixup *fixup;
+	struct btrfs_writepage_fixup *fixup =
+		container_of(work, struct btrfs_writepage_fixup, work);
 	struct btrfs_ordered_extent *ordered;
 	struct extent_state *cached_state = NULL;
 	struct extent_changeset *data_reserved = NULL;
-	struct page *page;
-	struct btrfs_inode *inode;
-	u64 page_start;
-	u64 page_end;
+	struct page *page = fixup->page;
+	struct btrfs_inode *inode = fixup->inode;
+	struct btrfs_fs_info *fs_info = inode->root->fs_info;
+	u64 page_start = page_offset(page);
+	u64 page_end = page_offset(page) + PAGE_SIZE - 1;
 	int ret = 0;
 	bool free_delalloc_space = true;
-
-	fixup = container_of(work, struct btrfs_writepage_fixup, work);
-	page = fixup->page;
-	inode = fixup->inode;
-	page_start = page_offset(page);
-	page_end = page_offset(page) + PAGE_SIZE - 1;
 
 	/*
 	 * This is similar to page_mkwrite, we need to reserve the space before
@@ -2949,10 +2946,11 @@ out_page:
 		 * to reflect the errors and clean the page.
 		 */
 		mapping_set_error(page->mapping, ret);
-		end_extent_writepage(page, ret, page_start, page_end);
+		btrfs_mark_ordered_io_finished(inode, page, page_start,
+					       PAGE_SIZE, !ret);
 		clear_page_dirty_for_io(page);
 	}
-	btrfs_page_clear_checked(inode->root->fs_info, page, page_start, PAGE_SIZE);
+	btrfs_page_clear_checked(fs_info, page, page_start, PAGE_SIZE);
 	unlock_page(page);
 	put_page(page);
 	kfree(fixup);
@@ -3389,15 +3387,6 @@ int btrfs_finish_ordered_io(struct btrfs_ordered_extent *ordered)
 	    !test_bit(BTRFS_ORDERED_IOERR, &ordered->flags))
 		btrfs_finish_ordered_zoned(ordered);
 	return btrfs_finish_one_ordered(ordered);
-}
-
-void btrfs_writepage_endio_finish_ordered(struct btrfs_inode *inode,
-					  struct page *page, u64 start,
-					  u64 end, bool uptodate)
-{
-	trace_btrfs_writepage_end_io_hook(inode, start, end, uptodate);
-
-	btrfs_mark_ordered_io_finished(inode, page, start, end + 1 - start, uptodate);
 }
 
 /*
