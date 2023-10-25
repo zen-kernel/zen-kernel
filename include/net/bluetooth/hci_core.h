@@ -350,7 +350,7 @@ struct hci_dev {
 	struct list_head list;
 	struct mutex	lock;
 
-	char		name[8];
+	const char	*name;
 	unsigned long	flags;
 	__u16		id;
 	__u8		bus;
@@ -1426,6 +1426,7 @@ int hci_conn_switch_role(struct hci_conn *conn, __u8 role);
 void hci_conn_enter_active_mode(struct hci_conn *conn, __u8 force_active);
 
 void hci_conn_failed(struct hci_conn *conn, u8 status);
+u8 hci_conn_set_handle(struct hci_conn *conn, u16 handle);
 
 /*
  * hci_conn_get() and hci_conn_put() are used to control the life-time of an

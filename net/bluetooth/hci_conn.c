@@ -874,7 +874,7 @@ static void bis_cleanup(struct hci_conn *conn)
 
 static int remove_cig_sync(struct hci_dev *hdev, void *data)
 {
-	u8 handle = PTR_ERR(data);
+	u8 handle = PTR_UINT(data);
 
 	return hci_le_remove_cig_sync(hdev, handle);
 }
@@ -883,7 +883,8 @@ static int hci_le_remove_cig(struct hci_dev *hdev, u8 handle)
 {
 	bt_dev_dbg(hdev, "handle 0x%2.2x", handle);
 
-	return hci_cmd_sync_queue(hdev, remove_cig_sync, ERR_PTR(handle), NULL);
+	return hci_cmd_sync_queue(hdev, remove_cig_sync, UINT_PTR(handle),
+				  NULL);
 }
 
 static void find_cis(struct hci_conn *conn, void *data)
@@ -1248,9 +1249,41 @@ void hci_conn_failed(struct hci_conn *conn, u8 status)
 	hci_conn_del(conn);
 }
 
+/* This function requires the caller holds hdev->lock */
+u8 hci_conn_set_handle(struct hci_conn *conn, u16 handle)
+{
+	struct hci_dev *hdev = conn->hdev;
+
+	bt_dev_dbg(hdev, "hcon %p handle 0x%4.4x", conn, handle);
+
+	if (conn->handle == handle)
+		return 0;
+
+	if (handle > HCI_CONN_HANDLE_MAX) {
+		bt_dev_err(hdev, "Invalid handle: 0x%4.4x > 0x%4.4x",
+			   handle, HCI_CONN_HANDLE_MAX);
+		return HCI_ERROR_INVALID_PARAMETERS;
+	}
+
+	/* If abort_reason has been sent it means the connection is being
+	 * aborted and the handle shall not be changed.
+	 */
+	if (conn->abort_reason)
+		return conn->abort_reason;
+
+	conn->handle = handle;
+
+	return 0;
+}
+
 static void create_le_conn_complete(struct hci_dev *hdev, void *data, int err)
 {
-	struct hci_conn *conn = data;
+	struct hci_conn *conn;
+	u16 handle = PTR_UINT(data);
+
+	conn = hci_conn_hash_lookup_handle(hdev, handle);
+	if (!conn)
+		return;
 
 	bt_dev_dbg(hdev, "err %d", err);
 
@@ -1275,9 +1308,16 @@ done:
 
 static int hci_connect_le_sync(struct hci_dev *hdev, void *data)
 {
-	struct hci_conn *conn = data;
+	struct hci_conn *conn;
+	u16 handle = PTR_UINT(data);
+
+	conn = hci_conn_hash_lookup_handle(hdev, handle);
+	if (!conn)
+		return 0;
 
 	bt_dev_dbg(hdev, "conn %p", conn);
+
+	conn->state = BT_CONNECT;
 
 	return hci_le_create_conn_sync(hdev, conn);
 }
@@ -1348,10 +1388,10 @@ struct hci_conn *hci_connect_le(struct hci_dev *hdev, bdaddr_t *dst,
 	conn->sec_level = BT_SECURITY_LOW;
 	conn->conn_timeout = conn_timeout;
 
-	conn->state = BT_CONNECT;
 	clear_bit(HCI_CONN_SCANNING, &conn->flags);
 
-	err = hci_cmd_sync_queue(hdev, hci_connect_le_sync, conn,
+	err = hci_cmd_sync_queue(hdev, hci_connect_le_sync,
+				 UINT_PTR(conn->handle),
 				 create_le_conn_complete);
 	if (err) {
 		hci_conn_del(conn);
@@ -1589,6 +1629,15 @@ struct hci_conn *hci_connect_acl(struct hci_dev *hdev, bdaddr_t *dst,
 		return ERR_PTR(-EOPNOTSUPP);
 	}
 
+	/* Reject outgoing connection to device with same BD ADDR against
+	 * CVE-2020-26555
+	 */
+	if (!bacmp(&hdev->bdaddr, dst)) {
+		bt_dev_dbg(hdev, "Reject connection with same BD_ADDR %pMR\n",
+			   dst);
+		return ERR_PTR(-ECONNREFUSED);
+	}
+
 	acl = hci_conn_hash_lookup_ba(hdev, ACL_LINK, dst);
 	if (!acl) {
 		acl = hci_conn_add(hdev, ACL_LINK, dst, HCI_ROLE_MASTER);
@@ -1719,7 +1768,7 @@ static int hci_le_create_big(struct hci_conn *conn, struct bt_iso_qos *qos)
 
 static int set_cig_params_sync(struct hci_dev *hdev, void *data)
 {
-	u8 cig_id = PTR_ERR(data);
+	u8 cig_id = PTR_UINT(data);
 	struct hci_conn *conn;
 	struct bt_iso_qos *qos;
 	struct iso_cig_params pdu;
@@ -1829,7 +1878,7 @@ static bool hci_le_set_cig_params(struct hci_conn *conn, struct bt_iso_qos *qos)
 
 done:
 	if (hci_cmd_sync_queue(hdev, set_cig_params_sync,
-			       ERR_PTR(qos->ucast.cig), NULL) < 0)
+			       UINT_PTR(qos->ucast.cig), NULL) < 0)
 		return false;
 
 	return true;
@@ -2364,34 +2413,41 @@ int hci_conn_security(struct hci_conn *conn, __u8 sec_level, __u8 auth_type,
 	if (!test_bit(HCI_CONN_AUTH, &conn->flags))
 		goto auth;
 
-	/* An authenticated FIPS approved combination key has sufficient
-	 * security for security level 4. */
-	if (conn->key_type == HCI_LK_AUTH_COMBINATION_P256 &&
-	    sec_level == BT_SECURITY_FIPS)
-		goto encrypt;
-
-	/* An authenticated combination key has sufficient security for
-	   security level 3. */
-	if ((conn->key_type == HCI_LK_AUTH_COMBINATION_P192 ||
-	     conn->key_type == HCI_LK_AUTH_COMBINATION_P256) &&
-	    sec_level == BT_SECURITY_HIGH)
-		goto encrypt;
-
-	/* An unauthenticated combination key has sufficient security for
-	   security level 1 and 2. */
-	if ((conn->key_type == HCI_LK_UNAUTH_COMBINATION_P192 ||
-	     conn->key_type == HCI_LK_UNAUTH_COMBINATION_P256) &&
-	    (sec_level == BT_SECURITY_MEDIUM || sec_level == BT_SECURITY_LOW))
-		goto encrypt;
-
-	/* A combination key has always sufficient security for the security
-	   levels 1 or 2. High security level requires the combination key
-	   is generated using maximum PIN code length (16).
-	   For pre 2.1 units. */
-	if (conn->key_type == HCI_LK_COMBINATION &&
-	    (sec_level == BT_SECURITY_MEDIUM || sec_level == BT_SECURITY_LOW ||
-	     conn->pin_length == 16))
-		goto encrypt;
+	switch (conn->key_type) {
+	case HCI_LK_AUTH_COMBINATION_P256:
+		/* An authenticated FIPS approved combination key has
+		 * sufficient security for security level 4 or lower.
+		 */
+		if (sec_level <= BT_SECURITY_FIPS)
+			goto encrypt;
+		break;
+	case HCI_LK_AUTH_COMBINATION_P192:
+		/* An authenticated combination key has sufficient security for
+		 * security level 3 or lower.
+		 */
+		if (sec_level <= BT_SECURITY_HIGH)
+			goto encrypt;
+		break;
+	case HCI_LK_UNAUTH_COMBINATION_P192:
+	case HCI_LK_UNAUTH_COMBINATION_P256:
+		/* An unauthenticated combination key has sufficient security
+		 * for security level 2 or lower.
+		 */
+		if (sec_level <= BT_SECURITY_MEDIUM)
+			goto encrypt;
+		break;
+	case HCI_LK_COMBINATION:
+		/* A combination key has always sufficient security for the
+		 * security levels 2 or lower. High security level requires the
+		 * combination key is generated using maximum PIN code length
+		 * (16). For pre 2.1 units.
+		 */
+		if (sec_level <= BT_SECURITY_MEDIUM || conn->pin_length == 16)
+			goto encrypt;
+		break;
+	default:
+		break;
+	}
 
 auth:
 	if (test_bit(HCI_CONN_ENCRYPT_PEND, &conn->flags))
@@ -2836,7 +2892,7 @@ u32 hci_conn_get_phy(struct hci_conn *conn)
 static int abort_conn_sync(struct hci_dev *hdev, void *data)
 {
 	struct hci_conn *conn;
-	u16 handle = PTR_ERR(data);
+	u16 handle = PTR_UINT(data);
 
 	conn = hci_conn_hash_lookup_handle(hdev, handle);
 	if (!conn)
@@ -2862,6 +2918,9 @@ int hci_abort_conn(struct hci_conn *conn, u8 reason)
 	/* If the connection is pending check the command opcode since that
 	 * might be blocking on hci_cmd_sync_work while waiting its respective
 	 * event so we need to hci_cmd_sync_cancel to cancel it.
+	 *
+	 * hci_connect_le serializes the connection attempts so only one
+	 * connection can be in BT_CONNECT at time.
 	 */
 	if (conn->state == BT_CONNECT && hdev->req_status == HCI_REQ_PEND) {
 		switch (hci_skb_event(hdev->sent_cmd)) {
@@ -2873,6 +2932,6 @@ int hci_abort_conn(struct hci_conn *conn, u8 reason)
 		}
 	}
 
-	return hci_cmd_sync_queue(hdev, abort_conn_sync, ERR_PTR(conn->handle),
+	return hci_cmd_sync_queue(hdev, abort_conn_sync, UINT_PTR(conn->handle),
 				  NULL);
 }
