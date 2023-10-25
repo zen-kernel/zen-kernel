@@ -164,6 +164,7 @@ struct scsi_device {
 
 	bool manage_system_start_stop; /* Let HLD (sd) manage system start/stop */
 	bool manage_runtime_start_stop; /* Let HLD (sd) manage runtime start/stop */
+	bool manage_shutdown;	/* Let HLD (sd) manage shutdown */
 
 	unsigned removable:1;
 	unsigned changed:1;	/* Data invalid due to media change */
