@@ -2544,7 +2544,7 @@ extern void deactivate_task(struct rq *rq, struct task_struct *p, int flags);
 
 extern void wakeup_preempt(struct rq *rq, struct task_struct *p, int flags);
 
-#ifdef CONFIG_PREEMPT_RT
+#if defined(CONFIG_PREEMPT_RT) || defined(CONFIG_ZEN_INTERACTIVE)
 #define SCHED_NR_MIGRATE_BREAK 8
 #else
 #define SCHED_NR_MIGRATE_BREAK 32
