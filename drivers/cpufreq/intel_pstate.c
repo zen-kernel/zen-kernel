@@ -3530,6 +3530,8 @@ static int __init intel_pstate_setup(char *str)
 
 	if (!strcmp(str, "disable"))
 		no_load = 1;
+	else if (!strcmp(str, "enable"))
+		no_load = 0;
 	else if (!strcmp(str, "active"))
 		default_driver = &intel_pstate;
 	else if (!strcmp(str, "passive"))
