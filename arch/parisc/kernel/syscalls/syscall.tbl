@@ -451,3 +451,6 @@
 450	common	set_mempolicy_home_node		sys_set_mempolicy_home_node
 451	common	cachestat			sys_cachestat
 452	common	fchmodat2			sys_fchmodat2
+453	common	process_ksm_enable		sys_process_ksm_enable
+454	common	process_ksm_disable		sys_process_ksm_disable
+455	common	process_ksm_status		sys_process_ksm_status
