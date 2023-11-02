@@ -953,9 +953,6 @@ static u32 ivpu_hw_mtl_irqb_handler(struct ivpu_device *vdev, int irq)
 	if (status == 0)
 		return 0;
 
-	/* Disable global interrupt before handling local buttress interrupts */
-	REGB_WR32(MTL_BUTTRESS_GLOBAL_INT_MASK, 0x1);
-
 	if (REG_TEST_FLD(MTL_BUTTRESS_INTERRUPT_STAT, FREQ_CHANGE, status))
 		ivpu_dbg(vdev, IRQ, "FREQ_CHANGE irq: %08x", REGB_RD32(MTL_BUTTRESS_CURRENT_PLL));
 
@@ -986,9 +983,6 @@ static u32 ivpu_hw_mtl_irqb_handler(struct ivpu_device *vdev, int irq)
 	else
 		REGB_WR32(MTL_BUTTRESS_INTERRUPT_STAT, status);
 
-	/* Re-enable global interrupt */
-	REGB_WR32(MTL_BUTTRESS_GLOBAL_INT_MASK, 0x0);
-
 	if (schedule_recovery)
 		ivpu_pm_schedule_recovery(vdev);
 
@@ -1000,8 +994,13 @@ static irqreturn_t ivpu_hw_mtl_irq_handler(int irq, void *ptr)
 	struct ivpu_device *vdev = ptr;
 	u32 ret_irqv, ret_irqb;
 
+	REGB_WR32(MTL_BUTTRESS_GLOBAL_INT_MASK, 0x1);
+
 	ret_irqv = ivpu_hw_mtl_irqv_handler(vdev, irq);
 	ret_irqb = ivpu_hw_mtl_irqb_handler(vdev, irq);
+
+	/* Re-enable global interrupts to re-trigger MSI for pending interrupts */
+	REGB_WR32(MTL_BUTTRESS_GLOBAL_INT_MASK, 0x0);
 
 	return IRQ_RETVAL(ret_irqb | ret_irqv);
 }
@@ -1041,6 +1040,7 @@ const struct ivpu_hw_ops ivpu_hw_mtl_ops = {
 	.power_up = ivpu_hw_mtl_power_up,
 	.is_idle = ivpu_hw_mtl_is_idle,
 	.power_down = ivpu_hw_mtl_power_down,
+	.reset = ivpu_hw_mtl_reset,
 	.boot_fw = ivpu_hw_mtl_boot_fw,
 	.wdt_disable = ivpu_hw_mtl_wdt_disable,
 	.diagnose_failure = ivpu_hw_mtl_diagnose_failure,
