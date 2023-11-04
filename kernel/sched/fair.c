@@ -89,7 +89,11 @@ static unsigned int normalized_sysctl_sched_base_slice	= 750000ULL;
  */
 unsigned int sysctl_sched_child_runs_first __read_mostly;
 
+#ifdef CONFIG_ZEN_INTERACTIVE
+const_debug unsigned int sysctl_sched_migration_cost	= 250000UL;
+#else
 const_debug unsigned int sysctl_sched_migration_cost	= 500000UL;
+#endif
 
 int sched_thermal_decay_shift;
 static int __init setup_sched_thermal_decay_shift(char *str)
