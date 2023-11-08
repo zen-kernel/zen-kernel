@@ -131,11 +131,7 @@ early_param("sched_timeslice", sched_timeslice);
  * 1: Deboost and requeue task. (default)
  * 2: Set rq skip task.
  */
-#ifdef CONFIG_ZEN_INTERACTIVE
-int sched_yield_type __read_mostly = 0;
-#else
 int sched_yield_type __read_mostly = 1;
-#endif
 
 #ifdef CONFIG_SMP
 static cpumask_t sched_rq_pending_mask ____cacheline_aligned_in_smp;
@@ -6424,12 +6420,12 @@ static void do_sched_yield(void)
 
 	schedstat_inc(rq->yld_count);
 
-	if (1 == sched_yield_type) {
-		if (!rt_task(current))
-			do_sched_yield_type_1(current, rq);
+	if (rq->nr_running < 2) {
+		// pass
+	} else if (1 == sched_yield_type && !rt_task(current)) {
+		do_sched_yield_type_1(current, rq);
 	} else if (2 == sched_yield_type) {
-		if (rq->nr_running > 1)
-			rq->skip = current;
+		rq->skip = current;
 	}
 
 	preempt_disable();
