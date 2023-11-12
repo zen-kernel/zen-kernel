@@ -915,6 +915,8 @@ __SYSCALL(__NR_process_ksm_enable, sys_process_ksm_enable)
 __SYSCALL(__NR_process_ksm_disable, sys_process_ksm_disable)
 #define __NR_process_ksm_status 454
 __SYSCALL(__NR_process_ksm_status, sys_process_ksm_status)
+#define __NR_fchmodat2 455
+__SYSCALL(__NR_fchmodat2, sys_fchmodat2)
 
 /*
  * Please add new compat syscalls above this comment and update
