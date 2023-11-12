@@ -829,8 +829,11 @@ __SYSCALL(__NR_process_ksm_disable, sys_process_ksm_disable)
 #define __NR_process_ksm_status 454
 __SYSCALL(__NR_process_ksm_status, sys_process_ksm_status)
 
+#define __NR_fchmodat2 455
+__SYSCALL(__NR_fchmodat2, sys_fchmodat2)
+
 #undef __NR_syscalls
-#define __NR_syscalls 455
+#define __NR_syscalls 456
 
 /*
  * 32 bit systems traditionally used different

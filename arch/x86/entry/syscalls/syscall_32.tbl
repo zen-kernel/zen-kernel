@@ -459,3 +459,4 @@
 452	i386	process_ksm_enable		sys_process_ksm_enable
 453	i386	process_ksm_disable		sys_process_ksm_disable
 454	i386	process_ksm_status		sys_process_ksm_status
+455	i386	fchmodat2		sys_fchmodat2

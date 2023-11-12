@@ -369,3 +369,4 @@
 452	n64	process_ksm_enable		sys_process_ksm_enable
 453	n64	process_ksm_disable		sys_process_ksm_disable
 454	n64	process_ksm_status		sys_process_ksm_status
+455	n64	fchmodat2			sys_fchmodat2
