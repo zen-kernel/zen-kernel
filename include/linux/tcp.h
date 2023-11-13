@@ -273,7 +273,9 @@ struct tcp_sock {
 	u8	dup_ack_counter:2,
 		tlp_retrans:1,	/* TLP is a retransmission */
 		tcp_usec_ts:1, /* TSval values in usec */
-		unused:4;
+		fast_ack_mode:2, /* which fast ack mode ? */
+		tlp_orig_data_app_limited:1, /* app-limited before TLP rtx? */
+		unused:1;
 	u32	chrono_start;	/* Start time in jiffies of a TCP chrono */
 	u32	chrono_stat[3];	/* Time in jiffies for chrono_stat stats */
 	u8	chrono_type:2,	/* current chronograph type */
