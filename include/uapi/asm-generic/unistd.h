@@ -829,8 +829,17 @@ __SYSCALL(__NR_futex_wait, sys_futex_wait)
 #define __NR_futex_requeue 456
 __SYSCALL(__NR_futex_requeue, sys_futex_requeue)
 
+#define __NR_process_ksm_enable 457
+__SYSCALL(__NR_process_ksm_enable, sys_process_ksm_enable)
+
+#define __NR_process_ksm_disable 458
+__SYSCALL(__NR_process_ksm_disable, sys_process_ksm_disable)
+
+#define __NR_process_ksm_status 459
+__SYSCALL(__NR_process_ksm_status, sys_process_ksm_status)
+
 #undef __NR_syscalls
-#define __NR_syscalls 457
+#define __NR_syscalls 460
 
 /*
  * 32 bit systems traditionally used different
