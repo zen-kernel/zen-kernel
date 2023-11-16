@@ -1068,6 +1068,8 @@ int get_nohz_timer_target(void)
 
 	hk_mask = housekeeping_cpumask(HK_TYPE_TIMER);
 
+	guard(rcu)();
+
 	for (mask = per_cpu(sched_cpu_topo_masks, cpu) + 1;
 	     mask < per_cpu(sched_cpu_topo_end_mask, cpu); mask++)
 		for_each_cpu_and(i, mask, hk_mask)
@@ -1076,9 +1078,8 @@ int get_nohz_timer_target(void)
 
 	if (default_cpu == -1)
 		default_cpu = housekeeping_any_cpu(HK_TYPE_TIMER);
-	cpu = default_cpu;
 
-	return cpu;
+	return default_cpu;
 }
 
 /*
