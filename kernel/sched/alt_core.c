@@ -1499,6 +1499,8 @@ static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
 	smp_wmb();
 
 	WRITE_ONCE(task_thread_info(p)->cpu, cpu);
+
+	p->wake_cpu = cpu;
 #endif
 }
 
@@ -1782,6 +1784,8 @@ static int migration_cpu_stop(void *data)
 	if (task_rq(p) == rq && task_on_rq_queued(p)) {
 		update_rq_clock(rq);
 		rq = __migrate_task(rq, p, arg->dest_cpu);
+	} else {
+		p->wake_cpu = arg->dest_cpu;
 	}
 	raw_spin_unlock(&rq->lock);
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);

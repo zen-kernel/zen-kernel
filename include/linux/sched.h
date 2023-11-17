@@ -788,8 +788,8 @@ struct task_struct {
 	 * used CPU that may be idle.
 	 */
 	int				recent_used_cpu;
-	int				wake_cpu;
 #endif /* !CONFIG_SCHED_ALT */
+	int				wake_cpu;
 #endif
 	int				on_rq;
 
