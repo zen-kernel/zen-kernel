@@ -2520,7 +2520,7 @@ extern void deactivate_task(struct rq *rq, struct task_struct *p, int flags);
 
 extern void check_preempt_curr(struct rq *rq, struct task_struct *p, int flags);
 
-#ifdef defined(CONFIG_PREEMPT_RT) || defined(CONFIG_ZEN_INTERACTIVE)
+#if defined(CONFIG_PREEMPT_RT) || defined(CONFIG_ZEN_INTERACTIVE)
 #define SCHED_NR_MIGRATE_BREAK 8
 #else
 #define SCHED_NR_MIGRATE_BREAK 32
