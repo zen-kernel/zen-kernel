@@ -4318,6 +4318,7 @@ static void sched_tick_remote(struct work_struct *work)
 
 			calc_load_nohz_remote(rq);
 		}
+	}
 
 	/*
 	 * Run the remote tick once per second (1Hz). This arbitrary
