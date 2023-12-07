@@ -6392,14 +6392,14 @@ static void do_sched_yield(void)
 
 	rq = this_rq_lock_irq(&rf);
 
-	schedstat_inc(rq->yld_count);
+	if (rq->nr_running > 1) {
+		if (sched_yield_type == 1) {
+			do_sched_yield_type_1(current, rq);
+		} else if (sched_yield_type == 2) {
+			rq->skip = current;
+		}
 
-	if (rq->nr_running < 2) {
-		// pass
-	} else if (1 == sched_yield_type && !rt_task(current)) {
-		do_sched_yield_type_1(current, rq);
-	} else if (2 == sched_yield_type) {
-		rq->skip = current;
+		schedstat_inc(rq->yld_count);
 	}
 
 	preempt_disable();
