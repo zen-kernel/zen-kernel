@@ -2861,8 +2861,7 @@ bool ttwu_state_match(struct task_struct *p, unsigned int state, int *success)
  * Return: %true if @p->state changes (an actual wakeup was done),
  *	   %false otherwise.
  */
-static int try_to_wake_up(struct task_struct *p, unsigned int state,
-			  int wake_flags)
+int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 {
 	unsigned long flags;
 	int cpu, success = 0;
@@ -2997,7 +2996,11 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 
 	sched_task_ttwu(p);
 
-	cpu = select_task_rq(p);
+	if ((wake_flags & WF_CURRENT_CPU) &&
+	    cpumask_test_cpu(smp_processor_id(), p->cpus_ptr))
+		cpu = smp_processor_id();
+	else
+		cpu = select_task_rq(p);
 
 	if (cpu != task_cpu(p)) {
 		if (p->in_iowait) {
