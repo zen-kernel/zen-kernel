@@ -1291,6 +1291,7 @@ static bool kick_pool_pick(struct worker_pool *pool, struct task_struct **wakep)
 
 	p = worker->task;
 
+#ifndef CONFIG_SCHED_ALT
 #ifdef CONFIG_SMP
 	/*
 	 * Idle @worker is about to execute @work and waking up provides an
@@ -1321,6 +1322,7 @@ static bool kick_pool_pick(struct worker_pool *pool, struct task_struct **wakep)
 		}
 	}
 #endif
+#endif /* !CONFIG_SCHED_ALT */
 	/* Track the last idle worker woken, used for stall diagnostics. */
 	pool->last_woken_worker = worker;
 
