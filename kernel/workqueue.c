@@ -1249,6 +1249,7 @@ static bool kick_pool(struct worker_pool *pool)
 
 	p = worker->task;
 
+#ifndef CONFIG_SCHED_ALT
 #ifdef CONFIG_SMP
 	/*
 	 * Idle @worker is about to execute @work and waking up provides an
@@ -1278,6 +1279,8 @@ static bool kick_pool(struct worker_pool *pool)
 		}
 	}
 #endif
+#endif /* !CONFIG_SCHED_ALT */
+
 	wake_up_process(p);
 	return true;
 }
