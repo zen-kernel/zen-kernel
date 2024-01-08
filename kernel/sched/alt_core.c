@@ -6891,7 +6891,6 @@ SYSCALL_DEFINE1(sched_get_priority_min, int, policy)
 
 static int sched_rr_get_interval(pid_t pid, struct timespec64 *t)
 {
-	struct task_struct *p;
 	int retval;
 
 	alt_sched_debug();
@@ -6899,23 +6898,18 @@ static int sched_rr_get_interval(pid_t pid, struct timespec64 *t)
 	if (pid < 0)
 		return -EINVAL;
 
-	retval = -ESRCH;
-	rcu_read_lock();
-	p = find_process_by_pid(pid);
-	if (!p)
-		goto out_unlock;
+	scoped_guard (rcu) {
+		struct task_struct *p = find_process_by_pid(pid);
+		if (!p)
+			return -ESRCH;
 
-	retval = security_task_getscheduler(p);
-	if (retval)
-		goto out_unlock;
-	rcu_read_unlock();
+		retval = security_task_getscheduler(p);
+		if (retval)
+			return retval;
+	}
 
 	*t = ns_to_timespec64(sched_timeslice_ns);
 	return 0;
-
-out_unlock:
-	rcu_read_unlock();
-	return retval;
 }
 
 /**
