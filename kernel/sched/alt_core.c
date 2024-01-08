@@ -5379,9 +5379,7 @@ static inline int rt_effective_prio(struct task_struct *p, int prio)
 
 void set_user_nice(struct task_struct *p, long nice)
 {
-	unsigned long flags;
 	struct rq *rq;
-	raw_spinlock_t *lock;
 
 	if (task_nice(p) == nice || nice < MIN_NICE || nice > MAX_NICE)
 		return;
@@ -5389,8 +5387,8 @@ void set_user_nice(struct task_struct *p, long nice)
 	 * We have to be careful, if called from sys_setpriority(),
 	 * the task might be in the middle of scheduling on another CPU.
 	 */
-	raw_spin_lock_irqsave(&p->pi_lock, flags);
-	rq = __task_access_lock(p, &lock);
+	CLASS(task_rq_lock, rq_guard)(p);
+	rq = rq_guard.rq;
 
 	p->static_prio = NICE_TO_PRIO(nice);
 	/*
@@ -5400,14 +5398,11 @@ void set_user_nice(struct task_struct *p, long nice)
 	 * not SCHED_NORMAL/SCHED_BATCH:
 	 */
 	if (task_has_rt_policy(p))
-		goto out_unlock;
+		return;
 
 	p->prio = effective_prio(p);
 
 	check_task_changed(p, rq);
-out_unlock:
-	__task_access_unlock(p, lock);
-	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 }
 EXPORT_SYMBOL(set_user_nice);
 
