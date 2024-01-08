@@ -1156,7 +1156,7 @@ static void nohz_csd_func(void *info)
 #endif /* CONFIG_NO_HZ_COMMON */
 #endif /* CONFIG_SMP */
 
-static inline void check_preempt_curr(struct rq *rq)
+static inline void wakeup_preempt(struct rq *rq)
 {
 	if (sched_rq_first_task(rq) != rq->curr)
 		resched_curr(rq);
@@ -1725,7 +1725,7 @@ static struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int
 	sched_task_sanity_check(p, rq);
 	enqueue_task(p, rq, 0);
 	p->on_rq = TASK_ON_RQ_QUEUED;
-	check_preempt_curr(rq);
+	wakeup_preempt(rq);
 
 	return rq;
 }
@@ -2454,7 +2454,7 @@ ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags)
 	}
 
 	activate_task(p, rq);
-	check_preempt_curr(rq);
+	wakeup_preempt(rq);
 
 	ttwu_do_wakeup(p);
 }
@@ -2498,7 +2498,7 @@ static int ttwu_runnable(struct task_struct *p, int wake_flags)
 			 * it should preempt the task that is current now.
 			 */
 			update_rq_clock(rq);
-			check_preempt_curr(rq);
+			wakeup_preempt(rq);
 		}
 		ttwu_do_wakeup(p);
 		ret = 1;
@@ -3383,7 +3383,7 @@ void wake_up_new_task(struct task_struct *p)
 
 	activate_task(p, rq);
 	trace_sched_wakeup_new(p);
-	check_preempt_curr(rq);
+	wakeup_preempt(rq);
 
 	raw_spin_unlock(&rq->lock);
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
@@ -5242,7 +5242,7 @@ static inline void check_task_changed(struct task_struct *p, struct rq *rq)
 		idx = task_sched_prio_idx(p, rq);
 		if (idx != p->sq_idx) {
 			requeue_task(p, rq, idx);
-			check_preempt_curr(rq);
+			wakeup_preempt(rq);
 		}
 	}
 }
