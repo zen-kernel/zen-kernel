@@ -7683,7 +7683,7 @@ void __init sched_init(void)
 	struct rq *rq;
 
 	printk(KERN_INFO "sched/alt: "ALT_SCHED_NAME" CPU Scheduler "ALT_SCHED_VERSION\
-			 " by Alfred Chen.\n");
+			 " developed by Alfred Chen, ported by Steven Barrett.\n");
 
 	wait_bit_init();
 
