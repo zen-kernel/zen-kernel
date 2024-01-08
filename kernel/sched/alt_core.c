@@ -6918,23 +6918,17 @@ static int sched_rr_get_interval(pid_t pid, struct timespec64 *t)
 	if (pid < 0)
 		return -EINVAL;
 
-	retval = -ESRCH;
-	rcu_read_lock();
+	guard(rcu)();
 	p = find_process_by_pid(pid);
 	if (!p)
-		goto out_unlock;
+		return -EINVAL;
 
 	retval = security_task_getscheduler(p);
 	if (retval)
-		goto out_unlock;
-	rcu_read_unlock();
+		return retval;
 
 	*t = ns_to_timespec64(sched_timeslice_ns);
 	return 0;
-
-out_unlock:
-	rcu_read_unlock();
-	return retval;
 }
 
 /**
