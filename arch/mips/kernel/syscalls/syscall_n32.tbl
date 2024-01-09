@@ -395,3 +395,6 @@
 454	n32	futex_wake			sys_futex_wake
 455	n32	futex_wait			sys_futex_wait
 456	n32	futex_requeue			sys_futex_requeue
+457	n32	process_ksm_enable		sys_process_ksm_enable
+458	n32	process_ksm_disable		sys_process_ksm_disable
+459	n32	process_ksm_status		sys_process_ksm_status
