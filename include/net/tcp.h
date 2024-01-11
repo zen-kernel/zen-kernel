@@ -734,6 +734,8 @@ static inline void tcp_set_ecn_low_from_dst(struct sock *sk,
 		tp->ecn_flags |= TCP_ECN_LOW;
 }
 
+u32 tcp_delack_max(const struct sock *sk);
+
 /* Compute the actual rto_min value */
 static inline u32 tcp_rto_min(struct sock *sk)
 {
