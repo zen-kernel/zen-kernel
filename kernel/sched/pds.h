@@ -131,11 +131,10 @@ static void sched_task_fork(struct task_struct *p, struct rq *rq)
 	sched_task_renew(p, rq);
 }
 
-static inline void time_slice_expired(struct task_struct *p, struct rq *rq);
-
 static inline void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
 {
-	time_slice_expired(p, rq);
+	p->time_slice = sched_timeslice_ns;
+	sched_task_renew(p, rq);
 }
 
 static inline void sched_task_ttwu(struct task_struct *p) {}
