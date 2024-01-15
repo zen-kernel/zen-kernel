@@ -4977,7 +4977,7 @@ asmlinkage __visible void __sched schedule(void)
 {
 	struct task_struct *tsk = current;
 
-#ifdef CONFIG_RT_MUTEXE
+#ifdef CONFIG_RT_MUTEXES
 	lockdep_assert(!tsk->sched_rt_mutex);
 #endif
 
