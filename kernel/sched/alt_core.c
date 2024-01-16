@@ -86,8 +86,11 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 
 #define STOP_PRIO		(MAX_RT_PRIO - 1)
 
-/* Default time slice is 4 in ms, can be set via kernel parameter "sched_timeslice" */
-u64 sched_timeslice_ns __read_mostly = (4 << 20);
+/*
+ * Time slice
+ * (default: 4 msec, units: nanoseconds)
+ */
+unsigned int sysctl_sched_base_slice __read_mostly	= (4 << 20);
 
 static inline void requeue_task(struct task_struct *p, struct rq *rq, int idx);
 
@@ -103,20 +106,6 @@ struct affinity_context {
 	struct cpumask *user_mask;
 	unsigned int flags;
 };
-
-static int __init sched_timeslice(char *str)
-{
-	int timeslice_ms;
-
-	get_option(&str, &timeslice_ms);
-	if (2 != timeslice_ms)
-		timeslice_ms = 4;
-	sched_timeslice_ns = timeslice_ms << 20;
-	sched_timeslice_imp(timeslice_ms);
-
-	return 0;
-}
-early_param("sched_timeslice", sched_timeslice);
 
 /* Reschedule if less than this many μs left */
 #define RESCHED_NS		(100 << 10)
@@ -3248,7 +3237,7 @@ void sched_cgroup_fork(struct task_struct *p, struct kernel_clone_args *kargs)
 #endif
 
 	if (p->time_slice < RESCHED_NS) {
-		p->time_slice = sched_timeslice_ns;
+		p->time_slice = sysctl_sched_base_slice;
 		resched_curr(rq);
 	}
 	sched_task_fork(p, rq);
@@ -4641,7 +4630,7 @@ static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 
 static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 {
-	p->time_slice = sched_timeslice_ns;
+	p->time_slice = sysctl_sched_base_slice;
 
 	sched_task_renew(p, rq);
 
@@ -6926,7 +6915,7 @@ static int sched_rr_get_interval(pid_t pid, struct timespec64 *t)
 	if (retval)
 		return retval;
 
-	*t = ns_to_timespec64(sched_timeslice_ns);
+	*t = ns_to_timespec64(sysctl_sched_base_slice);
 	return 0;
 }
 
@@ -7607,7 +7596,7 @@ static void sched_init_topology_cpumask(void)
 
 	for_each_online_cpu(cpu) {
 		/* take chance to reset time slice for idle tasks */
-		cpu_rq(cpu)->idle->time_slice = sched_timeslice_ns;
+		cpu_rq(cpu)->idle->time_slice = sysctl_sched_base_slice;
 
 		topo = per_cpu(sched_cpu_topo_masks, cpu) + 1;
 
@@ -7655,7 +7644,7 @@ early_initcall(migration_init);
 #else
 void __init sched_init_smp(void)
 {
-	cpu_rq(0)->idle->time_slice = sched_timeslice_ns;
+	cpu_rq(0)->idle->time_slice = sysctl_sched_base_slice;
 }
 #endif /* CONFIG_SMP */
 
