@@ -133,7 +133,7 @@ static void sched_task_fork(struct task_struct *p, struct rq *rq)
 
 static inline void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
 {
-	p->time_slice = sched_timeslice_ns;
+	p->time_slice = sysctl_sched_base_slice;
 	sched_task_renew(p, rq);
 }
 
