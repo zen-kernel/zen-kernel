@@ -263,6 +263,8 @@ struct rq {
 	cpumask_var_t		scratch_mask;
 };
 
+extern unsigned int sysctl_sched_base_slice;
+
 extern unsigned long rq_load_util(struct rq *rq, unsigned long max);
 
 extern unsigned long calc_load_update;
