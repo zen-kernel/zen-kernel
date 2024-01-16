@@ -4,7 +4,7 @@
  * BMQ only routines
  */
 #define rq_switch_time(rq)	((rq)->clock - (rq)->last_ts_switch)
-#define boost_threshold(p)	(sched_timeslice_ns >> ((14 - (p)->boost_prio) / 2))
+#define boost_threshold(p)	(sysctl_sched_base_slice >> ((14 - (p)->boost_prio) / 2))
 
 static inline void boost_task(struct task_struct *p)
 {
@@ -86,7 +86,7 @@ static inline void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
 
 static inline void sched_task_ttwu(struct task_struct *p)
 {
-	if(this_rq()->clock_task - p->last_ran > sched_timeslice_ns)
+	if(this_rq()->clock_task - p->last_ran > sysctl_sched_base_slice)
 		boost_task(p);
 }
 
@@ -96,6 +96,6 @@ static inline void sched_task_deactivate(struct task_struct *p, struct rq *rq)
 
 	if (switch_ns < boost_threshold(p))
 		boost_task(p);
-	else if (switch_ns > sched_timeslice_ns)
+	else if (switch_ns > sysctl_sched_base_slice)
 		deboost_task(p);
 }
