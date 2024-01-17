@@ -126,10 +126,10 @@ early_param("sched_timeslice", sched_timeslice);
 #define RESCHED_NS		(100 << 10)
 
 /**
- * sched_yield_type - Choose what sort of yield sched_yield will perform.
+ * sched_yield_type - Type of sched_yield() will be performed.
  * 0: No yield.
- * 1: Deboost and requeue task. (default)
- * 2: Set rq skip task.
+ * 1: Requeue task. (default)
+ * 2: Set rq skip task. (Same as mainline)
  */
 int sched_yield_type __read_mostly = 1;
 
@@ -6386,20 +6386,27 @@ static void do_sched_yield(void)
 {
 	struct rq *rq;
 	struct rq_flags rf;
+	struct task_struct *p;
 
 	if (!sched_yield_type)
 		return;
 
 	rq = this_rq_lock_irq(&rf);
 
-	if (rq->nr_running > 1) {
-		if (sched_yield_type == 1) {
-			do_sched_yield_type_1(current, rq);
-		} else if (sched_yield_type == 2) {
-			rq->skip = current;
-		}
+	schedstat_inc(rq->yld_count);
 
-		schedstat_inc(rq->yld_count);
+	p = current;
+	if (rt_task(p)) {
+		if (task_on_rq_queued(p))
+			requeue_task(p, rq, task_sched_prio_idx(p, rq));
+	} else if (rq->nr_running > 1) {
+		if (1 == sched_yield_type) {
+			do_sched_yield_type_1(p, rq);
+			if (task_on_rq_queued(p))
+				requeue_task(p, rq, task_sched_prio_idx(p, rq));
+		} else if (2 == sched_yield_type) {
+			rq->skip = p;
+		}
 	}
 
 	preempt_disable();
