@@ -89,10 +89,14 @@ struct deadline_data {
 	 */
 	struct {
 		spinlock_t lock;
+		spinlock_t insert_lock;
 		spinlock_t zone_lock;
 	} ____cacheline_aligned_in_smp;
 
 	unsigned long run_state;
+
+	struct list_head at_head;
+	struct list_head at_tail;
 
 	struct dd_per_prio per_prio[DD_PRIO_COUNT];
 
@@ -119,6 +123,9 @@ static const enum dd_prio ioprio_class_to_prio[] = {
 	[IOPRIO_CLASS_BE]	= DD_BE_PRIO,
 	[IOPRIO_CLASS_IDLE]	= DD_IDLE_PRIO,
 };
+
+static void dd_insert_request(struct request_queue *q, struct request *rq,
+			      blk_insert_t flags, struct list_head *free);
 
 static inline struct rb_root *
 deadline_rb_root(struct dd_per_prio *per_prio, struct request *rq)
@@ -592,6 +599,33 @@ static struct request *dd_dispatch_prio_aged_requests(struct deadline_data *dd,
 	return NULL;
 }
 
+static void __dd_do_insert(struct request_queue *q, blk_insert_t flags,
+			   struct list_head *list, struct list_head *free)
+{
+	while (!list_empty(list)) {
+		struct request *rq;
+
+		rq = list_first_entry(list, struct request, queuelist);
+		list_del_init(&rq->queuelist);
+		dd_insert_request(q, rq, flags, free);
+	}
+}
+
+static void dd_do_insert(struct request_queue *q, struct list_head *free)
+{
+	struct deadline_data *dd = q->elevator->elevator_data;
+	LIST_HEAD(at_head);
+	LIST_HEAD(at_tail);
+
+	spin_lock(&dd->insert_lock);
+	list_splice_init(&dd->at_head, &at_head);
+	list_splice_init(&dd->at_tail, &at_tail);
+	spin_unlock(&dd->insert_lock);
+
+	__dd_do_insert(q, BLK_MQ_INSERT_AT_HEAD, &at_head, free);
+	__dd_do_insert(q, 0, &at_tail, free);
+}
+
 /*
  * Called from blk_mq_run_hw_queue() -> __blk_mq_sched_dispatch_requests().
  *
@@ -602,10 +636,12 @@ static struct request *dd_dispatch_prio_aged_requests(struct deadline_data *dd,
  */
 static struct request *dd_dispatch_request(struct blk_mq_hw_ctx *hctx)
 {
-	struct deadline_data *dd = hctx->queue->elevator->elevator_data;
+	struct request_queue *q = hctx->queue;
+	struct deadline_data *dd = q->elevator->elevator_data;
 	const unsigned long now = jiffies;
 	struct request *rq;
 	enum dd_prio prio;
+	LIST_HEAD(free);
 
 	/*
 	 * If someone else is already dispatching, skip this one. This will
@@ -620,6 +656,7 @@ static struct request *dd_dispatch_request(struct blk_mq_hw_ctx *hctx)
 		return NULL;
 
 	spin_lock(&dd->lock);
+	dd_do_insert(q, &free);
 	rq = dd_dispatch_prio_aged_requests(dd, now);
 	if (rq)
 		goto unlock;
@@ -638,6 +675,7 @@ unlock:
 	clear_bit_unlock(DD_DISPATCHING, &dd->run_state);
 	spin_unlock(&dd->lock);
 
+	blk_mq_free_requests(&free);
 	return rq;
 }
 
@@ -727,7 +765,11 @@ static int dd_init_sched(struct request_queue *q, struct elevator_type *e)
 	eq->elevator_data = dd;
 
 	spin_lock_init(&dd->lock);
+	spin_lock_init(&dd->insert_lock);
 	spin_lock_init(&dd->zone_lock);
+
+	INIT_LIST_HEAD(&dd->at_head);
+	INIT_LIST_HEAD(&dd->at_tail);
 
 	for (prio = 0; prio <= DD_PRIO_MAX; prio++) {
 		struct dd_per_prio *per_prio = &dd->per_prio[prio];
@@ -899,19 +941,13 @@ static void dd_insert_requests(struct blk_mq_hw_ctx *hctx,
 {
 	struct request_queue *q = hctx->queue;
 	struct deadline_data *dd = q->elevator->elevator_data;
-	LIST_HEAD(free);
 
-	spin_lock(&dd->lock);
-	while (!list_empty(list)) {
-		struct request *rq;
-
-		rq = list_first_entry(list, struct request, queuelist);
-		list_del_init(&rq->queuelist);
-		dd_insert_request(q, rq, flags, &free);
-	}
-	spin_unlock(&dd->lock);
-
-	blk_mq_free_requests(&free);
+	spin_lock(&dd->insert_lock);
+	if (flags & BLK_MQ_INSERT_AT_HEAD)
+		list_splice_init(list, &dd->at_head);
+	else
+		list_splice_init(list, &dd->at_tail);
+	spin_unlock(&dd->insert_lock);
 }
 
 /* Callback from inside blk_mq_rq_ctx_init(). */
@@ -989,6 +1025,10 @@ static bool dd_has_work(struct blk_mq_hw_ctx *hctx)
 {
 	struct deadline_data *dd = hctx->queue->elevator->elevator_data;
 	enum dd_prio prio;
+
+	if (!list_empty_careful(&dd->at_head) ||
+	    !list_empty_careful(&dd->at_tail))
+		return true;
 
 	for (prio = 0; prio <= DD_PRIO_MAX; prio++)
 		if (dd_has_work_for_prio(&dd->per_prio[prio]))
