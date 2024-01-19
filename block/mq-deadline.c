@@ -800,7 +800,19 @@ static bool dd_bio_merge(struct request_queue *q, struct bio *bio,
 	struct request *free = NULL;
 	bool ret;
 
-	spin_lock(&dd->lock);
+	/*
+	 * bio merging is called for every bio queued, and it's very easy
+	 * to run into contention because of that. If we fail getting
+	 * the dd lock, just skip this merge attempt. For related IO, the
+	 * plug will be the successful merging point. If we get here, we
+	 * already failed doing the obvious merge. Chances of actually
+	 * getting a merge off this path is a lot slimmer, so skipping an
+	 * occassional lookup that will most likely not succeed anyway should
+	 * not be a problem.
+	 */
+	if (!spin_trylock(&dd->lock))
+		return false;
+
 	ret = blk_mq_sched_try_merge(q, bio, nr_segs, &free);
 	spin_unlock(&dd->lock);
 
