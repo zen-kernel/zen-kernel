@@ -5174,6 +5174,10 @@ static bool bfq_has_work(struct blk_mq_hw_ctx *hctx)
 {
 	struct bfq_data *bfqd = hctx->queue->elevator->elevator_data;
 
+	if (!list_empty_careful(&bfqd->at_head) ||
+	    !list_empty_careful(&bfqd->at_tail))
+		return true;
+
 	/*
 	 * Avoiding lock: a race on bfqd->queued should cause at
 	 * most a call to dispatch for nothing
@@ -5323,12 +5327,44 @@ static inline void bfq_update_dispatch_stats(struct request_queue *q,
 					     bool idle_timer_disabled) {}
 #endif /* CONFIG_BFQ_CGROUP_DEBUG */
 
+static void bfq_insert_request(struct request_queue *q, struct request *rq,
+			       blk_insert_t flags, struct list_head *free);
+
+static void __bfq_do_insert(struct request_queue *q, blk_insert_t flags,
+			    struct list_head *list, struct list_head *free)
+{
+	while (!list_empty(list)) {
+		struct request *rq;
+
+		rq = list_first_entry(list, struct request, queuelist);
+		list_del_init(&rq->queuelist);
+		bfq_insert_request(q, rq, flags, free);
+	}
+}
+
+static void bfq_do_insert(struct request_queue *q, struct list_head *free)
+{
+	struct bfq_data *bfqd = q->elevator->elevator_data;
+	LIST_HEAD(at_head);
+	LIST_HEAD(at_tail);
+
+	spin_lock(&bfqd->insert_lock);
+	list_splice_init(&bfqd->at_head, &at_head);
+	list_splice_init(&bfqd->at_tail, &at_tail);
+	spin_unlock(&bfqd->insert_lock);
+
+	__bfq_do_insert(q, BLK_MQ_INSERT_AT_HEAD, &at_head, free);
+	__bfq_do_insert(q, 0, &at_tail, free);
+}
+
 static struct request *bfq_dispatch_request(struct blk_mq_hw_ctx *hctx)
 {
-	struct bfq_data *bfqd = hctx->queue->elevator->elevator_data;
+	struct request_queue *q = hctx->queue;
+	struct bfq_data *bfqd = q->elevator->elevator_data;
 	struct request *rq;
 	struct bfq_queue *in_serv_queue;
 	bool waiting_rq, idle_timer_disabled = false;
+	LIST_HEAD(free);
 
 	/*
 	 * If someone else is already dispatching, skip this one. This will
@@ -5344,6 +5380,8 @@ static struct request *bfq_dispatch_request(struct blk_mq_hw_ctx *hctx)
 
 	spin_lock_irq(&bfqd->lock);
 
+	bfq_do_insert(hctx->queue, &free);
+
 	in_serv_queue = bfqd->in_service_queue;
 	waiting_rq = in_serv_queue && bfq_bfqq_wait_request(in_serv_queue);
 
@@ -5355,6 +5393,7 @@ static struct request *bfq_dispatch_request(struct blk_mq_hw_ctx *hctx)
 
 	clear_bit_unlock(BFQ_DISPATCHING, &bfqd->run_state);
 	spin_unlock_irq(&bfqd->lock);
+	blk_mq_free_requests(&free);
 	bfq_update_dispatch_stats(hctx->queue, rq,
 			idle_timer_disabled ? in_serv_queue : NULL,
 				idle_timer_disabled);
@@ -6276,25 +6315,20 @@ static inline void bfq_update_insert_stats(struct request_queue *q,
 static struct bfq_queue *bfq_init_rq(struct request *rq);
 
 static void bfq_insert_request(struct request_queue *q, struct request *rq,
-			       blk_insert_t flags)
+			       blk_insert_t flags, struct list_head *free)
 {
 	struct bfq_data *bfqd = q->elevator->elevator_data;
 	struct bfq_queue *bfqq;
 	bool idle_timer_disabled = false;
 	blk_opf_t cmd_flags;
-	LIST_HEAD(free);
 
 #ifdef CONFIG_BFQ_GROUP_IOSCHED
 	if (!cgroup_subsys_on_dfl(io_cgrp_subsys) && rq->bio)
 		bfqg_stats_update_legacy_io(q, rq);
 #endif
-	spin_lock_irq(&bfqd->lock);
 	bfqq = bfq_init_rq(rq);
-	if (blk_mq_sched_try_insert_merge(q, rq, &free)) {
-		spin_unlock_irq(&bfqd->lock);
-		blk_mq_free_requests(&free);
+	if (blk_mq_sched_try_insert_merge(q, rq, free))
 		return;
-	}
 
 	trace_block_rq_insert(rq);
 
@@ -6324,8 +6358,6 @@ static void bfq_insert_request(struct request_queue *q, struct request *rq,
 	 * merge).
 	 */
 	cmd_flags = rq->cmd_flags;
-	spin_unlock_irq(&bfqd->lock);
-
 	bfq_update_insert_stats(q, bfqq, idle_timer_disabled,
 				cmd_flags);
 }
@@ -6334,13 +6366,15 @@ static void bfq_insert_requests(struct blk_mq_hw_ctx *hctx,
 				struct list_head *list,
 				blk_insert_t flags)
 {
-	while (!list_empty(list)) {
-		struct request *rq;
+	struct request_queue *q = hctx->queue;
+	struct bfq_data *bfqd = q->elevator->elevator_data;
 
-		rq = list_first_entry(list, struct request, queuelist);
-		list_del_init(&rq->queuelist);
-		bfq_insert_request(hctx->queue, rq, flags);
-	}
+	spin_lock_irq(&bfqd->insert_lock);
+	if (flags & BLK_MQ_INSERT_AT_HEAD)
+		list_splice_init(list, &bfqd->at_head);
+	else
+		list_splice_init(list, &bfqd->at_tail);
+	spin_unlock_irq(&bfqd->insert_lock);
 }
 
 static void bfq_update_hw_tag(struct bfq_data *bfqd)
@@ -7250,6 +7284,10 @@ static int bfq_init_queue(struct request_queue *q, struct elevator_type *e)
 	spin_unlock_irq(&q->queue_lock);
 
 	spin_lock_init(&bfqd->lock);
+	spin_lock_init(&bfqd->insert_lock);
+
+	INIT_LIST_HEAD(&bfqd->at_head);
+	INIT_LIST_HEAD(&bfqd->at_tail);
 
 	/*
 	 * Our fallback bfqq if bfq_find_alloc_queue() runs into OOM issues.
