@@ -5304,6 +5304,18 @@ static struct request *bfq_dispatch_request(struct blk_mq_hw_ctx *hctx)
 	struct bfq_queue *in_serv_queue;
 	bool waiting_rq, idle_timer_disabled = false;
 
+	/*
+	 * If someone else is already dispatching, skip this one. This will
+	 * defer the next dispatch event to when something completes, and could
+	 * potentially lower the queue depth for contended cases.
+	 *
+	 * See the logic in blk_mq_do_dispatch_sched(), which loops and
+	 * retries if nothing is dispatched.
+	 */
+	if (test_bit(BFQ_DISPATCHING, &bfqd->run_state) ||
+	    test_and_set_bit_lock(BFQ_DISPATCHING, &bfqd->run_state))
+		return NULL;
+
 	spin_lock_irq(&bfqd->lock);
 
 	in_serv_queue = bfqd->in_service_queue;
@@ -5315,6 +5327,7 @@ static struct request *bfq_dispatch_request(struct blk_mq_hw_ctx *hctx)
 			waiting_rq && !bfq_bfqq_wait_request(in_serv_queue);
 	}
 
+	clear_bit_unlock(BFQ_DISPATCHING, &bfqd->run_state);
 	spin_unlock_irq(&bfqd->lock);
 	bfq_update_dispatch_stats(hctx->queue, rq,
 			idle_timer_disabled ? in_serv_queue : NULL,
@@ -7210,6 +7223,8 @@ static int bfq_init_queue(struct request_queue *q, struct elevator_type *e)
 	q->elevator = eq;
 	spin_unlock_irq(&q->queue_lock);
 
+	spin_lock_init(&bfqd->lock);
+
 	/*
 	 * Our fallback bfqq if bfq_find_alloc_queue() runs into OOM issues.
 	 * Grab a permanent reference to it, so that the normal code flow
@@ -7327,8 +7342,6 @@ static int bfq_init_queue(struct request_queue *q, struct elevator_type *e)
 
 	/* see comments on the definition of next field inside bfq_data */
 	bfqd->actuator_load_threshold = 4;
-
-	spin_lock_init(&bfqd->lock);
 
 	/*
 	 * The invocation of the next bfq_create_group_hierarchy
