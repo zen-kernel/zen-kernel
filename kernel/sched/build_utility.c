@@ -84,9 +84,7 @@
 
 #ifdef CONFIG_SMP
 # include "cpupri.c"
-#ifndef CONFIG_SCHED_ALT
 # include "stop_task.c"
-#endif
 # include "topology.c"
 #endif
 
