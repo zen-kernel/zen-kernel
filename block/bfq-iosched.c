@@ -467,6 +467,21 @@ static struct bfq_io_cq *bfq_bic_lookup(struct request_queue *q)
 	return icq;
 }
 
+static struct bfq_io_cq *bfq_bic_try_lookup(struct request_queue *q)
+{
+	if (!current->io_context)
+		return NULL;
+	if (spin_trylock_irq(&q->queue_lock)) {
+		struct bfq_io_cq *icq;
+
+		icq = icq_to_bic(ioc_lookup_icq(q));
+		spin_unlock_irq(&q->queue_lock);
+		return icq;
+	}
+
+	return NULL;
+}
+
 /*
  * Scheduler run of queue, if there are requests pending and no one in the
  * driver that will restart queueing.
@@ -2454,10 +2469,21 @@ static bool bfq_bio_merge(struct request_queue *q, struct bio *bio,
 	 * returned by bfq_bic_lookup does not go away before
 	 * bfqd->lock is taken.
 	 */
-	struct bfq_io_cq *bic = bfq_bic_lookup(q);
+	struct bfq_io_cq *bic = bfq_bic_try_lookup(q);
 	bool ret;
 
-	spin_lock_irq(&bfqd->lock);
+	/*
+	 * bio merging is called for every bio queued, and it's very easy
+	 * to run into contention because of that. If we fail getting
+	 * the dd lock, just skip this merge attempt. For related IO, the
+	 * plug will be the successful merging point. If we get here, we
+	 * already failed doing the obvious merge. Chances of actually
+	 * getting a merge off this path is a lot slimmer, so skipping an
+	 * occassional lookup that will most likely not succeed anyway should
+	 * not be a problem.
+	 */
+	if (!spin_trylock_irq(&bfqd->lock))
+		return false;
 
 	if (bic) {
 		/*
