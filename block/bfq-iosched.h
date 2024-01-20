@@ -516,9 +516,13 @@ enum {
 struct bfq_data {
 	struct {
 		spinlock_t lock;
+		spinlock_t insert_lock;
 	} ____cacheline_aligned_in_smp;
 
 	unsigned long run_state;
+
+	struct list_head at_head;
+	struct list_head at_tail;
 
 	/* device request queue */
 	struct request_queue *queue;
