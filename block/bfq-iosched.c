@@ -6236,10 +6236,9 @@ static inline void bfq_update_insert_stats(struct request_queue *q,
 
 static struct bfq_queue *bfq_init_rq(struct request *rq);
 
-static void bfq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
+static void bfq_insert_request(struct request_queue *q, struct request *rq,
 			       blk_insert_t flags)
 {
-	struct request_queue *q = hctx->queue;
 	struct bfq_data *bfqd = q->elevator->elevator_data;
 	struct bfq_queue *bfqq;
 	bool idle_timer_disabled = false;
@@ -6301,7 +6300,7 @@ static void bfq_insert_requests(struct blk_mq_hw_ctx *hctx,
 
 		rq = list_first_entry(list, struct request, queuelist);
 		list_del_init(&rq->queuelist);
-		bfq_insert_request(hctx, rq, flags);
+		bfq_insert_request(hctx->queue, rq, flags);
 	}
 }
 
