@@ -504,12 +504,26 @@ struct bfq_io_cq {
 	unsigned int requests;	/* Number of requests this process has in flight */
 };
 
+enum {
+	BFQ_DISPATCHING	= 0,
+};
+
 /**
  * struct bfq_data - per-device data structure.
  *
  * All the fields are protected by @lock.
  */
 struct bfq_data {
+	struct {
+		spinlock_t lock;
+		spinlock_t insert_lock;
+	} ____cacheline_aligned_in_smp;
+
+	unsigned long run_state;
+
+	struct list_head at_head;
+	struct list_head at_tail;
+
 	/* device request queue */
 	struct request_queue *queue;
 	/* dispatch queue */
@@ -794,8 +808,6 @@ struct bfq_data {
 
 	/* fallback dummy bfqq for extreme OOM conditions */
 	struct bfq_queue oom_bfqq;
-
-	spinlock_t lock;
 
 	/*
 	 * bic associated with the task issuing current bio for
