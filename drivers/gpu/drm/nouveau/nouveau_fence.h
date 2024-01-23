@@ -46,8 +46,6 @@ struct nouveau_fence_chan {
 	char name[32];
 
 	struct nvif_event event;
-	struct work_struct allow_block_work;
-	atomic_t notify_ref;
 	int dead, killed;
 };
 
