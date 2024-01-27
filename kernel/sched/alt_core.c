@@ -118,7 +118,6 @@ struct affinity_context {
  * sched_yield_type - Type of sched_yield() will be performed.
  * 0: No yield.
  * 1: Requeue task. (default)
- * 2: Set rq skip task. (Same as mainline)
  */
 int sched_yield_type __read_mostly = 1;
 
@@ -272,16 +271,6 @@ sched_rq_next_task(struct task_struct *p, struct rq *rq)
 	}
 
 	return list_next_entry(p, sq_node);
-}
-
-static inline struct task_struct *rq_runnable_task(struct rq *rq)
-{
-	struct task_struct *next = sched_rq_first_task(rq);
-
-	if (unlikely(next == rq->skip))
-		next = sched_rq_next_task(next, rq);
-
-	return next;
 }
 
 /*
@@ -4687,30 +4676,8 @@ static inline void check_curr(struct task_struct *p, struct rq *rq)
 static inline struct task_struct *
 choose_next_task(struct rq *rq, int cpu)
 {
-	struct task_struct *next;
+	struct task_struct *next = sched_rq_first_task(rq);
 
-	if (unlikely(rq->skip)) {
-		next = rq_runnable_task(rq);
-		if (next == rq->idle) {
-#ifdef	CONFIG_SMP
-			if (!take_other_rq_tasks(rq, cpu)) {
-#endif
-				rq->skip = NULL;
-				schedstat_inc(rq->sched_goidle);
-				return next;
-#ifdef	CONFIG_SMP
-			}
-			next = rq_runnable_task(rq);
-#endif
-		}
-		rq->skip = NULL;
-#ifdef CONFIG_HIGH_RES_TIMERS
-		hrtick_start(rq, next->time_slice);
-#endif
-		return next;
-	}
-
-	next = sched_rq_first_task(rq);
 	if (next == rq->idle) {
 #ifdef	CONFIG_SMP
 		if (!take_other_rq_tasks(rq, cpu)) {
@@ -6418,13 +6385,9 @@ static void do_sched_yield(void)
 		if (task_on_rq_queued(p))
 			requeue_task(p, rq, task_sched_prio_idx(p, rq));
 	} else if (rq->nr_running > 1) {
-		if (1 == sched_yield_type) {
-			do_sched_yield_type_1(p, rq);
-			if (task_on_rq_queued(p))
-				requeue_task(p, rq, task_sched_prio_idx(p, rq));
-		} else if (2 == sched_yield_type) {
-			rq->skip = p;
-		}
+		do_sched_yield_type_1(p, rq);
+		if (task_on_rq_queued(p))
+			requeue_task(p, rq, task_sched_prio_idx(p, rq));
 	}
 
 	preempt_disable();
@@ -7725,7 +7688,6 @@ void __init sched_init(void)
 
 		sched_queue_init(&rq->queue);
 		rq->prio = IDLE_TASK_SCHED_PRIO;
-		rq->skip = NULL;
 
 		raw_spin_lock_init(&rq->lock);
 		rq->nr_running = rq->nr_uninterruptible = 0;
