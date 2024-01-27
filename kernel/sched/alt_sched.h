@@ -167,7 +167,6 @@ struct rq {
 	struct task_struct __rcu	*curr;
 	struct task_struct		*idle;
 	struct task_struct		*stop;
-	struct task_struct		*skip;
 	struct mm_struct		*prev_mm;
 
 	struct sched_queue	queue;

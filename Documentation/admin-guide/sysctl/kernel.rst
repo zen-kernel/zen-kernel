@@ -1682,4 +1682,3 @@ to sched_yield() will be performed.
 
   0 - No yield.
   1 - Requeue task. (default)
-  2 - Set run queue skip task. Same as CFS.
