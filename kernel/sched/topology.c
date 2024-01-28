@@ -2809,5 +2809,11 @@ int sched_numa_find_nth_cpu(const struct cpumask *cpus, int cpu, int node)
 {
 	return cpumask_nth(cpu, cpus);
 }
+
+const struct cpumask *sched_numa_hop_mask(unsigned int node, unsigned int hops)
+{
+	return ERR_PTR(-EOPNOTSUPP);
+}
+EXPORT_SYMBOL_GPL(sched_numa_hop_mask);
 #endif /* CONFIG_NUMA */
 #endif
