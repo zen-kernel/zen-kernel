@@ -186,6 +186,7 @@ static inline void sched_queue_init_idle(struct sched_queue *q,
 	idle->sq_idx = IDLE_TASK_SCHED_PRIO;
 	INIT_LIST_HEAD(&q->heads[idle->sq_idx]);
 	list_add(&idle->sq_node, &q->heads[idle->sq_idx]);
+	idle->on_rq = TASK_ON_RQ_QUEUED;
 }
 
 static inline void
