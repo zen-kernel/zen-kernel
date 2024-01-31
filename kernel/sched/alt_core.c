@@ -152,11 +152,12 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 # define finish_arch_post_lock_switch()	do { } while (0)
 #endif
 
+static cpumask_t sched_preempt_mask[SCHED_QUEUE_BITS + 1] ____cacheline_aligned_in_smp;
+
+static cpumask_t *const sched_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS - 1];
 #ifdef CONFIG_SCHED_SMT
-static cpumask_t sched_sg_idle_mask ____cacheline_aligned_in_smp;
+static cpumask_t *const sched_sg_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS];
 #endif
-static cpumask_t sched_preempt_mask[SCHED_QUEUE_BITS] ____cacheline_aligned_in_smp;
-static cpumask_t *const sched_idle_mask = &sched_preempt_mask[0];
 
 /* task function */
 static inline const struct cpumask *task_user_cpus(struct task_struct *p)
@@ -193,14 +194,14 @@ static inline void
 clear_recorded_preempt_mask(int pr, int low, int high, int cpu)
 {
 	if (low < pr && pr <= high)
-		cpumask_clear_cpu(cpu, sched_preempt_mask + SCHED_QUEUE_BITS - pr);
+		cpumask_clear_cpu(cpu, sched_preempt_mask + pr);
 }
 
 static inline void
 set_recorded_preempt_mask(int pr, int low, int high, int cpu)
 {
 	if (low < pr && pr <= high)
-		cpumask_set_cpu(cpu, sched_preempt_mask + SCHED_QUEUE_BITS - pr);
+		cpumask_set_cpu(cpu, sched_preempt_mask + pr);
 }
 
 static atomic_t sched_prio_record = ATOMIC_INIT(0);
@@ -223,8 +224,8 @@ static inline void update_sched_preempt_mask(struct rq *rq)
 		if (IDLE_TASK_SCHED_PRIO == last_prio) {
 #ifdef CONFIG_SCHED_SMT
 			if (static_branch_likely(&sched_smt_present))
-				cpumask_andnot(&sched_sg_idle_mask,
-					       &sched_sg_idle_mask, cpu_smt_mask(cpu));
+				cpumask_andnot(sched_sg_idle_mask,
+					       sched_sg_idle_mask, cpu_smt_mask(cpu));
 #endif
 			cpumask_clear_cpu(cpu, sched_idle_mask);
 			last_prio -= 2;
@@ -238,8 +239,8 @@ static inline void update_sched_preempt_mask(struct rq *rq)
 #ifdef CONFIG_SCHED_SMT
 		if (static_branch_likely(&sched_smt_present) &&
 		    cpumask_intersects(cpu_smt_mask(cpu), sched_idle_mask))
-			cpumask_or(&sched_sg_idle_mask,
-				   &sched_sg_idle_mask, cpu_smt_mask(cpu));
+			cpumask_or(sched_sg_idle_mask,
+				   sched_sg_idle_mask, cpu_smt_mask(cpu));
 #endif
 		cpumask_set_cpu(cpu, sched_idle_mask);
 		prio -= 2;
@@ -2049,28 +2050,33 @@ out:
 }
 
 static inline void
-sched_preempt_mask_flush(cpumask_t *mask, int prio)
+sched_preempt_mask_flush(cpumask_t *mask, int prio, int ref)
 {
 	int cpu;
 
-	cpumask_copy(mask, sched_idle_mask);
-
-	for_each_clear_bit(cpu, cpumask_bits(mask), nr_cpumask_bits) {
-		if (prio < cpu_rq(cpu)->prio)
-			cpumask_set_cpu(cpu, mask);
+	cpumask_copy(mask, sched_preempt_mask + ref);
+	if (prio < ref) {
+		for_each_clear_bit(cpu, cpumask_bits(mask), nr_cpumask_bits) {
+			if (prio < cpu_rq(cpu)->prio)
+				cpumask_set_cpu(cpu, mask);
+		}
+	} else {
+		for_each_cpu_andnot(cpu, mask, sched_idle_mask) {
+			if (prio >= cpu_rq(cpu)->prio)
+				cpumask_clear_cpu(cpu, mask);
+		}
 	}
 }
 
 static inline int
-preempt_mask_check(struct task_struct *p, cpumask_t *allow_mask, cpumask_t *preempt_mask)
+preempt_mask_check(cpumask_t *preempt_mask, cpumask_t *allow_mask, int prio)
 {
-	int task_prio = task_sched_prio(p);
-	cpumask_t *mask = sched_preempt_mask + SCHED_QUEUE_BITS - 1 - task_prio;
+	cpumask_t *mask = sched_preempt_mask + prio;
 	int pr = atomic_read(&sched_prio_record);
 
-	if (pr != task_prio) {
-		sched_preempt_mask_flush(mask, task_prio);
-		atomic_set(&sched_prio_record, task_prio);
+	if (pr != prio && SCHED_QUEUE_BITS - 1 != prio) {
+		sched_preempt_mask_flush(mask, prio, pr);
+		atomic_set(&sched_prio_record, prio);
 	}
 
 	return cpumask_and(preempt_mask, allow_mask, mask);
@@ -2085,10 +2091,10 @@ static inline int select_task_rq(struct task_struct *p)
 
 	if (
 #ifdef CONFIG_SCHED_SMT
-	    cpumask_and(&mask, &allow_mask, &sched_sg_idle_mask) ||
+	    cpumask_and(&mask, &allow_mask, sched_sg_idle_mask) ||
 #endif
 	    cpumask_and(&mask, &allow_mask, sched_idle_mask) ||
-	    preempt_mask_check(p, &allow_mask, &mask))
+	    preempt_mask_check(&mask, &allow_mask, task_sched_prio(p)))
 		return best_mask_cpu(task_cpu(p), &mask);
 
 	return best_mask_cpu(task_cpu(p), &allow_mask);
@@ -4192,7 +4198,7 @@ static inline int sg_balance_cpu_stop(void *data)
 	rq->active_balance = 0;
 	/* _something_ may have changed the task, double check again */
 	if (task_on_rq_queued(p) && task_rq(p) == rq &&
-	    cpumask_and(&tmp, p->cpus_ptr, &sched_sg_idle_mask) &&
+	    cpumask_and(&tmp, p->cpus_ptr, sched_sg_idle_mask) &&
 	    !is_migration_disabled(p)) {
 		int cpu = cpu_of(rq);
 		int dcpu = __best_mask_cpu(&tmp, per_cpu(sched_cpu_llc_mask, cpu));
@@ -4219,7 +4225,7 @@ static inline int sg_balance_trigger(const int cpu)
 		return 0;
 	curr = rq->curr;
 	res = (!is_idle_task(curr)) && (1 == rq->nr_running) &&\
-	      cpumask_intersects(curr->cpus_ptr, &sched_sg_idle_mask) &&\
+	      cpumask_intersects(curr->cpus_ptr, sched_sg_idle_mask) &&\
 	      !is_migration_disabled(curr) && (!rq->active_balance);
 
 	if (res)
@@ -4248,7 +4254,7 @@ static inline void sg_balance(struct rq *rq, int cpu)
 	 * Only cpu in slibing idle group will do the checking and then
 	 * find potential cpus which can migrate the current running task
 	 */
-	if (cpumask_test_cpu(cpu, &sched_sg_idle_mask) &&
+	if (cpumask_test_cpu(cpu, sched_sg_idle_mask) &&
 	    cpumask_andnot(&chk, cpu_online_mask, sched_idle_mask) &&
 	    cpumask_andnot(&chk, &chk, &sched_rq_pending_mask)) {
 		int i;
@@ -7448,7 +7454,7 @@ int sched_cpu_deactivate(unsigned int cpu)
 	if (cpumask_weight(cpu_smt_mask(cpu)) == 2) {
 		static_branch_dec_cpuslocked(&sched_smt_present);
 		if (!static_branch_likely(&sched_smt_present))
-			cpumask_clear(&sched_sg_idle_mask);
+			cpumask_clear(sched_sg_idle_mask);
 	}
 #endif
 
