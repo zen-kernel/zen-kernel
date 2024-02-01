@@ -72,6 +72,12 @@ enum afs_call_state {
 	AFS_CALL_COMPLETE,		/* Completed or failed */
 };
 
+struct afs_address {
+	struct rxrpc_peer	*peer;
+	u16			service_id;
+	short			last_error;	/* Last error from this address */
+};
+
 /*
  * List of server addresses.
  */
@@ -87,7 +93,7 @@ struct afs_addr_list {
 	enum dns_lookup_status	status:8;
 	unsigned long		failed;		/* Mask of addrs that failed locally/ICMP */
 	unsigned long		responded;	/* Mask of addrs that responded */
-	struct sockaddr_rxrpc	addrs[] __counted_by(max_addrs);
+	struct afs_address	addrs[] __counted_by(max_addrs);
 #define AFS_MAX_ADDRESSES ((unsigned int)(sizeof(unsigned long) * 8))
 };
 
@@ -116,7 +122,6 @@ struct afs_call {
 	};
 	void			*buffer;	/* reply receive buffer */
 	union {
-		long			ret0;	/* Value to reply with instead of 0 */
 		struct afs_addr_list	*ret_alist;
 		struct afs_vldb_entry	*ret_vldb;
 		char			*ret_str;
@@ -140,6 +145,7 @@ struct afs_call {
 	bool			upgrade;	/* T to request service upgrade */
 	bool			intr;		/* T if interruptible */
 	bool			unmarshalling_error; /* T if an unmarshalling error occurred */
+	bool			responded;	/* Got a response from the call (may be abort) */
 	u16			service_id;	/* Actual service ID (after upgrade) */
 	unsigned int		debug_id;	/* Trace ID */
 	u32			operation_ID;	/* operation ID for an incoming call */
@@ -418,7 +424,7 @@ struct afs_vlserver {
 	atomic_t		probe_outstanding;
 	spinlock_t		probe_lock;
 	struct {
-		unsigned int	rtt;		/* RTT in uS */
+		unsigned int	rtt;		/* Best RTT in uS (or UINT_MAX) */
 		u32		abort_code;
 		short		error;
 		unsigned short	flags;
@@ -535,7 +541,7 @@ struct afs_server {
 	atomic_t		probe_outstanding;
 	spinlock_t		probe_lock;
 	struct {
-		unsigned int	rtt;		/* RTT in uS */
+		unsigned int	rtt;		/* Best RTT in uS (or UINT_MAX) */
 		u32		abort_code;
 		short		error;
 		bool		responded:1;
@@ -714,8 +720,10 @@ struct afs_permits {
  * Error prioritisation and accumulation.
  */
 struct afs_error {
-	short	error;			/* Accumulated error */
+	s32	abort_code;		/* Cumulative abort code */
+	short	error;			/* Cumulative error */
 	bool	responded;		/* T if server responded */
+	bool	aborted;		/* T if ->error is from an abort */
 };
 
 /*
@@ -725,10 +733,8 @@ struct afs_addr_cursor {
 	struct afs_addr_list	*alist;		/* Current address list (pins ref) */
 	unsigned long		tried;		/* Tried addresses */
 	signed char		index;		/* Current address */
-	bool			responded;	/* T if the current address responded */
 	unsigned short		nr_iterations;	/* Number of address iterations */
-	short			error;
-	u32			abort_code;
+	bool			call_responded;
 };
 
 /*
@@ -741,13 +747,16 @@ struct afs_vl_cursor {
 	struct afs_vlserver	*server;	/* Server on which this resides */
 	struct key		*key;		/* Key for the server */
 	unsigned long		untried;	/* Bitmask of untried servers */
+	struct afs_error	cumul_error;	/* Cumulative error */
+	s32			call_abort_code;
 	short			index;		/* Current server */
-	short			error;
+	short			call_error;	/* Error from single call */
 	unsigned short		flags;
 #define AFS_VL_CURSOR_STOP	0x0001		/* Set to cease iteration */
 #define AFS_VL_CURSOR_RETRY	0x0002		/* Set to do a retry */
 #define AFS_VL_CURSOR_RETRIED	0x0004		/* Set if started a retry */
-	unsigned short		nr_iterations;	/* Number of server iterations */
+	short			nr_iterations;	/* Number of server iterations */
+	bool			call_responded;	/* T if the current address responded */
 };
 
 /*
@@ -798,8 +807,10 @@ struct afs_operation {
 	struct dentry		*dentry_2;	/* Second dentry to be altered */
 	struct timespec64	mtime;		/* Modification time to record */
 	struct timespec64	ctime;		/* Change time to set */
+	struct afs_error	cumul_error;	/* Cumulative error */
 	short			nr_files;	/* Number of entries in file[], more_files */
-	short			error;
+	short			call_error;	/* Error from single call */
+	s32			call_abort_code; /* Abort code from single call */
 	unsigned int		debug_id;
 
 	unsigned int		cb_v_break;	/* Volume break counter before op */
@@ -854,7 +865,9 @@ struct afs_operation {
 	struct afs_call		*call;
 	unsigned long		untried;	/* Bitmask of untried servers */
 	short			index;		/* Current server */
-	unsigned short		nr_iterations;	/* Number of server iterations */
+	short			nr_iterations;	/* Number of server iterations */
+	bool			call_responded;	/* T if the current address responded */
+
 
 	unsigned int		flags;
 #define AFS_OPERATION_STOP		0x0001	/* Set to cease iteration */
@@ -962,19 +975,21 @@ static inline struct afs_addr_list *afs_get_addrlist(struct afs_addr_list *alist
 		refcount_inc(&alist->usage);
 	return alist;
 }
-extern struct afs_addr_list *afs_alloc_addrlist(unsigned int,
-						unsigned short,
-						unsigned short);
+extern struct afs_addr_list *afs_alloc_addrlist(unsigned int nr, u16 service_id);
 extern void afs_put_addrlist(struct afs_addr_list *);
 extern struct afs_vlserver_list *afs_parse_text_addrs(struct afs_net *,
 						      const char *, size_t, char,
 						      unsigned short, unsigned short);
+bool afs_addr_list_same(const struct afs_addr_list *a,
+			const struct afs_addr_list *b);
 extern struct afs_vlserver_list *afs_dns_query(struct afs_cell *, time64_t *);
 extern bool afs_iterate_addresses(struct afs_addr_cursor *);
-extern int afs_end_cursor(struct afs_addr_cursor *);
+extern void afs_end_cursor(struct afs_addr_cursor *ac);
 
-extern void afs_merge_fs_addr4(struct afs_addr_list *, __be32, u16);
-extern void afs_merge_fs_addr6(struct afs_addr_list *, __be32 *, u16);
+extern int afs_merge_fs_addr4(struct afs_net *net, struct afs_addr_list *addr,
+			      __be32 xdr, u16 port);
+extern int afs_merge_fs_addr6(struct afs_net *net, struct afs_addr_list *addr,
+			      __be32 *xdr, u16 port);
 
 /*
  * callback.c
@@ -1133,11 +1148,6 @@ extern bool afs_begin_vnode_operation(struct afs_operation *);
 extern void afs_wait_for_operation(struct afs_operation *);
 extern int afs_do_sync_operation(struct afs_operation *);
 
-static inline void afs_op_nomem(struct afs_operation *op)
-{
-	op->error = -ENOMEM;
-}
-
 static inline void afs_op_set_vnode(struct afs_operation *op, unsigned int n,
 				    struct afs_vnode *vnode)
 {
@@ -1231,6 +1241,31 @@ static inline void __afs_stat(atomic_t *s)
 extern int afs_abort_to_error(u32);
 extern void afs_prioritise_error(struct afs_error *, int, u32);
 
+static inline void afs_op_nomem(struct afs_operation *op)
+{
+	op->cumul_error.error = -ENOMEM;
+}
+
+static inline int afs_op_error(const struct afs_operation *op)
+{
+	return op->cumul_error.error;
+}
+
+static inline s32 afs_op_abort_code(const struct afs_operation *op)
+{
+	return op->cumul_error.abort_code;
+}
+
+static inline int afs_op_set_error(struct afs_operation *op, int error)
+{
+	return op->cumul_error.error = error;
+}
+
+static inline void afs_op_accumulate_error(struct afs_operation *op, int error, s32 abort_code)
+{
+	afs_prioritise_error(&op->cumul_error, error, abort_code);
+}
+
 /*
  * mntpt.c
  */
@@ -1274,7 +1309,7 @@ extern void __net_exit afs_close_socket(struct afs_net *);
 extern void afs_charge_preallocation(struct work_struct *);
 extern void afs_put_call(struct afs_call *);
 extern void afs_make_call(struct afs_addr_cursor *, struct afs_call *, gfp_t);
-extern long afs_wait_for_call_to_complete(struct afs_call *, struct afs_addr_cursor *);
+void afs_wait_for_call_to_complete(struct afs_call *call, struct afs_addr_cursor *ac);
 extern struct afs_call *afs_alloc_flat_call(struct afs_net *,
 					    const struct afs_call_type *,
 					    size_t, size_t);
@@ -1401,8 +1436,7 @@ extern void __exit afs_clean_up_permit_cache(void);
  */
 extern spinlock_t afs_server_peer_lock;
 
-extern struct afs_server *afs_find_server(struct afs_net *,
-					  const struct sockaddr_rxrpc *);
+extern struct afs_server *afs_find_server(struct afs_net *, const struct rxrpc_peer *);
 extern struct afs_server *afs_find_server_by_uuid(struct afs_net *, const uuid_t *);
 extern struct afs_server *afs_lookup_server(struct afs_cell *, struct key *, const uuid_t *, u32);
 extern struct afs_server *afs_get_server(struct afs_server *, enum afs_server_trace);
@@ -1603,7 +1637,7 @@ static inline void afs_update_dentry_version(struct afs_operation *op,
 					     struct afs_vnode_param *dir_vp,
 					     struct dentry *dentry)
 {
-	if (!op->error)
+	if (!op->cumul_error.error)
 		dentry->d_fsdata =
 			(void *)(unsigned long)dir_vp->scb.status.data_version;
 }

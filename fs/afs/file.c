@@ -243,12 +243,9 @@ static void afs_fetch_data_notify(struct afs_operation *op)
 {
 	struct afs_read *req = op->fetch.req;
 	struct netfs_io_subrequest *subreq = req->subreq;
-	int error = op->error;
+	int error = afs_op_error(op);
 
-	if (error == -ECONNABORTED)
-		error = afs_abort_to_error(op->ac.abort_code);
 	req->error = error;
-
 	if (subreq) {
 		__set_bit(NETFS_SREQ_CLEAR_TAIL, &subreq->flags);
 		netfs_subreq_terminated(subreq, error ?: req->actual_len, false);
@@ -271,7 +268,7 @@ static void afs_fetch_data_success(struct afs_operation *op)
 
 static void afs_fetch_data_put(struct afs_operation *op)
 {
-	op->fetch.req->error = op->error;
+	op->fetch.req->error = afs_op_error(op);
 	afs_put_read(op->fetch.req);
 }
 

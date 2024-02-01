@@ -13,6 +13,7 @@
 #include <linux/sched/signal.h>
 #include "internal.h"
 #include "afs_fs.h"
+#include "protocol_uae.h"
 
 /*
  * Begin iteration through a server list, starting with the vnode's last used
@@ -50,7 +51,7 @@ static bool afs_start_fs_iteration(struct afs_operation *op,
 		 * and have to return an error.
 		 */
 		if (op->flags & AFS_OPERATION_CUR_ONLY) {
-			op->error = -ESTALE;
+			afs_op_set_error(op, -ESTALE);
 			return false;
 		}
 
@@ -92,7 +93,7 @@ static bool afs_sleep_and_retry(struct afs_operation *op)
 	if (!(op->flags & AFS_OPERATION_UNINTR)) {
 		msleep_interruptible(1000);
 		if (signal_pending(current)) {
-			op->error = -ERESTARTSYS;
+			afs_op_set_error(op, -ERESTARTSYS);
 			return false;
 		}
 	} else {
@@ -111,31 +112,34 @@ bool afs_select_fileserver(struct afs_operation *op)
 	struct afs_addr_list *alist;
 	struct afs_server *server;
 	struct afs_vnode *vnode = op->file[0].vnode;
-	struct afs_error e;
-	u32 rtt;
-	int error = op->ac.error, i;
+	unsigned int rtt;
+	s32 abort_code = op->call_abort_code;
+	int error = op->call_error, i;
 
-	_enter("%lx[%d],%lx[%d],%d,%d",
+	op->nr_iterations++;
+
+	_enter("OP=%x+%x,%llx,%lx[%d],%lx[%d],%d,%d",
+	       op->debug_id, op->nr_iterations, op->volume->vid,
 	       op->untried, op->index,
 	       op->ac.tried, op->ac.index,
-	       error, op->ac.abort_code);
+	       error, abort_code);
 
 	if (op->flags & AFS_OPERATION_STOP) {
 		_leave(" = f [stopped]");
 		return false;
 	}
 
-	op->nr_iterations++;
-
-	/* Evaluate the result of the previous operation, if there was one. */
-	switch (error) {
-	case SHRT_MAX:
+	if (op->nr_iterations == 0)
 		goto start;
 
+	/* Evaluate the result of the previous operation, if there was one. */
+	switch (op->call_error) {
 	case 0:
+		op->cumul_error.responded = true;
+		fallthrough;
 	default:
 		/* Success or local failure.  Stop. */
-		op->error = error;
+		afs_op_set_error(op, error);
 		op->flags |= AFS_OPERATION_STOP;
 		_leave(" = f [okay/local %d]", error);
 		return false;
@@ -143,16 +147,27 @@ bool afs_select_fileserver(struct afs_operation *op)
 	case -ECONNABORTED:
 		/* The far side rejected the operation on some grounds.  This
 		 * might involve the server being busy or the volume having been moved.
+		 *
+		 * Note that various V* errors should not be sent to a cache manager
+		 * by a fileserver as they should be translated to more modern UAE*
+		 * errors instead.  IBM AFS and OpenAFS fileservers, however, do leak
+		 * these abort codes.
 		 */
-		switch (op->ac.abort_code) {
+		op->cumul_error.responded = true;
+		switch (abort_code) {
 		case VNOVOL:
 			/* This fileserver doesn't know about the volume.
 			 * - May indicate that the VL is wrong - retry once and compare
 			 *   the results.
 			 * - May indicate that the fileserver couldn't attach to the vol.
+			 * - The volume might have been temporarily removed so that it can
+			 *   be replaced by a volume restore.  "vos" might have ended one
+			 *   transaction and has yet to create the next.
+			 * - The volume might not be blessed or might not be in-service
+			 *   (administrative action).
 			 */
 			if (op->flags & AFS_OPERATION_VNOVOL) {
-				op->error = -EREMOTEIO;
+				afs_op_accumulate_error(op, -EREMOTEIO, abort_code);
 				goto next_server;
 			}
 
@@ -162,11 +177,13 @@ bool afs_select_fileserver(struct afs_operation *op)
 
 			set_bit(AFS_VOLUME_NEEDS_UPDATE, &op->volume->flags);
 			error = afs_check_volume_status(op->volume, op);
-			if (error < 0)
-				goto failed_set_error;
+			if (error < 0) {
+				afs_op_set_error(op, error);
+				goto failed;
+			}
 
 			if (test_bit(AFS_VOLUME_DELETED, &op->volume->flags)) {
-				op->error = -ENOMEDIUM;
+				afs_op_set_error(op, -ENOMEDIUM);
 				goto failed;
 			}
 
@@ -174,7 +191,7 @@ bool afs_select_fileserver(struct afs_operation *op)
 			 * it's the fileserver having trouble.
 			 */
 			if (rcu_access_pointer(op->volume->servers) == op->server_list) {
-				op->error = -EREMOTEIO;
+				afs_op_accumulate_error(op, -EREMOTEIO, abort_code);
 				goto next_server;
 			}
 
@@ -183,42 +200,91 @@ bool afs_select_fileserver(struct afs_operation *op)
 			_leave(" = t [vnovol]");
 			return true;
 
-		case VSALVAGE: /* TODO: Should this return an error or iterate? */
 		case VVOLEXISTS:
-		case VNOSERVICE:
 		case VONLINE:
-		case VDISKFULL:
-		case VOVERQUOTA:
-			op->error = afs_abort_to_error(op->ac.abort_code);
+			/* These should not be returned from the fileserver. */
+			pr_warn("Fileserver returned unexpected abort %d\n",
+				abort_code);
+			afs_op_accumulate_error(op, -EREMOTEIO, abort_code);
 			goto next_server;
 
+		case VNOSERVICE:
+			/* Prior to AFS 3.2 VNOSERVICE was returned from the fileserver
+			 * if the volume was neither in-service nor administratively
+			 * blessed.  All usage was replaced by VNOVOL because AFS 3.1 and
+			 * earlier cache managers did not handle VNOSERVICE and assumed
+			 * it was the client OSes errno 105.
+			 *
+			 * Starting with OpenAFS 1.4.8 VNOSERVICE was repurposed as the
+			 * fileserver idle dead time error which was sent in place of
+			 * RX_CALL_TIMEOUT (-3).  The error was intended to be sent if the
+			 * fileserver took too long to send a reply to the client.
+			 * RX_CALL_TIMEOUT would have caused the cache manager to mark the
+			 * server down whereas VNOSERVICE since AFS 3.2 would cause cache
+			 * manager to temporarily (up to 15 minutes) mark the volume
+			 * instance as unusable.
+			 *
+			 * The idle dead logic resulted in cache inconsistency since a
+			 * state changing call that the cache manager assumed was dead
+			 * could still be processed to completion by the fileserver.  This
+			 * logic was removed in OpenAFS 1.8.0 and VNOSERVICE is no longer
+			 * returned.  However, many 1.4.8 through 1.6.24 fileservers are
+			 * still in existence.
+			 *
+			 * AuriStorFS fileservers have never returned VNOSERVICE.
+			 *
+			 * VNOSERVICE should be treated as an alias for RX_CALL_TIMEOUT.
+			 */
+		case RX_CALL_TIMEOUT:
+			afs_op_accumulate_error(op, -ETIMEDOUT, abort_code);
+			goto next_server;
+
+		case VSALVAGING: /* This error should not be leaked to cache managers
+				  * but is from OpenAFS demand attach fileservers.
+				  * It should be treated as an alias for VOFFLINE.
+				  */
+		case VSALVAGE: /* VSALVAGE should be treated as a synonym of VOFFLINE */
 		case VOFFLINE:
+			/* The volume is in use by the volserver or another volume utility
+			 * for an operation that might alter the contents.  The volume is
+			 * expected to come back but it might take a long time (could be
+			 * days).
+			 */
 			if (!test_and_set_bit(AFS_VOLUME_OFFLINE, &op->volume->flags)) {
-				afs_busy(op->volume, op->ac.abort_code);
+				afs_busy(op->volume, abort_code);
 				clear_bit(AFS_VOLUME_BUSY, &op->volume->flags);
 			}
 			if (op->flags & AFS_OPERATION_NO_VSLEEP) {
-				op->error = -EADV;
+				afs_op_set_error(op, -EADV);
 				goto failed;
 			}
 			if (op->flags & AFS_OPERATION_CUR_ONLY) {
-				op->error = -ESTALE;
+				afs_op_set_error(op, -ESTALE);
 				goto failed;
 			}
 			goto busy;
 
-		case VSALVAGING:
-		case VRESTARTING:
+		case VRESTARTING: /* The fileserver is either shutting down or starting up. */
 		case VBUSY:
-			/* Retry after going round all the servers unless we
-			 * have a file lock we need to maintain.
+			/* The volume is in use by the volserver or another volume
+			 * utility for an operation that is not expected to alter the
+			 * contents of the volume.  VBUSY does not need to be returned
+			 * for a ROVOL or BACKVOL bound to an ITBusy volserver
+			 * transaction.  The fileserver is permitted to continue serving
+			 * content from ROVOLs and BACKVOLs during an ITBusy transaction
+			 * because the content will not change.  However, many fileserver
+			 * releases do return VBUSY for ROVOL and BACKVOL instances under
+			 * many circumstances.
+			 *
+			 * Retry after going round all the servers unless we have a file
+			 * lock we need to maintain.
 			 */
 			if (op->flags & AFS_OPERATION_NO_VSLEEP) {
-				op->error = -EBUSY;
+				afs_op_set_error(op, -EBUSY);
 				goto failed;
 			}
 			if (!test_and_set_bit(AFS_VOLUME_BUSY, &op->volume->flags)) {
-				afs_busy(op->volume, op->ac.abort_code);
+				afs_busy(op->volume, abort_code);
 				clear_bit(AFS_VOLUME_OFFLINE, &op->volume->flags);
 			}
 		busy:
@@ -226,7 +292,7 @@ bool afs_select_fileserver(struct afs_operation *op)
 				if (!afs_sleep_and_retry(op))
 					goto failed;
 
-				 /* Retry with same server & address */
+				/* Retry with same server & address */
 				_leave(" = t [vbusy]");
 				return true;
 			}
@@ -243,7 +309,7 @@ bool afs_select_fileserver(struct afs_operation *op)
 			 * honour, just in case someone sets up a loop.
 			 */
 			if (op->flags & AFS_OPERATION_VMOVED) {
-				op->error = -EREMOTEIO;
+				afs_op_set_error(op, -EREMOTEIO);
 				goto failed;
 			}
 			op->flags |= AFS_OPERATION_VMOVED;
@@ -251,8 +317,10 @@ bool afs_select_fileserver(struct afs_operation *op)
 			set_bit(AFS_VOLUME_WAIT, &op->volume->flags);
 			set_bit(AFS_VOLUME_NEEDS_UPDATE, &op->volume->flags);
 			error = afs_check_volume_status(op->volume, op);
-			if (error < 0)
-				goto failed_set_error;
+			if (error < 0) {
+				afs_op_set_error(op, error);
+				goto failed;
+			}
 
 			/* If the server list didn't change, then the VLDB is
 			 * out of sync with the fileservers.  This is hopefully
@@ -264,22 +332,48 @@ bool afs_select_fileserver(struct afs_operation *op)
 			 * TODO: Retry a few times with sleeps.
 			 */
 			if (rcu_access_pointer(op->volume->servers) == op->server_list) {
-				op->error = -ENOMEDIUM;
+				afs_op_accumulate_error(op, -ENOMEDIUM, abort_code);
 				goto failed;
 			}
 
 			goto restart_from_beginning;
 
+		case UAEIO:
+		case VIO:
+			afs_op_accumulate_error(op, -EREMOTEIO, abort_code);
+			if (op->volume->type != AFSVL_RWVOL)
+				goto next_server;
+			goto failed;
+
+		case VDISKFULL:
+		case UAENOSPC:
+			/* The partition is full.  Only applies to RWVOLs.
+			 * Translate locally and return ENOSPC.
+			 * No replicas to failover to.
+			 */
+			afs_op_set_error(op, -ENOSPC);
+			goto failed_but_online;
+
+		case VOVERQUOTA:
+		case UAEDQUOT:
+			/* Volume is full.  Only applies to RWVOLs.
+			 * Translate locally and return EDQUOT.
+			 * No replicas to failover to.
+			 */
+			afs_op_set_error(op, -EDQUOT);
+			goto failed_but_online;
+
 		default:
+			afs_op_accumulate_error(op, error, abort_code);
+		failed_but_online:
 			clear_bit(AFS_VOLUME_OFFLINE, &op->volume->flags);
 			clear_bit(AFS_VOLUME_BUSY, &op->volume->flags);
-			op->error = afs_abort_to_error(op->ac.abort_code);
 			goto failed;
 		}
 
 	case -ETIMEDOUT:
 	case -ETIME:
-		if (op->error != -EDESTADDRREQ)
+		if (afs_op_error(op) != -EDESTADDRREQ)
 			goto iterate_address;
 		fallthrough;
 	case -ERFKILL:
@@ -289,7 +383,7 @@ bool afs_select_fileserver(struct afs_operation *op)
 	case -EHOSTDOWN:
 	case -ECONNREFUSED:
 		_debug("no conn");
-		op->error = error;
+		afs_op_accumulate_error(op, error, 0);
 		goto iterate_address;
 
 	case -ENETRESET:
@@ -298,7 +392,7 @@ bool afs_select_fileserver(struct afs_operation *op)
 		fallthrough;
 	case -ECONNRESET:
 		_debug("call reset");
-		op->error = error;
+		afs_op_set_error(op, error);
 		goto failed;
 	}
 
@@ -314,8 +408,10 @@ start:
 	 * volume may have moved or even have been deleted.
 	 */
 	error = afs_check_volume_status(op->volume, op);
-	if (error < 0)
-		goto failed_set_error;
+	if (error < 0) {
+		afs_op_set_error(op, error);
+		goto failed;
+	}
 
 	if (!afs_start_fs_iteration(op, vnode))
 		goto failed;
@@ -326,8 +422,10 @@ pick_server:
 	_debug("pick [%lx]", op->untried);
 
 	error = afs_wait_for_fs_probes(op->server_list, op->untried);
-	if (error < 0)
-		goto failed_set_error;
+	if (error < 0) {
+		afs_op_set_error(op, error);
+		goto failed;
+	}
 
 	/* Pick the untried server with the lowest RTT.  If we have outstanding
 	 * callbacks, we stick with the server we're already using if we can.
@@ -341,7 +439,7 @@ pick_server:
 	}
 
 	op->index = -1;
-	rtt = U32_MAX;
+	rtt = UINT_MAX;
 	for (i = 0; i < op->server_list->nr_servers; i++) {
 		struct afs_server *s = op->server_list->servers[i].server;
 
@@ -409,8 +507,9 @@ iterate_address:
 
 	_debug("address [%u] %u/%u %pISp",
 	       op->index, op->ac.index, op->ac.alist->nr_addrs,
-	       &op->ac.alist->addrs[op->ac.index].transport);
+	       rxrpc_kernel_remote_addr(op->ac.alist->addrs[op->ac.index].peer));
 
+	op->call_responded = false;
 	_leave(" = t");
 	return true;
 
@@ -428,7 +527,8 @@ out_of_addresses:
 			op->flags &= ~AFS_OPERATION_RETRY_SERVER;
 			goto retry_server;
 		case -ERESTARTSYS:
-			goto failed_set_error;
+			afs_op_set_error(op, error);
+			goto failed;
 		case -ETIME:
 		case -EDESTADDRREQ:
 			goto next_server;
@@ -447,23 +547,18 @@ no_more_servers:
 	if (op->flags & AFS_OPERATION_VBUSY)
 		goto restart_from_beginning;
 
-	e.error = -EDESTADDRREQ;
-	e.responded = false;
 	for (i = 0; i < op->server_list->nr_servers; i++) {
 		struct afs_server *s = op->server_list->servers[i].server;
 
-		afs_prioritise_error(&e, READ_ONCE(s->probe.error),
-				     s->probe.abort_code);
+		error = READ_ONCE(s->probe.error);
+		if (error < 0)
+			afs_op_accumulate_error(op, error, s->probe.abort_code);
 	}
 
-	error = e.error;
-
-failed_set_error:
-	op->error = error;
 failed:
 	op->flags |= AFS_OPERATION_STOP;
 	afs_end_cursor(&op->ac);
-	_leave(" = f [failed %d]", op->error);
+	_leave(" = f [failed %d]", afs_op_error(op));
 	return false;
 }
 
@@ -482,11 +577,13 @@ void afs_dump_edestaddrreq(const struct afs_operation *op)
 	rcu_read_lock();
 
 	pr_notice("EDESTADDR occurred\n");
-	pr_notice("FC: cbb=%x cbb2=%x fl=%x err=%hd\n",
+	pr_notice("OP: cbb=%x cbb2=%x fl=%x err=%hd\n",
 		  op->file[0].cb_break_before,
-		  op->file[1].cb_break_before, op->flags, op->error);
-	pr_notice("FC: ut=%lx ix=%d ni=%u\n",
+		  op->file[1].cb_break_before, op->flags, op->cumul_error.error);
+	pr_notice("OP: ut=%lx ix=%d ni=%u\n",
 		  op->untried, op->index, op->nr_iterations);
+	pr_notice("OP: call  er=%d ac=%d r=%u\n",
+		  op->call_error, op->call_abort_code, op->call_responded);
 
 	if (op->server_list) {
 		const struct afs_server_list *sl = op->server_list;
@@ -511,8 +608,7 @@ void afs_dump_edestaddrreq(const struct afs_operation *op)
 		}
 	}
 
-	pr_notice("AC: t=%lx ax=%u ac=%d er=%d r=%u ni=%u\n",
-		  op->ac.tried, op->ac.index, op->ac.abort_code, op->ac.error,
-		  op->ac.responded, op->ac.nr_iterations);
+	pr_notice("AC: t=%lx ax=%u ni=%u\n",
+		  op->ac.tried, op->ac.index, op->ac.nr_iterations);
 	rcu_read_unlock();
 }

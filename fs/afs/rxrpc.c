@@ -296,7 +296,8 @@ static void afs_notify_end_request_tx(struct sock *sock,
  */
 void afs_make_call(struct afs_addr_cursor *ac, struct afs_call *call, gfp_t gfp)
 {
-	struct sockaddr_rxrpc *srx = &ac->alist->addrs[ac->index];
+	struct afs_address *addr = &ac->alist->addrs[ac->index];
+	struct rxrpc_peer *peer = addr->peer;
 	struct rxrpc_call *rxcall;
 	struct msghdr msg;
 	struct kvec iov[1];
@@ -304,7 +305,7 @@ void afs_make_call(struct afs_addr_cursor *ac, struct afs_call *call, gfp_t gfp)
 	s64 tx_total_len;
 	int ret;
 
-	_enter(",{%pISp},", &srx->transport);
+	_enter(",{%pISp},", rxrpc_kernel_remote_addr(addr->peer));
 
 	ASSERT(call->type != NULL);
 	ASSERT(call->type->name != NULL);
@@ -333,7 +334,7 @@ void afs_make_call(struct afs_addr_cursor *ac, struct afs_call *call, gfp_t gfp)
 	}
 
 	/* create a call */
-	rxcall = rxrpc_kernel_begin_call(call->net->socket, srx, call->key,
+	rxcall = rxrpc_kernel_begin_call(call->net->socket, peer, call->key,
 					 (unsigned long)call,
 					 tx_total_len,
 					 call->max_lifespan,
@@ -341,6 +342,7 @@ void afs_make_call(struct afs_addr_cursor *ac, struct afs_call *call, gfp_t gfp)
 					 (call->async ?
 					  afs_wake_up_async_call :
 					  afs_wake_up_call_waiter),
+					 addr->service_id,
 					 call->upgrade,
 					 (call->intr ? RXRPC_PREINTERRUPTIBLE :
 					  RXRPC_UNINTERRUPTIBLE),
@@ -406,8 +408,7 @@ error_do_abort:
 		rxrpc_kernel_recv_data(call->net->socket, rxcall,
 				       &msg.msg_iter, &len, false,
 				       &call->abort_code, &call->service_id);
-		ac->abort_code = call->abort_code;
-		ac->responded = true;
+		call->responded = true;
 	}
 	call->error = ret;
 	trace_afs_call_done(call);
@@ -427,7 +428,7 @@ error_kill_call:
 		afs_set_call_complete(call, ret, 0);
 	}
 
-	ac->error = ret;
+	call->error = ret;
 	call->state = AFS_CALL_COMPLETE;
 	_leave(" = %d", ret);
 }
@@ -461,7 +462,7 @@ static void afs_log_error(struct afs_call *call, s32 remote_abort)
 		max = m + 1;
 		pr_notice("kAFS: Peer reported %s failure on %s [%pISp]\n",
 			  msg, call->type->name,
-			  &call->alist->addrs[call->addr_ix].transport);
+			  rxrpc_kernel_remote_addr(call->alist->addrs[call->addr_ix].peer));
 	}
 }
 
@@ -508,6 +509,7 @@ static void afs_deliver_to_call(struct afs_call *call)
 			ret = -EBADMSG;
 		switch (ret) {
 		case 0:
+			call->responded = true;
 			afs_queue_call_work(call);
 			if (state == AFS_CALL_CL_PROC_REPLY) {
 				if (call->op)
@@ -522,9 +524,11 @@ static void afs_deliver_to_call(struct afs_call *call)
 			goto out;
 		case -ECONNABORTED:
 			ASSERTCMP(state, ==, AFS_CALL_COMPLETE);
+			call->responded = true;
 			afs_log_error(call, call->abort_code);
 			goto done;
 		case -ENOTSUPP:
+			call->responded = true;
 			abort_code = RXGEN_OPCODE;
 			rxrpc_kernel_abort_call(call->net->socket, call->rxcall,
 						abort_code, ret,
@@ -571,49 +575,45 @@ call_complete:
 }
 
 /*
- * Wait synchronously for a call to complete and clean up the call struct.
+ * Wait synchronously for a call to complete.
  */
-long afs_wait_for_call_to_complete(struct afs_call *call,
-				   struct afs_addr_cursor *ac)
+void afs_wait_for_call_to_complete(struct afs_call *call, struct afs_addr_cursor *ac)
 {
-	long ret;
 	bool rxrpc_complete = false;
-
-	DECLARE_WAITQUEUE(myself, current);
 
 	_enter("");
 
-	ret = call->error;
-	if (ret < 0)
-		goto out;
+	if (!afs_check_call_state(call, AFS_CALL_COMPLETE)) {
+		DECLARE_WAITQUEUE(myself, current);
 
-	add_wait_queue(&call->waitq, &myself);
-	for (;;) {
-		set_current_state(TASK_UNINTERRUPTIBLE);
+		add_wait_queue(&call->waitq, &myself);
+		for (;;) {
+			set_current_state(TASK_UNINTERRUPTIBLE);
 
-		/* deliver any messages that are in the queue */
-		if (!afs_check_call_state(call, AFS_CALL_COMPLETE) &&
-		    call->need_attention) {
-			call->need_attention = false;
-			__set_current_state(TASK_RUNNING);
-			afs_deliver_to_call(call);
-			continue;
+			/* deliver any messages that are in the queue */
+			if (!afs_check_call_state(call, AFS_CALL_COMPLETE) &&
+			    call->need_attention) {
+				call->need_attention = false;
+				__set_current_state(TASK_RUNNING);
+				afs_deliver_to_call(call);
+				continue;
+			}
+
+			if (afs_check_call_state(call, AFS_CALL_COMPLETE))
+				break;
+
+			if (!rxrpc_kernel_check_life(call->net->socket, call->rxcall)) {
+				/* rxrpc terminated the call. */
+				rxrpc_complete = true;
+				break;
+			}
+
+			schedule();
 		}
 
-		if (afs_check_call_state(call, AFS_CALL_COMPLETE))
-			break;
-
-		if (!rxrpc_kernel_check_life(call->net->socket, call->rxcall)) {
-			/* rxrpc terminated the call. */
-			rxrpc_complete = true;
-			break;
-		}
-
-		schedule();
+		remove_wait_queue(&call->waitq, &myself);
+		__set_current_state(TASK_RUNNING);
 	}
-
-	remove_wait_queue(&call->waitq, &myself);
-	__set_current_state(TASK_RUNNING);
 
 	if (!afs_check_call_state(call, AFS_CALL_COMPLETE)) {
 		if (rxrpc_complete) {
@@ -628,28 +628,8 @@ long afs_wait_for_call_to_complete(struct afs_call *call,
 		}
 	}
 
-	spin_lock_bh(&call->state_lock);
-	ac->abort_code = call->abort_code;
-	ac->error = call->error;
-	spin_unlock_bh(&call->state_lock);
-
-	ret = ac->error;
-	switch (ret) {
-	case 0:
-		ret = call->ret0;
-		call->ret0 = 0;
-
-		fallthrough;
-	case -ECONNABORTED:
-		ac->responded = true;
-		break;
-	}
-
-out:
-	_debug("call complete");
-	afs_put_call(call);
-	_leave(" = %p", (void *)ret);
-	return ret;
+	if (call->error == 0 || call->error == -ECONNABORTED)
+		call->responded = true;
 }
 
 /*

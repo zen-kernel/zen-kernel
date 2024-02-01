@@ -2170,6 +2170,10 @@ void resource_log_pipe_topology_update(struct dc *dc, struct dc_state *state)
 	for (stream_idx = 0; stream_idx < state->stream_count; stream_idx++) {
 		otg_master = resource_get_otg_master_for_stream(
 				&state->res_ctx, state->streams[stream_idx]);
+		if (!otg_master	|| otg_master->stream_res.tg == NULL) {
+			DC_LOG_DC("topology update: otg_master NULL stream_idx %d!\n", stream_idx);
+			return;
+		}
 		slice_count = resource_get_opp_heads_for_otg_master(otg_master,
 				&state->res_ctx, opp_heads);
 		for (slice_idx = 0; slice_idx < slice_count; slice_idx++) {
@@ -2233,7 +2237,7 @@ static struct pipe_ctx *get_last_dpp_pipe_in_mpcc_combine(
 }
 
 static bool update_pipe_params_after_odm_slice_count_change(
-		const struct dc_stream_state *stream,
+		struct pipe_ctx *otg_master,
 		struct dc_state *context,
 		const struct resource_pool *pool)
 {
@@ -2243,9 +2247,12 @@ static bool update_pipe_params_after_odm_slice_count_change(
 
 	for (i = 0; i < pool->pipe_count && result; i++) {
 		pipe = &context->res_ctx.pipe_ctx[i];
-		if (pipe->stream == stream && pipe->plane_state)
+		if (pipe->stream == otg_master->stream && pipe->plane_state)
 			result = resource_build_scaling_params(pipe);
 	}
+
+	if (pool->funcs->build_pipe_pix_clk_params)
+		pool->funcs->build_pipe_pix_clk_params(otg_master);
 	return result;
 }
 
@@ -2928,7 +2935,7 @@ bool resource_update_pipes_for_stream_with_slice_count(
 					otg_master, new_ctx, pool);
 	if (result)
 		result = update_pipe_params_after_odm_slice_count_change(
-				otg_master->stream, new_ctx, pool);
+				otg_master, new_ctx, pool);
 	return result;
 }
 
@@ -2990,7 +2997,8 @@ bool dc_add_plane_to_context(
 
 	otg_master_pipe = resource_get_otg_master_for_stream(
 			&context->res_ctx, stream);
-	added = resource_append_dpp_pipes_for_plane_composition(context,
+	if (otg_master_pipe)
+		added = resource_append_dpp_pipes_for_plane_composition(context,
 			dc->current_state, pool, otg_master_pipe, plane_state);
 
 	if (added) {
@@ -3766,7 +3774,8 @@ void dc_resource_state_construct(
 	dst_ctx->clk_mgr = dc->clk_mgr;
 
 	/* Initialise DIG link encoder resource tracking variables. */
-	link_enc_cfg_init(dc, dst_ctx);
+	if (dc->res_pool)
+		link_enc_cfg_init(dc, dst_ctx);
 }
 
 

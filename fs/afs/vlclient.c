@@ -106,12 +106,6 @@ static int afs_deliver_vl_get_entry_by_name_u(struct afs_call *call)
 	return 0;
 }
 
-static void afs_destroy_vl_get_entry_by_name_u(struct afs_call *call)
-{
-	kfree(call->ret_vldb);
-	afs_flat_call_destructor(call);
-}
-
 /*
  * VL.GetEntryByNameU operation type.
  */
@@ -119,7 +113,7 @@ static const struct afs_call_type afs_RXVLGetEntryByNameU = {
 	.name		= "VL.GetEntryByNameU",
 	.op		= afs_VL_GetEntryByNameU,
 	.deliver	= afs_deliver_vl_get_entry_by_name_u,
-	.destructor	= afs_destroy_vl_get_entry_by_name_u,
+	.destructor	= afs_flat_call_destructor,
 };
 
 /*
@@ -166,7 +160,16 @@ struct afs_vldb_entry *afs_vl_get_entry_by_name_u(struct afs_vl_cursor *vc,
 
 	trace_afs_make_vl_call(call);
 	afs_make_call(&vc->ac, call, GFP_KERNEL);
-	return (struct afs_vldb_entry *)afs_wait_for_call_to_complete(call, &vc->ac);
+	afs_wait_for_call_to_complete(call, &vc->ac);
+	vc->call_abort_code	= call->abort_code;
+	vc->call_error		= call->error;
+	vc->call_responded	= call->responded;
+	afs_put_call(call);
+	if (vc->call_error) {
+		kfree(entry);
+		return ERR_PTR(vc->call_error);
+	}
+	return entry;
 }
 
 /*
@@ -208,7 +211,7 @@ static int afs_deliver_vl_get_addrs_u(struct afs_call *call)
 		count		= ntohl(*bp);
 
 		nentries = min(nentries, count);
-		alist = afs_alloc_addrlist(nentries, FS_SERVICE, AFS_FS_PORT);
+		alist = afs_alloc_addrlist(nentries, FS_SERVICE);
 		if (!alist)
 			return -ENOMEM;
 		alist->version = uniquifier;
@@ -230,9 +233,13 @@ static int afs_deliver_vl_get_addrs_u(struct afs_call *call)
 		alist = call->ret_alist;
 		bp = call->buffer;
 		count = min(call->count, 4U);
-		for (i = 0; i < count; i++)
-			if (alist->nr_addrs < call->count2)
-				afs_merge_fs_addr4(alist, *bp++, AFS_FS_PORT);
+		for (i = 0; i < count; i++) {
+			if (alist->nr_addrs < call->count2) {
+				ret = afs_merge_fs_addr4(call->net, alist, *bp++, AFS_FS_PORT);
+				if (ret < 0)
+					return ret;
+			}
+		}
 
 		call->count -= count;
 		if (call->count > 0)
@@ -245,12 +252,6 @@ static int afs_deliver_vl_get_addrs_u(struct afs_call *call)
 	return 0;
 }
 
-static void afs_vl_get_addrs_u_destructor(struct afs_call *call)
-{
-	afs_put_addrlist(call->ret_alist);
-	return afs_flat_call_destructor(call);
-}
-
 /*
  * VL.GetAddrsU operation type.
  */
@@ -258,7 +259,7 @@ static const struct afs_call_type afs_RXVLGetAddrsU = {
 	.name		= "VL.GetAddrsU",
 	.op		= afs_VL_GetAddrsU,
 	.deliver	= afs_deliver_vl_get_addrs_u,
-	.destructor	= afs_vl_get_addrs_u_destructor,
+	.destructor	= afs_flat_call_destructor,
 };
 
 /*
@@ -269,6 +270,7 @@ struct afs_addr_list *afs_vl_get_addrs_u(struct afs_vl_cursor *vc,
 					 const uuid_t *uuid)
 {
 	struct afs_ListAddrByAttributes__xdr *r;
+	struct afs_addr_list *alist;
 	const struct afs_uuid *u = (const struct afs_uuid *)uuid;
 	struct afs_call *call;
 	struct afs_net *net = vc->cell->net;
@@ -305,7 +307,17 @@ struct afs_addr_list *afs_vl_get_addrs_u(struct afs_vl_cursor *vc,
 
 	trace_afs_make_vl_call(call);
 	afs_make_call(&vc->ac, call, GFP_KERNEL);
-	return (struct afs_addr_list *)afs_wait_for_call_to_complete(call, &vc->ac);
+	afs_wait_for_call_to_complete(call, &vc->ac);
+	vc->call_abort_code	= call->abort_code;
+	vc->call_error		= call->error;
+	vc->call_responded	= call->responded;
+	alist			= call->ret_alist;
+	afs_put_call(call);
+	if (vc->call_error) {
+		afs_put_addrlist(alist);
+		return ERR_PTR(vc->call_error);
+	}
+	return alist;
 }
 
 /*
@@ -450,7 +462,7 @@ static int afs_deliver_yfsvl_get_endpoints(struct afs_call *call)
 		if (call->count > YFS_MAXENDPOINTS)
 			return afs_protocol_error(call, afs_eproto_yvl_fsendpt_num);
 
-		alist = afs_alloc_addrlist(call->count, FS_SERVICE, AFS_FS_PORT);
+		alist = afs_alloc_addrlist(call->count, FS_SERVICE);
 		if (!alist)
 			return -ENOMEM;
 		alist->version = uniquifier;
@@ -488,14 +500,18 @@ static int afs_deliver_yfsvl_get_endpoints(struct afs_call *call)
 			if (ntohl(bp[0]) != sizeof(__be32) * 2)
 				return afs_protocol_error(
 					call, afs_eproto_yvl_fsendpt4_len);
-			afs_merge_fs_addr4(alist, bp[1], ntohl(bp[2]));
+			ret = afs_merge_fs_addr4(call->net, alist, bp[1], ntohl(bp[2]));
+			if (ret < 0)
+				return ret;
 			bp += 3;
 			break;
 		case YFS_ENDPOINT_IPV6:
 			if (ntohl(bp[0]) != sizeof(__be32) * 5)
 				return afs_protocol_error(
 					call, afs_eproto_yvl_fsendpt6_len);
-			afs_merge_fs_addr6(alist, bp + 1, ntohl(bp[5]));
+			ret = afs_merge_fs_addr6(call->net, alist, bp + 1, ntohl(bp[5]));
+			if (ret < 0)
+				return ret;
 			bp += 6;
 			break;
 		default:
@@ -610,7 +626,7 @@ static const struct afs_call_type afs_YFSVLGetEndpoints = {
 	.name		= "YFSVL.GetEndpoints",
 	.op		= afs_YFSVL_GetEndpoints,
 	.deliver	= afs_deliver_yfsvl_get_endpoints,
-	.destructor	= afs_vl_get_addrs_u_destructor,
+	.destructor	= afs_flat_call_destructor,
 };
 
 /*
@@ -620,6 +636,7 @@ static const struct afs_call_type afs_YFSVLGetEndpoints = {
 struct afs_addr_list *afs_yfsvl_get_endpoints(struct afs_vl_cursor *vc,
 					      const uuid_t *uuid)
 {
+	struct afs_addr_list *alist;
 	struct afs_call *call;
 	struct afs_net *net = vc->cell->net;
 	__be32 *bp;
@@ -644,7 +661,17 @@ struct afs_addr_list *afs_yfsvl_get_endpoints(struct afs_vl_cursor *vc,
 
 	trace_afs_make_vl_call(call);
 	afs_make_call(&vc->ac, call, GFP_KERNEL);
-	return (struct afs_addr_list *)afs_wait_for_call_to_complete(call, &vc->ac);
+	afs_wait_for_call_to_complete(call, &vc->ac);
+	vc->call_abort_code	= call->abort_code;
+	vc->call_error		= call->error;
+	vc->call_responded	= call->responded;
+	alist			= call->ret_alist;
+	afs_put_call(call);
+	if (vc->call_error) {
+		afs_put_addrlist(alist);
+		return ERR_PTR(vc->call_error);
+	}
+	return alist;
 }
 
 /*
@@ -709,12 +736,6 @@ static int afs_deliver_yfsvl_get_cell_name(struct afs_call *call)
 	return 0;
 }
 
-static void afs_destroy_yfsvl_get_cell_name(struct afs_call *call)
-{
-	kfree(call->ret_str);
-	afs_flat_call_destructor(call);
-}
-
 /*
  * VL.GetCapabilities operation type
  */
@@ -722,7 +743,7 @@ static const struct afs_call_type afs_YFSVLGetCellName = {
 	.name		= "YFSVL.GetCellName",
 	.op		= afs_YFSVL_GetCellName,
 	.deliver	= afs_deliver_yfsvl_get_cell_name,
-	.destructor	= afs_destroy_yfsvl_get_cell_name,
+	.destructor	= afs_flat_call_destructor,
 };
 
 /*
@@ -737,6 +758,7 @@ char *afs_yfsvl_get_cell_name(struct afs_vl_cursor *vc)
 	struct afs_call *call;
 	struct afs_net *net = vc->cell->net;
 	__be32 *bp;
+	char *cellname;
 
 	_enter("");
 
@@ -755,5 +777,15 @@ char *afs_yfsvl_get_cell_name(struct afs_vl_cursor *vc)
 	/* Can't take a ref on server */
 	trace_afs_make_vl_call(call);
 	afs_make_call(&vc->ac, call, GFP_KERNEL);
-	return (char *)afs_wait_for_call_to_complete(call, &vc->ac);
+	afs_wait_for_call_to_complete(call, &vc->ac);
+	vc->call_abort_code	= call->abort_code;
+	vc->call_error		= call->error;
+	vc->call_responded	= call->responded;
+	cellname		= call->ret_str;
+	afs_put_call(call);
+	if (vc->call_error) {
+		kfree(cellname);
+		return ERR_PTR(vc->call_error);
+	}
+	return cellname;
 }

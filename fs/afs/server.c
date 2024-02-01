@@ -21,13 +21,12 @@ static void __afs_put_server(struct afs_net *, struct afs_server *);
 /*
  * Find a server by one of its addresses.
  */
-struct afs_server *afs_find_server(struct afs_net *net,
-				   const struct sockaddr_rxrpc *srx)
+struct afs_server *afs_find_server(struct afs_net *net, const struct rxrpc_peer *peer)
 {
 	const struct afs_addr_list *alist;
 	struct afs_server *server = NULL;
 	unsigned int i;
-	int seq = 0, diff;
+	int seq = 1;
 
 	rcu_read_lock();
 
@@ -35,39 +34,14 @@ struct afs_server *afs_find_server(struct afs_net *net,
 		if (server)
 			afs_unuse_server_notime(net, server, afs_server_trace_put_find_rsq);
 		server = NULL;
+		seq++; /* 2 on the 1st/lockless path, otherwise odd */
 		read_seqbegin_or_lock(&net->fs_addr_lock, &seq);
 
-		if (srx->transport.family == AF_INET6) {
-			const struct sockaddr_in6 *a = &srx->transport.sin6, *b;
-			hlist_for_each_entry_rcu(server, &net->fs_addresses6, addr6_link) {
-				alist = rcu_dereference(server->addresses);
-				for (i = alist->nr_ipv4; i < alist->nr_addrs; i++) {
-					b = &alist->addrs[i].transport.sin6;
-					diff = ((u16 __force)a->sin6_port -
-						(u16 __force)b->sin6_port);
-					if (diff == 0)
-						diff = memcmp(&a->sin6_addr,
-							      &b->sin6_addr,
-							      sizeof(struct in6_addr));
-					if (diff == 0)
-						goto found;
-				}
-			}
-		} else {
-			const struct sockaddr_in *a = &srx->transport.sin, *b;
-			hlist_for_each_entry_rcu(server, &net->fs_addresses4, addr4_link) {
-				alist = rcu_dereference(server->addresses);
-				for (i = 0; i < alist->nr_ipv4; i++) {
-					b = &alist->addrs[i].transport.sin;
-					diff = ((u16 __force)a->sin_port -
-						(u16 __force)b->sin_port);
-					if (diff == 0)
-						diff = ((u32 __force)a->sin_addr.s_addr -
-							(u32 __force)b->sin_addr.s_addr);
-					if (diff == 0)
-						goto found;
-				}
-			}
+		hlist_for_each_entry_rcu(server, &net->fs_addresses6, addr6_link) {
+			alist = rcu_dereference(server->addresses);
+			for (i = 0; i < alist->nr_addrs; i++)
+				if (alist->addrs[i].peer == peer)
+					goto found;
 		}
 
 		server = NULL;
@@ -90,7 +64,7 @@ struct afs_server *afs_find_server_by_uuid(struct afs_net *net, const uuid_t *uu
 {
 	struct afs_server *server = NULL;
 	struct rb_node *p;
-	int diff, seq = 0;
+	int diff, seq = 1;
 
 	_enter("%pU", uuid);
 
@@ -102,7 +76,7 @@ struct afs_server *afs_find_server_by_uuid(struct afs_net *net, const uuid_t *uu
 		if (server)
 			afs_unuse_server(net, server, afs_server_trace_put_uuid_rsq);
 		server = NULL;
-
+		seq++; /* 2 on the 1st/lockless path, otherwise odd */
 		read_seqbegin_or_lock(&net->fs_lock, &seq);
 
 		p = net->fs_servers.rb_node;
@@ -463,7 +437,6 @@ static void afs_give_up_callbacks(struct afs_net *net, struct afs_server *server
 	struct afs_addr_cursor ac = {
 		.alist	= alist,
 		.index	= alist->preferred,
-		.error	= 0,
 	};
 
 	afs_fs_give_up_all_callbacks(net, server, &ac, NULL);
@@ -655,8 +628,8 @@ static noinline bool afs_update_server_record(struct afs_operation *op,
 			_leave(" = t [intr]");
 			return true;
 		}
-		op->error = PTR_ERR(alist);
-		_leave(" = f [%d]", op->error);
+		afs_op_set_error(op, PTR_ERR(alist));
+		_leave(" = f [%d]", afs_op_error(op));
 		return false;
 	}
 
@@ -710,7 +683,7 @@ wait:
 			  (op->flags & AFS_OPERATION_UNINTR) ?
 			  TASK_UNINTERRUPTIBLE : TASK_INTERRUPTIBLE);
 	if (ret == -ERESTARTSYS) {
-		op->error = ret;
+		afs_op_set_error(op, ret);
 		_leave(" = f [intr]");
 		return false;
 	}

@@ -1612,6 +1612,7 @@ int afs_fs_give_up_all_callbacks(struct afs_net *net,
 {
 	struct afs_call *call;
 	__be32 *bp;
+	int ret;
 
 	_enter("");
 
@@ -1627,7 +1628,10 @@ int afs_fs_give_up_all_callbacks(struct afs_net *net,
 
 	call->server = afs_use_server(server, afs_server_trace_give_up_cb);
 	afs_make_call(ac, call, GFP_NOFS);
-	return afs_wait_for_call_to_complete(call, ac);
+	afs_wait_for_call_to_complete(call, ac);
+	ret = call->error;
+	afs_put_call(call);
+	return ret;
 }
 
 /*
@@ -1899,7 +1903,7 @@ void afs_fs_inline_bulk_status(struct afs_operation *op)
 	int i;
 
 	if (test_bit(AFS_SERVER_FL_NO_IBULK, &op->server->flags)) {
-		op->error = -ENOTSUPP;
+		afs_op_set_error(op, -ENOTSUPP);
 		return;
 	}
 
