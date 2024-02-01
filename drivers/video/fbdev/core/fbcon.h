@@ -218,12 +218,16 @@ static inline u_short fb_scrollmode(struct fbcon_display *fb)
 #endif
 }
 
+extern struct fb_info *fbcon_registered_fb[FB_MAX];
+extern int fbcon_num_registered_fb;
+extern signed char con2fb_map[MAX_NR_CONSOLES];
 
 #ifdef CONFIG_FB_TILEBLITTING
 extern void fbcon_set_tileops(struct vc_data *vc, struct fb_info *info);
 #endif
 extern void fbcon_set_bitops(struct fbcon_ops *ops);
 extern int  soft_cursor(struct fb_info *info, struct fb_cursor *cursor);
+extern struct fb_info *fbcon_info_from_console(int console);
 
 #define FBCON_ATTRIBUTE_UNDERLINE 1
 #define FBCON_ATTRIBUTE_REVERSE   2
