@@ -26,6 +26,12 @@ obj-y				+= pci/
 
 obj-$(CONFIG_PARISC)		+= parisc/
 obj-$(CONFIG_RAPIDIO)		+= rapidio/
+
+# tty/ comes before char/ so that the VT console is the boot-time
+# default.
+obj-y				+= tty/
+obj-y				+= char/
+
 obj-y				+= video/
 obj-y				+= idle/
 
@@ -57,11 +63,6 @@ obj-$(CONFIG_REGULATOR)		+= regulator/
 
 # reset controllers early, since gpu drivers might rely on them to initialize
 obj-$(CONFIG_RESET_CONTROLLER)	+= reset/
-
-# tty/ comes before char/ so that the VT console is the boot-time
-# default.
-obj-y				+= tty/
-obj-y				+= char/
 
 # iommu/ comes before gpu as gpu are using iommu controllers
 obj-y				+= iommu/
