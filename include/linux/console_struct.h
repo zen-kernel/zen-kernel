@@ -21,6 +21,7 @@ struct uni_pagedict;
 
 #define NPAR 16
 #define VC_TABSTOPS_COUNT	256U
+#include <linux/console_decor.h>
 
 enum vc_intensity {
 	VCI_HALF_BRIGHT,
@@ -159,6 +160,7 @@ struct vc_data {
 	struct uni_pagedict *uni_pagedict;
 	struct uni_pagedict **uni_pagedict_loc; /* [!] Location of uni_pagedict variable for this console */
 	u32 **vc_uni_lines;			/* unicode screen content */
+	struct vc_decor vc_decor;
 	/* additional information is in vt_kern.h */
 };
 
