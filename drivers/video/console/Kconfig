@@ -138,6 +138,18 @@ config FRAMEBUFFER_CONSOLE_DEFERRED_TAKEOVER
 	  by the firmware in place, rather then replacing the contents with a
 	  black screen as soon as fbcon loads.
 
+config FB_CON_DECOR
+	bool "Support for the Framebuffer Console Decorations"
+	depends on FRAMEBUFFER_CONSOLE=y && !FB_TILEBLITTING
+	default n
+	help
+	  This option enables support for framebuffer console decorations which
+	  makes it possible to display images in the background of the system
+	  consoles.  Note that userspace utilities are necessary in order to take
+	  advantage of these features.
+
+	  If unsure, say N.
+
 config STI_CONSOLE
 	bool "STI text console"
 	depends on PARISC && HAS_IOMEM
