@@ -4214,58 +4214,61 @@ static inline int sg_balance_cpu_stop(void *data)
 }
 
 /* sg_balance_trigger - trigger slibing group balance for @cpu */
-static inline int sg_balance_trigger(const int cpu)
+static inline int sg_balance_trigger(struct rq *src_rq, const int cpu)
 {
 	struct rq *rq= cpu_rq(cpu);
 	unsigned long flags;
-	struct task_struct *curr;
+	struct task_struct *p;
 	int res;
 
 	if (!raw_spin_trylock_irqsave(&rq->lock, flags))
 		return 0;
-	curr = rq->curr;
-	res = (!is_idle_task(curr)) && (1 == rq->nr_running) &&\
-	      cpumask_intersects(curr->cpus_ptr, sched_sg_idle_mask) &&\
-	      !is_migration_disabled(curr) && (!rq->active_balance);
 
+	res = (1 == rq->nr_running) &&					\
+	      !is_migration_disabled((p = sched_rq_first_task(rq))) &&	\
+	      cpumask_intersects(p->cpus_ptr, sched_sg_idle_mask) &&	\
+	      !rq->active_balance;
 	if (res)
 		rq->active_balance = 1;
 
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
 
-	if (res)
-		stop_one_cpu_nowait(cpu, sg_balance_cpu_stop, curr,
+	if (res) {
+		preempt_disable();
+		raw_spin_unlock(&src_rq->lock);
+
+		stop_one_cpu_nowait(cpu, sg_balance_cpu_stop, p,
 				    &rq->active_balance_work);
+
+		raw_spin_lock(&src_rq->lock);
+		preempt_enable();
+	}
+
 	return res;
 }
 
 /*
  * sg_balance - slibing group balance check for run queue @rq
  */
-static inline void sg_balance(struct rq *rq, int cpu)
+static inline void sg_balance(struct rq *rq)
 {
 	cpumask_t chk;
 
-	/* exit when cpu is offline */
-	if (unlikely(!rq->online))
-		return;
-
-	/*
-	 * Only cpu in slibing idle group will do the checking and then
-	 * find potential cpus which can migrate the current running task
-	 */
-	if (cpumask_test_cpu(cpu, sched_sg_idle_mask) &&
-	    cpumask_andnot(&chk, cpu_online_mask, sched_idle_mask) &&
+	if (cpumask_andnot(&chk, cpu_active_mask, sched_idle_mask) &&
 	    cpumask_andnot(&chk, &chk, &sched_rq_pending_mask)) {
-		int i;
+		int i, cpu = cpu_of(rq);
 
 		for_each_cpu_wrap(i, &chk, cpu) {
-			if (!cpumask_intersects(cpu_smt_mask(i), sched_idle_mask) &&\
-			    sg_balance_trigger(i))
+			if (cpumask_subset(cpu_smt_mask(i), &chk) &&\
+			    sg_balance_trigger(rq, i))
 				return;
 		}
 	}
 }
+
+static DEFINE_PER_CPU(struct balance_callback, sg_balance_head) = {
+	.func = sg_balance,
+};
 #endif /* CONFIG_SCHED_SMT */
 
 #ifdef CONFIG_NO_HZ_FULL
@@ -4689,6 +4692,12 @@ choose_next_task(struct rq *rq, int cpu)
 #ifdef	CONFIG_SMP
 		if (!take_other_rq_tasks(rq, cpu)) {
 #endif
+
+#ifdef CONFIG_SCHED_SMT
+			if (likely(rq->online) &&
+			    cpumask_test_cpu(cpu, sched_sg_idle_mask))
+				__queue_balance_callback(rq, &per_cpu(sg_balance_head, cpu));
+#endif
 			schedstat_inc(rq->sched_goidle);
 			/*printk(KERN_INFO "sched: choose_next_task(%d) idle %px\n", cpu, next);*/
 			return next;
@@ -4889,10 +4898,6 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 		__balance_callbacks(rq);
 		raw_spin_unlock_irq(&rq->lock);
 	}
-
-#ifdef CONFIG_SCHED_SMT
-	sg_balance(rq, cpu);
-#endif
 }
 
 void __noreturn do_task_dead(void)
