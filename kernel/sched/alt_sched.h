@@ -169,7 +169,7 @@ struct rq {
 	struct task_struct		*stop;
 	struct mm_struct		*prev_mm;
 
-	struct sched_queue	queue;
+	struct sched_queue		queue		____cacheline_aligned;
 #ifdef CONFIG_SCHED_PDS
 	u64			time_edge;
 #endif
@@ -949,5 +949,27 @@ static inline void sched_mm_cid_migrate_to(struct rq *dst_rq, struct task_struct
 static inline void task_tick_mm_cid(struct rq *rq, struct task_struct *curr) { }
 static inline void init_sched_mm_cid(struct task_struct *t) { }
 #endif
+
+#ifdef CONFIG_SMP
+extern struct balance_callback balance_push_callback;
+
+static inline void
+__queue_balance_callback(struct rq *rq,
+			 struct balance_callback *head)
+{
+	lockdep_assert_rq_held(rq);
+
+	/*
+	 * Don't (re)queue an already queued item; nor queue anything when
+	 * balance_push() is active, see the comment with
+	 * balance_push_callback.
+	 */
+	if (unlikely(head->next || rq->balance_callback == &balance_push_callback))
+		return;
+
+	head->next = rq->balance_callback;
+	rq->balance_callback = head;
+}
+#endif /* CONFIG_SMP */
 
 #endif /* ALT_SCHED_H */
