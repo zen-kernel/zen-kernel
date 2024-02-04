@@ -4609,7 +4609,7 @@ migrate_pending_tasks(struct rq *rq, struct rq *dest_rq, const int dest_cpu)
 
 static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 {
-	struct cpumask *topo_mask, *end_mask;
+	cpumask_t *topo_mask, *end_mask, chk;
 
 	if (unlikely(!rq->online))
 		return 0;
@@ -4621,7 +4621,11 @@ static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 	end_mask = per_cpu(sched_cpu_topo_end_mask, cpu);
 	do {
 		int i;
-		for_each_cpu_and(i, &sched_rq_pending_mask, topo_mask) {
+
+		if (!cpumask_and(&chk, &sched_rq_pending_mask, topo_mask))
+			continue;
+
+		for_each_cpu_wrap(i, &chk, cpu) {
 			int nr_migrated;
 			struct rq *src_rq;
 
