@@ -45,6 +45,7 @@ enum {
 	EVENTFS_SAVE_MODE	= BIT(16),
 	EVENTFS_SAVE_UID	= BIT(17),
 	EVENTFS_SAVE_GID	= BIT(18),
+	EVENTFS_TOPLEVEL	= BIT(19),
 };
 
 #define EVENTFS_MODE_MASK	(EVENTFS_SAVE_MODE - 1)
@@ -117,10 +118,17 @@ static int eventfs_set_attr(struct mnt_idmap *idmap, struct dentry *dentry,
 		 * The events directory dentry is never freed, unless its
 		 * part of an instance that is deleted. It's attr is the
 		 * default for its child files and directories.
-		 * Do not update it. It's not used for its own mode or ownership
+		 * Do not update it. It's not used for its own mode or ownership.
 		 */
-		if (!ei->is_events)
+		if (ei->is_events) {
+			/* But it still needs to know if it was modified */
+			if (iattr->ia_valid & ATTR_UID)
+				ei->attr.mode |= EVENTFS_SAVE_UID;
+			if (iattr->ia_valid & ATTR_GID)
+				ei->attr.mode |= EVENTFS_SAVE_GID;
+		} else {
 			update_attr(&ei->attr, iattr);
+		}
 
 	} else {
 		name = dentry->d_name.name;
@@ -138,9 +146,66 @@ static int eventfs_set_attr(struct mnt_idmap *idmap, struct dentry *dentry,
 	return ret;
 }
 
+static void update_top_events_attr(struct eventfs_inode *ei, struct dentry *dentry)
+{
+	struct inode *inode;
+
+	/* Only update if the "events" was on the top level */
+	if (!ei || !(ei->attr.mode & EVENTFS_TOPLEVEL))
+		return;
+
+	/* Get the tracefs root inode. */
+	inode = d_inode(dentry->d_sb->s_root);
+	ei->attr.uid = inode->i_uid;
+	ei->attr.gid = inode->i_gid;
+}
+
+static void set_top_events_ownership(struct inode *inode)
+{
+	struct tracefs_inode *ti = get_tracefs(inode);
+	struct eventfs_inode *ei = ti->private;
+	struct dentry *dentry;
+
+	/* The top events directory doesn't get automatically updated */
+	if (!ei || !ei->is_events || !(ei->attr.mode & EVENTFS_TOPLEVEL))
+		return;
+
+	dentry = ei->dentry;
+
+	update_top_events_attr(ei, dentry);
+
+	if (!(ei->attr.mode & EVENTFS_SAVE_UID))
+		inode->i_uid = ei->attr.uid;
+
+	if (!(ei->attr.mode & EVENTFS_SAVE_GID))
+		inode->i_gid = ei->attr.gid;
+}
+
+static int eventfs_get_attr(struct mnt_idmap *idmap,
+			    const struct path *path, struct kstat *stat,
+			    u32 request_mask, unsigned int flags)
+{
+	struct dentry *dentry = path->dentry;
+	struct inode *inode = d_backing_inode(dentry);
+
+	set_top_events_ownership(inode);
+
+	generic_fillattr(idmap, request_mask, inode, stat);
+	return 0;
+}
+
+static int eventfs_permission(struct mnt_idmap *idmap,
+			      struct inode *inode, int mask)
+{
+	set_top_events_ownership(inode);
+	return generic_permission(idmap, inode, mask);
+}
+
 static const struct inode_operations eventfs_root_dir_inode_operations = {
 	.lookup		= eventfs_root_lookup,
 	.setattr	= eventfs_set_attr,
+	.getattr	= eventfs_get_attr,
+	.permission	= eventfs_permission,
 };
 
 static const struct inode_operations eventfs_file_inode_operations = {
@@ -178,6 +243,8 @@ static struct eventfs_inode *eventfs_find_events(struct dentry *dentry)
 	} while (!ei->is_events);
 	mutex_unlock(&eventfs_mutex);
 
+	update_top_events_attr(ei, dentry);
+
 	return ei;
 }
 
@@ -204,44 +271,6 @@ static void update_inode_attr(struct dentry *dentry, struct inode *inode,
 
 	if (attr->mode & EVENTFS_SAVE_GID)
 		inode->i_gid = attr->gid;
-}
-
-static void update_gid(struct eventfs_inode *ei, kgid_t gid, int level)
-{
-	struct eventfs_inode *ei_child;
-
-	/* at most we have events/system/event */
-	if (WARN_ON_ONCE(level > 3))
-		return;
-
-	ei->attr.gid = gid;
-
-	if (ei->entry_attrs) {
-		for (int i = 0; i < ei->nr_entries; i++) {
-			ei->entry_attrs[i].gid = gid;
-		}
-	}
-
-	/*
-	 * Only eventfs_inode with dentries are updated, make sure
-	 * all eventfs_inodes are updated. If one of the children
-	 * do not have a dentry, this function must traverse it.
-	 */
-	list_for_each_entry_srcu(ei_child, &ei->children, list,
-				 srcu_read_lock_held(&eventfs_srcu)) {
-		if (!ei_child->dentry)
-			update_gid(ei_child, gid, level + 1);
-	}
-}
-
-void eventfs_update_gid(struct dentry *dentry, kgid_t gid)
-{
-	struct eventfs_inode *ei = dentry->d_fsdata;
-	int idx;
-
-	idx = srcu_read_lock(&eventfs_srcu);
-	update_gid(ei, gid, 0);
-	srcu_read_unlock(&eventfs_srcu, idx);
 }
 
 /**
@@ -967,6 +996,14 @@ struct eventfs_inode *eventfs_create_events_dir(const char *name, struct dentry 
 	/* Save the ownership of this directory */
 	uid = d_inode(dentry->d_parent)->i_uid;
 	gid = d_inode(dentry->d_parent)->i_gid;
+
+	/*
+	 * If the events directory is of the top instance, then parent
+	 * is NULL. Set the attr.mode to reflect this and its permissions will
+	 * default to the tracefs root dentry.
+	 */
+	if (!parent)
+		ei->attr.mode = EVENTFS_TOPLEVEL;
 
 	/* This is used as the default ownership of the files and directories */
 	ei->attr.uid = uid;
