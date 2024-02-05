@@ -318,7 +318,6 @@ static inline void unregister_sched_domain_sysctl(void)
 extern bool sched_smp_initialized;
 
 enum {
-	ITSELF_LEVEL_SPACE_HOLDER,
 #ifdef CONFIG_SCHED_SMT
 	SMT_LEVEL_SPACE_HOLDER,
 #endif
