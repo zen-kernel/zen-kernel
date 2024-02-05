@@ -1056,7 +1056,7 @@ int get_nohz_timer_target(void)
 
 	hk_mask = housekeeping_cpumask(HK_TYPE_TIMER);
 
-	for (mask = per_cpu(sched_cpu_topo_masks, cpu) + 1;
+	for (mask = per_cpu(sched_cpu_topo_masks, cpu);
 	     mask < per_cpu(sched_cpu_topo_end_mask, cpu); mask++)
 		for_each_cpu_and(i, mask, hk_mask)
 			if (!idle_cpu(i))
@@ -4617,7 +4617,7 @@ static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 	if (cpumask_empty(&sched_rq_pending_mask))
 		return 0;
 
-	topo_mask = per_cpu(sched_cpu_topo_masks, cpu) + 1;
+	topo_mask = per_cpu(sched_cpu_topo_masks, cpu);
 	end_mask = per_cpu(sched_cpu_topo_end_mask, cpu);
 	do {
 		int i;
@@ -7580,12 +7580,9 @@ static void sched_init_topology_cpumask_early(void)
 		/* init topo masks */
 		tmp = per_cpu(sched_cpu_topo_masks, cpu);
 
-		cpumask_copy(tmp, cpumask_of(cpu));
-		tmp++;
 		cpumask_copy(tmp, cpu_possible_mask);
 		per_cpu(sched_cpu_llc_mask, cpu) = tmp;
 		per_cpu(sched_cpu_topo_end_mask, cpu) = ++tmp;
-		/*per_cpu(sd_llc_id, cpu) = cpu;*/
 	}
 }
 
@@ -7608,7 +7605,7 @@ static void sched_init_topology_cpumask(void)
 		/* take chance to reset time slice for idle tasks */
 		cpu_rq(cpu)->idle->time_slice = sysctl_sched_base_slice;
 
-		topo = per_cpu(sched_cpu_topo_masks, cpu) + 1;
+		topo = per_cpu(sched_cpu_topo_masks, cpu);
 
 		bitmap_complement(cpumask_bits(topo), cpumask_bits(cpumask_of(cpu)),
 				  nr_cpumask_bits);
