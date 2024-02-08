@@ -96,8 +96,6 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
  */
 unsigned int sysctl_sched_base_slice __read_mostly	= (4 << 20);
 
-static inline void requeue_task(struct task_struct *p, struct rq *rq, int idx);
-
 #ifdef CONFIG_SCHED_BMQ
 #include "bmq.h"
 #endif
@@ -185,8 +183,8 @@ static inline void sched_queue_init_idle(struct sched_queue *q,
 					 struct task_struct *idle)
 {
 	idle->sq_idx = IDLE_TASK_SCHED_PRIO;
-	INIT_LIST_HEAD(&q->heads[idle->sq_idx]);
-	list_add(&idle->sq_node, &q->heads[idle->sq_idx]);
+	INIT_LIST_HEAD(&q->heads[IDLE_TASK_SCHED_PRIO]);
+	list_add_tail(&idle->sq_node, &q->heads[IDLE_TASK_SCHED_PRIO]);
 	idle->on_rq = TASK_ON_RQ_QUEUED;
 }
 
@@ -763,18 +761,21 @@ unsigned long get_wchan(struct task_struct *p)
 #define __SCHED_DEQUEUE_TASK(p, rq, flags, func)				\
 	sched_info_dequeue(rq, p);						\
 										\
-	list_del(&p->sq_node);							\
-	if (list_empty(&rq->queue.heads[p->sq_idx])) { 				\
+	__list_del_entry(&p->sq_node);						\
+	if (p->sq_node.prev == p->sq_node.next) {				\
 		clear_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);	\
 		func;								\
 	}
 
-#define __SCHED_ENQUEUE_TASK(p, rq, flags)				\
-	sched_info_enqueue(rq, p);					\
-									\
-	p->sq_idx = task_sched_prio_idx(p, rq);				\
-	list_add_tail(&p->sq_node, &rq->queue.heads[p->sq_idx]);	\
-	set_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);
+#define __SCHED_ENQUEUE_TASK(p, rq, flags, func)				\
+	sched_info_enqueue(rq, p);						\
+										\
+	p->sq_idx = task_sched_prio_idx(p, rq);					\
+	list_add_tail(&p->sq_node, &rq->queue.heads[p->sq_idx]);		\
+	if (list_is_first(&p->sq_node, &rq->queue.heads[p->sq_idx])) {		\
+		set_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);	\
+		func;								\
+	}
 
 static inline void dequeue_task(struct task_struct *p, struct rq *rq, int flags)
 {
@@ -806,8 +807,7 @@ static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
 		  task_cpu(p), cpu_of(rq));
 #endif
 
-	__SCHED_ENQUEUE_TASK(p, rq, flags);
-	update_sched_preempt_mask(rq);
+	__SCHED_ENQUEUE_TASK(p, rq, flags, update_sched_preempt_mask(rq));
 	++rq->nr_running;
 #ifdef CONFIG_SMP
 	if (2 == rq->nr_running)
@@ -819,22 +819,27 @@ static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
 
 static inline void requeue_task(struct task_struct *p, struct rq *rq, int idx)
 {
+	struct list_head *node = &p->sq_node;
+
 #ifdef ALT_SCHED_DEBUG
 	lockdep_assert_held(&rq->lock);
 	/*printk(KERN_INFO "sched: requeue(%d) %px %016llx\n", cpu_of(rq), p, p->deadline);*/
 	WARN_ONCE(task_rq(p) != rq, "sched: cpu[%d] requeue task reside on cpu%d\n",
 		  cpu_of(rq), task_cpu(p));
 #endif
+	if (list_is_last(node, &rq->queue.heads[idx]))
+		return;
 
-	list_del(&p->sq_node);
-	list_add_tail(&p->sq_node, &rq->queue.heads[idx]);
-	if (idx != p->sq_idx) {
-		if (list_empty(&rq->queue.heads[p->sq_idx]))
-			clear_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);
-		p->sq_idx = idx;
-		set_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);
-		update_sched_preempt_mask(rq);
-	}
+	__list_del_entry(node);
+	if (node->prev == node->next && idx != p->sq_idx)
+		clear_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);
+
+	p->sq_idx = idx;
+
+	list_add_tail(node, &rq->queue.heads[idx]);
+	if (list_is_first(node, &rq->queue.heads[idx]))
+		set_bit(sched_idx2prio(idx, rq), rq->queue.bitmap);
+	update_sched_preempt_mask(rq);
 }
 
 /*
@@ -4598,7 +4603,7 @@ migrate_pending_tasks(struct rq *rq, struct rq *dest_rq, const int dest_cpu)
 			set_task_cpu(p, dest_cpu);
 			sched_task_sanity_check(p, dest_rq);
 			sched_mm_cid_migrate_to(dest_rq, p, cpu_of(rq));
-			__SCHED_ENQUEUE_TASK(p, dest_rq, 0);
+			__SCHED_ENQUEUE_TASK(p, dest_rq, 0, );
 			nr_migrated++;
 		}
 		nr_tries--;
