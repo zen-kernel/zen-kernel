@@ -4,7 +4,7 @@
  * BMQ only routines
  */
 #define rq_switch_time(rq)	((rq)->clock - (rq)->last_ts_switch)
-#define boost_threshold(p)	(sysctl_sched_base_slice >> ((14 - (p)->boost_prio) / 2))
+#define boost_threshold(p)	(sysctl_sched_base_slice >> ((20 - (p)->boost_prio) / 2))
 
 static inline void boost_task(struct task_struct *p)
 {
