@@ -67,6 +67,11 @@ static inline int sched_idx2prio(int sched_idx, struct rq *rq)
 		MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(sched_idx - rq->time_edge);
 }
 
+static inline int sched_rq_prio_idx(struct rq *rq)
+{
+	return rq->prio_idx;
+}
+
 int task_running_nice(struct task_struct *p)
 {
 	return (p->prio > DEFAULT_PRIO);
@@ -105,8 +110,8 @@ static inline void sched_update_rq_clock(struct rq *rq)
 	if (rq->prio < MIN_SCHED_NORMAL_PRIO || IDLE_TASK_SCHED_PRIO == rq->prio)
 		return;
 
-	rq->prio = (rq->prio < MIN_SCHED_NORMAL_PRIO + delta) ?
-		MIN_SCHED_NORMAL_PRIO : rq->prio - delta;
+	rq->prio = max_t(u64, MIN_SCHED_NORMAL_PRIO, rq->prio - delta);
+	rq->prio_idx = sched_prio2idx(rq->prio, rq);
 }
 
 static inline void sched_task_renew(struct task_struct *p, const struct rq *rq)
