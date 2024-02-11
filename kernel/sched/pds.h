@@ -94,11 +94,7 @@ static inline void sched_update_rq_clock(struct rq *rq)
 
 	bitmap_shift_right(normal, rq->queue.bitmap, delta, SCHED_QUEUE_BITS);
 	if (!list_empty(&head)) {
-		struct task_struct *p;
 		u64 idx = MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(now);
-
-		list_for_each_entry(p, &head, sq_node)
-			p->sq_idx = idx;
 
 		__list_splice(&head, rq->queue.heads + idx, rq->queue.heads[idx].next);
 		set_bit(MIN_SCHED_NORMAL_PRIO, normal);
