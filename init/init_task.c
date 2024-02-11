@@ -95,7 +95,6 @@ struct task_struct init_task __aligned(L1_CACHE_BYTES) = {
 	.sq_node	= LIST_HEAD_INIT(init_task.sq_node),
 #ifdef CONFIG_SCHED_BMQ
 	.boost_prio	= 0,
-	.sq_idx		= 15,
 #endif
 #ifdef CONFIG_SCHED_PDS
 	.deadline	= 0,
