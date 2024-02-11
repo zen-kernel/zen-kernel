@@ -64,6 +64,11 @@ static inline int sched_idx2prio(int idx, struct rq *rq)
 	return idx;
 }
 
+static inline int sched_rq_prio_idx(struct rq *rq)
+{
+	return rq->prio;
+}
+
 inline int task_running_nice(struct task_struct *p)
 {
 	return (p->prio + p->boost_prio > DEFAULT_PRIO + MAX_PRIORITY_ADJ);
