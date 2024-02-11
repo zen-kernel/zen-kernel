@@ -873,7 +873,6 @@ struct task_struct {
 #ifdef CONFIG_SCHED_ALT
 	u64				last_ran;
 	s64				time_slice;
-	int				sq_idx;
 	struct list_head		sq_node;
 #ifdef CONFIG_SCHED_BMQ
 	int				boost_prio;
