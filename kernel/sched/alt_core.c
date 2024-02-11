@@ -214,6 +214,9 @@ static inline void update_sched_preempt_mask(struct rq *rq)
 		return;
 
 	rq->prio = prio;
+#ifdef CONFIG_SCHED_PDS
+	rq->prio_idx = sched_prio2idx(rq->prio, rq);
+#endif
 	cpu = cpu_of(rq);
 	pr = atomic_read(&sched_prio_record);
 
@@ -250,7 +253,7 @@ static inline void update_sched_preempt_mask(struct rq *rq)
  */
 static inline struct task_struct *sched_rq_first_task(struct rq *rq)
 {
-	const struct list_head *head = &rq->queue.heads[sched_prio2idx(rq->prio, rq)];
+	const struct list_head *head = &rq->queue.heads[sched_rq_prio_idx(rq)];
 
 	return list_first_entry(head, struct task_struct, sq_node);
 }
@@ -7702,6 +7705,9 @@ void __init sched_init(void)
 
 		sched_queue_init(&rq->queue);
 		rq->prio = IDLE_TASK_SCHED_PRIO;
+#ifdef CONFIG_SCHED_PDS
+		rq->prio_idx = rq->prio;
+#endif
 
 		raw_spin_lock_init(&rq->lock);
 		rq->nr_running = rq->nr_uninterruptible = 0;
