@@ -1485,8 +1485,8 @@ static void activate_task(struct task_struct *p, struct rq *rq)
  */
 static inline void deactivate_task(struct task_struct *p, struct rq *rq)
 {
-	dequeue_task(p, rq, DEQUEUE_SLEEP);
 	p->on_rq = 0;
+	dequeue_task(p, rq, DEQUEUE_SLEEP);
 	cpufreq_update_util(rq, 0);
 }
 
