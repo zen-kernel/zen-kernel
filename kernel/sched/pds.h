@@ -14,12 +14,6 @@ static __read_mostly int sched_timeslice_shift = 23;
 /*
  * Common interfaces
  */
-static inline void sched_timeslice_imp(const int timeslice_ms)
-{
-	if (2 == timeslice_ms)
-		sched_timeslice_shift = 22;
-}
-
 static inline int
 task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 {
@@ -40,18 +34,16 @@ static inline int task_sched_prio(const struct task_struct *p)
 		MIN_SCHED_NORMAL_PRIO + task_sched_prio_normal(p, task_rq(p));
 }
 
-static inline int
-task_sched_prio_idx(const struct task_struct *p, const struct rq *rq)
-{
-	u64 idx;
-
-	if (p->prio < MIN_NORMAL_PRIO)
-		return p->prio >> 2;
-
-	idx = max(p->deadline + SCHED_EDGE_DELTA, rq->time_edge);
-	/*printk(KERN_INFO "sched: task_sched_prio_idx edge:%llu, deadline=%llu idx=%llu\n", rq->time_edge, p->deadline, idx);*/
-	return MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(idx);
-}
+#define TASK_SCHED_PRIO_IDX(p, rq, idx, prio)							\
+	if (p->prio < MIN_NORMAL_PRIO) {							\
+		prio = p->prio >> 2;								\
+		idx = prio;									\
+	} else {										\
+		s64 delta = p->deadline - rq->time_edge + SCHED_EDGE_DELTA;			\
+		delta = max(0LL, delta);							\
+		prio = MIN_SCHED_NORMAL_PRIO + delta;						\
+		idx = MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(rq->time_edge + delta);	\
+	}
 
 static inline int sched_prio2idx(int sched_prio, struct rq *rq)
 {
