@@ -73,9 +73,9 @@ struct task_struct init_task __aligned(L1_CACHE_BYTES) = {
 	.usage		= REFCOUNT_INIT(2),
 	.flags		= PF_KTHREAD,
 #ifdef CONFIG_SCHED_ALT
-	.prio		= DEFAULT_PRIO + MAX_PRIORITY_ADJ,
+	.prio		= DEFAULT_PRIO,
 	.static_prio	= DEFAULT_PRIO,
-	.normal_prio	= DEFAULT_PRIO + MAX_PRIORITY_ADJ,
+	.normal_prio	= DEFAULT_PRIO,
 #else
 	.prio		= MAX_PRIO - 20,
 	.static_prio	= MAX_PRIO - 20,
