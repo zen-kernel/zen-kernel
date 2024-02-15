@@ -48,11 +48,9 @@ static inline int task_sched_prio(const struct task_struct *p)
 		MIN_SCHED_NORMAL_PRIO + (p->prio + p->boost_prio - MAX_RT_PRIO) / 2;
 }
 
-static inline int
-task_sched_prio_idx(const struct task_struct *p, const struct rq *rq)
-{
-	return task_sched_prio(p);
-}
+#define TASK_SCHED_PRIO_IDX(p, rq, idx, prio)	\
+	prio = task_sched_prio(p);		\
+	idx = prio;
 
 static inline int sched_prio2idx(int prio, struct rq *rq)
 {
