@@ -1448,8 +1448,7 @@ static inline void hrtick_rq_init(struct rq *rq)
 
 static inline int __normal_prio(int policy, int rt_prio, int static_prio)
 {
-	return rt_policy(policy) ? (MAX_RT_PRIO - 1 - rt_prio) :
-		static_prio + MAX_PRIORITY_ADJ;
+	return rt_policy(policy) ? (MAX_RT_PRIO - 1 - rt_prio) : static_prio;
 }
 
 /*
