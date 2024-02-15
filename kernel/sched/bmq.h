@@ -36,6 +36,7 @@ static inline void deboost_task(struct task_struct *p)
  */
 static inline void sched_timeslice_imp(const int timeslice_ms) {}
 
+/* This API is used in task_prio(), return value readed by human users */
 static inline int
 task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 {
