@@ -5,7 +5,7 @@ static const u64 RT_MASK = ((1ULL << MIN_SCHED_NORMAL_PRIO) - 1);
 #define SCHED_NORMAL_PRIO_NUM	(32)
 #define SCHED_EDGE_DELTA	(SCHED_NORMAL_PRIO_NUM - NICE_WIDTH / 2)
 
-/* PDS assume NORMAL_PRIO_NUM is power of 2 */
+/* PDS assume SCHED_NORMAL_PRIO_NUM is power of 2 */
 #define SCHED_NORMAL_PRIO_MOD(x)	((x) & (SCHED_NORMAL_PRIO_NUM - 1))
 
 /* default time slice 4ms -> shift 22, 2 time slice slots -> shift 23 */
@@ -17,15 +17,15 @@ static __read_mostly int sched_timeslice_shift = 23;
 static inline int
 task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 {
-	s64 delta = p->deadline - rq->time_edge + SCHED_EDGE_DELTA;
+	u64 sched_dl = max(p->deadline, rq->time_edge);
 
 #ifdef ALT_SCHED_DEBUG
-	if (WARN_ONCE(delta > NORMAL_PRIO_NUM - 1,
-		      "pds: task_sched_prio_normal() delta %lld\n", delta))
+	if (WARN_ONCE(sched_dl - rq->time_edge > NORMAL_PRIO_NUM - 1,
+		      "pds: task_sched_prio_normal() delta %lld\n", sched_dl - rq->time_edge))
 		return SCHED_NORMAL_PRIO_NUM - 1;
 #endif
 
-	return max(0LL, delta);
+	return sched_dl - rq->time_edge;
 }
 
 static inline int task_sched_prio(const struct task_struct *p)
@@ -39,10 +39,9 @@ static inline int task_sched_prio(const struct task_struct *p)
 		prio = p->prio >> 2;								\
 		idx = prio;									\
 	} else {										\
-		s64 delta = p->deadline - rq->time_edge + SCHED_EDGE_DELTA;			\
-		delta = max(0LL, delta);							\
-		prio = MIN_SCHED_NORMAL_PRIO + delta;						\
-		idx = MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(rq->time_edge + delta);	\
+		u64 sched_dl = max(p->deadline, rq->time_edge);					\
+		prio = MIN_SCHED_NORMAL_PRIO + sched_dl - rq->time_edge;			\
+		idx = MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(sched_dl);			\
 	}
 
 static inline int sched_prio2idx(int sched_prio, struct rq *rq)
@@ -109,12 +108,13 @@ static inline void sched_update_rq_clock(struct rq *rq)
 static inline void sched_task_renew(struct task_struct *p, const struct rq *rq)
 {
 	if (p->prio >= MIN_NORMAL_PRIO)
-		p->deadline = rq->time_edge + (p->static_prio - (MAX_PRIO - NICE_WIDTH)) / 2;
+		p->deadline = rq->time_edge + SCHED_EDGE_DELTA +
+			      (p->static_prio - (MAX_PRIO - NICE_WIDTH)) / 2;
 }
 
 static inline void sched_task_sanity_check(struct task_struct *p, struct rq *rq)
 {
-	u64 max_dl = rq->time_edge + NICE_WIDTH / 2 - 1;
+	u64 max_dl = rq->time_edge + SCHED_EDGE_DELTA + NICE_WIDTH / 2 - 1;
 	if (unlikely(p->deadline > max_dl))
 		p->deadline = max_dl;
 }
