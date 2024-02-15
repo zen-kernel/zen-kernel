@@ -36,13 +36,13 @@ static inline void sched_timeslice_imp(const int timeslice_ms) {}
 static inline int
 task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 {
-	return p->prio + p->boost_prio - MAX_RT_PRIO;
+	return p->prio + p->boost_prio - MIN_NORMAL_PRIO;
 }
 
 static inline int task_sched_prio(const struct task_struct *p)
 {
-	return (p->prio < MAX_RT_PRIO)? (p->prio >> 2) :
-		MIN_SCHED_NORMAL_PRIO + (p->prio + p->boost_prio - MAX_RT_PRIO) / 2;
+	return (p->prio < MIN_NORMAL_PRIO)? (p->prio >> 2) :
+		MIN_SCHED_NORMAL_PRIO + (p->prio + p->boost_prio - MIN_NORMAL_PRIO) / 2;
 }
 
 #define TASK_SCHED_PRIO_IDX(p, rq, idx, prio)	\
@@ -66,7 +66,7 @@ static inline int sched_rq_prio_idx(struct rq *rq)
 
 inline int task_running_nice(struct task_struct *p)
 {
-	return (p->prio + p->boost_prio > DEFAULT_PRIO + MAX_PRIORITY_ADJ);
+	return (p->prio + p->boost_prio > DEFAULT_PRIO);
 }
 
 static inline void sched_update_rq_clock(struct rq *rq) {}
