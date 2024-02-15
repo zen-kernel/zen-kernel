@@ -774,10 +774,11 @@ unsigned long get_wchan(struct task_struct *p)
 #define __SCHED_ENQUEUE_TASK(p, rq, flags, func)					\
 	sched_info_enqueue(rq, p);							\
 	{										\
-	int idx = task_sched_prio_idx(p, rq);						\
+	int idx, prio;									\
+	TASK_SCHED_PRIO_IDX(p, rq, idx, prio);						\
 	list_add_tail(&p->sq_node, &rq->queue.heads[idx]);				\
 	if (list_is_first(&p->sq_node, &rq->queue.heads[idx])) {			\
-		set_bit(sched_idx2prio(idx, rq), rq->queue.bitmap);			\
+		set_bit(prio, rq->queue.bitmap);					\
 		func;									\
 	}										\
 	}
@@ -825,8 +826,9 @@ static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
 static inline void requeue_task(struct task_struct *p, struct rq *rq)
 {
 	struct list_head *node = &p->sq_node;
-	int deq_idx, idx = task_sched_prio_idx(p, rq);
+	int deq_idx, idx, prio;
 
+	TASK_SCHED_PRIO_IDX(p, rq, idx, prio);
 #ifdef ALT_SCHED_DEBUG
 	lockdep_assert_held(&rq->lock);
 	/*printk(KERN_INFO "sched: requeue(%d) %px %016llx\n", cpu_of(rq), p, p->deadline);*/
@@ -842,7 +844,7 @@ static inline void requeue_task(struct task_struct *p, struct rq *rq)
 
 	list_add_tail(node, &rq->queue.heads[idx]);
 	if (list_is_first(node, &rq->queue.heads[idx]))
-		set_bit(sched_idx2prio(idx, rq), rq->queue.bitmap);
+		set_bit(prio, rq->queue.bitmap);
 	update_sched_preempt_mask(rq);
 }
 
