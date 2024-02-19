@@ -206,8 +206,8 @@ static atomic_t sched_prio_record = ATOMIC_INIT(0);
 /* water mark related functions */
 static inline void update_sched_preempt_mask(struct rq *rq)
 {
-	unsigned long prio = find_first_bit(rq->queue.bitmap, SCHED_QUEUE_BITS);
-	unsigned long last_prio = rq->prio;
+	int prio = find_first_bit(rq->queue.bitmap, SCHED_QUEUE_BITS);
+	int last_prio = rq->prio;
 	int cpu, pr;
 
 	if (prio == last_prio)
