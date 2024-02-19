@@ -170,11 +170,12 @@ struct rq {
 	struct mm_struct		*prev_mm;
 
 	struct sched_queue		queue		____cacheline_aligned;
+
+	int				prio;
 #ifdef CONFIG_SCHED_PDS
-	u64			time_edge;
-	unsigned long			prio_idx;
+	int				prio_idx;
+	u64				time_edge;
 #endif
-	unsigned long			prio;
 
 	/* switch count */
 	u64 nr_switches;
