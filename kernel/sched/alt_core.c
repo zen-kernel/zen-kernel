@@ -4705,8 +4705,9 @@ choose_next_task(struct rq *rq, int cpu)
 #endif
 
 #ifdef CONFIG_SCHED_SMT
-			if (likely(rq->online) &&
-			    cpumask_test_cpu(cpu, sched_sg_idle_mask))
+			if (static_key_count(&sched_smt_present.key) > 1 &&
+			    cpumask_test_cpu(cpu, sched_sg_idle_mask) &&
+			    rq->online)
 				__queue_balance_callback(rq, &per_cpu(sg_balance_head, cpu));
 #endif
 			schedstat_inc(rq->sched_goidle);
