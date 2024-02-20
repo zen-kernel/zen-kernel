@@ -15,7 +15,6 @@ static inline void boost_task(struct task_struct *p)
 		limit = -MAX_PRIORITY_ADJ;
 		break;
 	case SCHED_BATCH:
-	case SCHED_IDLE:
 		limit = 0;
 		break;
 	default:
