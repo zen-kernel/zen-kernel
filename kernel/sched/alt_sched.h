@@ -156,6 +156,12 @@ struct balance_callback {
 	void (*func)(struct rq *rq);
 };
 
+struct balance_arg {
+	struct task_struct	*task;
+	int			active;
+	cpumask_t		*cpumask;
+};
+
 /*
  * This is the main, per-CPU runqueue data structure.
  * This data should only be modified by the local cpu.
@@ -204,9 +210,10 @@ struct rq {
 #endif
 
 #ifdef CONFIG_SCHED_SMT
-	int active_balance;
-	struct cpu_stop_work	active_balance_work;
+	struct balance_arg	sg_balance_arg		____cacheline_aligned;
 #endif
+	struct cpu_stop_work	active_balance_work;
+
 	struct balance_callback	*balance_callback;
 #ifdef CONFIG_HOTPLUG_CPU
 	struct rcuwait		hotplug_wait;
