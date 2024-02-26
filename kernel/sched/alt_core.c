@@ -29,6 +29,7 @@
 #include <linux/kcov.h>
 #include <linux/kprobes.h>
 #include <linux/nmi.h>
+#include <linux/rseq.h>
 #include <linux/scs.h>
 
 #include <uapi/linux/sched/types.h>
