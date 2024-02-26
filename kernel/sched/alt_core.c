@@ -1463,7 +1463,9 @@ static int effective_prio(struct task_struct *p)
 static void activate_task(struct task_struct *p, struct rq *rq)
 {
 	enqueue_task(p, rq, ENQUEUE_WAKEUP);
-	p->on_rq = TASK_ON_RQ_QUEUED;
+
+	WRITE_ONCE(p->on_rq, TASK_ON_RQ_QUEUED);
+	ASSERT_EXCLUSIVE_WRITER(p->on_rq);
 
 	/*
 	 * If in_iowait is set, the code below may not trigger any cpufreq
@@ -1480,8 +1482,11 @@ static void activate_task(struct task_struct *p, struct rq *rq)
  */
 static inline void deactivate_task(struct task_struct *p, struct rq *rq)
 {
+	WRITE_ONCE(p->on_rq, 0);
+	ASSERT_EXCLUSIVE_WRITER(p->on_rq);
+
 	dequeue_task(p, rq, DEQUEUE_SLEEP);
-	p->on_rq = 0;
+
 	cpufreq_update_util(rq, 0);
 }
 
@@ -1713,7 +1718,7 @@ static struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int
 
 	sched_task_sanity_check(p, rq);
 	enqueue_task(p, rq, 0);
-	p->on_rq = TASK_ON_RQ_QUEUED;
+	WRITE_ONCE(p->on_rq, TASK_ON_RQ_QUEUED);
 	wakeup_preempt(rq);
 
 	return rq;
