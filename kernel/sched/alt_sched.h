@@ -14,6 +14,29 @@
 
 #include "cpupri.h"
 
+#ifdef CONFIG_CGROUP_SCHED
+/* task group related information */
+struct task_group {
+	struct cgroup_subsys_state css;
+
+	struct rcu_head rcu;
+	struct list_head list;
+
+	struct task_group *parent;
+	struct list_head siblings;
+	struct list_head children;
+#ifdef CONFIG_FAIR_GROUP_SCHED
+	unsigned long		shares;
+#endif
+};
+
+extern struct task_group *sched_create_group(struct task_group *parent);
+extern void sched_online_group(struct task_group *tg,
+			       struct task_group *parent);
+extern void sched_destroy_group(struct task_group *tg);
+extern void sched_release_group(struct task_group *tg);
+#endif /* CONFIG_CGROUP_SCHED */
+
 #define MIN_SCHED_NORMAL_PRIO	(32)
 /*
  * levels: RT(0-24), reserved(25-31), NORMAL(32-63), cpu idle task(64)
@@ -538,6 +561,8 @@ static inline int cpu_of(const struct rq *rq)
 #endif
 }
 
+extern void resched_cpu(int cpu);
+
 #include "stats.h"
 
 #ifdef CONFIG_NO_HZ_COMMON
@@ -605,6 +630,12 @@ static inline int sched_tick_offload_init(void) { return 0; }
 #else /* arch_scale_freq_capacity */
 #define arch_scale_freq_invariant()	(false)
 #endif
+
+#ifdef CONFIG_SMP
+unsigned long sugov_effective_cpu_perf(int cpu, unsigned long actual,
+				 unsigned long min,
+				 unsigned long max);
+#endif /* CONFIG_SMP */
 
 extern void schedule_idle(void);
 
