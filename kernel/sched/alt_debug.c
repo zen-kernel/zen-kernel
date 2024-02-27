@@ -7,6 +7,7 @@
  * Date  : 2020
  */
 #include "sched.h"
+#include "linux/sched/debug.h"
 
 /*
  * This allows printing both to /proc/sched_debug and
