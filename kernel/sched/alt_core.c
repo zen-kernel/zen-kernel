@@ -14,6 +14,8 @@
 #include <linux/sched/clock.h>
 #include <linux/sched/cputime.h>
 #include <linux/sched/debug.h>
+#include <linux/sched/hotplug.h>
+#include <linux/sched/init.h>
 #include <linux/sched/isolation.h>
 #include <linux/sched/loadavg.h>
 #include <linux/sched/mm.h>
@@ -43,6 +45,7 @@
 #undef CREATE_TRACE_POINTS
 
 #include "sched.h"
+#include "smp.h"
 
 #include "pelt.h"
 
@@ -998,7 +1001,7 @@ void wake_up_q(struct wake_q_head *head)
  * might also involve a cross-CPU call to trigger the scheduler on
  * the target CPU.
  */
-void resched_curr(struct rq *rq)
+static inline void resched_curr(struct rq *rq)
 {
 	struct task_struct *curr = rq->curr;
 	int cpu;
@@ -1034,11 +1037,11 @@ void resched_cpu(int cpu)
 
 #ifdef CONFIG_SMP
 #ifdef CONFIG_NO_HZ_COMMON
+/*
+ * This routine will record that the CPU is going idle with tick stopped.
+ * This info will be used in performing idle load balancing in the future.
+ */
 void nohz_balance_enter_idle(int cpu) {}
-
-void select_nohz_load_balancer(int stop_tick) {}
-
-void set_cpu_sd_state_idle(void) {}
 
 /*
  * In the semi idle case, use the nearest busy CPU for migrating timers
@@ -1358,7 +1361,7 @@ static void __hrtick_start(void *arg)
  *
  * called with rq->lock held and irqs disabled
  */
-void hrtick_start(struct rq *rq, u64 delay)
+static inline void hrtick_start(struct rq *rq, u64 delay)
 {
 	struct hrtimer *timer = &rq->hrtick_timer;
 	s64 delta;
@@ -1383,7 +1386,7 @@ void hrtick_start(struct rq *rq, u64 delay)
  *
  * called with rq->lock held and irqs disabled
  */
-void hrtick_start(struct rq *rq, u64 delay)
+static inline void hrtick_start(struct rq *rq, u64 delay)
 {
 	/*
 	 * Don't schedule slices shorter than 10000ns, that just
@@ -7662,21 +7665,6 @@ int in_sched_functions(unsigned long addr)
 }
 
 #ifdef CONFIG_CGROUP_SCHED
-/* task group related information */
-struct task_group {
-	struct cgroup_subsys_state css;
-
-	struct rcu_head rcu;
-	struct list_head list;
-
-	struct task_group *parent;
-	struct list_head siblings;
-	struct list_head children;
-#ifdef CONFIG_FAIR_GROUP_SCHED
-	unsigned long		shares;
-#endif
-};
-
 /*
  * Default task group.
  * Every task in system belongs to this group at bootup.
