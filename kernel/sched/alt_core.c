@@ -251,8 +251,7 @@ static inline struct task_struct *sched_rq_first_task(struct rq *rq)
 	return list_first_entry(head, struct task_struct, sq_node);
 }
 
-static inline struct task_struct *
-sched_rq_next_task(struct task_struct *p, struct rq *rq)
+static inline struct task_struct * sched_rq_next_task(struct task_struct *p, struct rq *rq)
 {
 	struct list_head *next = p->sq_node.next;
 
@@ -365,16 +364,14 @@ sched_rq_next_task(struct task_struct *p, struct rq *rq)
 /*
  * Context: p->pi_lock
  */
-static inline struct rq
-*__task_access_lock(struct task_struct *p, raw_spinlock_t **plock)
+static inline struct rq *__task_access_lock(struct task_struct *p, raw_spinlock_t **plock)
 {
 	struct rq *rq;
 	for (;;) {
 		rq = task_rq(p);
 		if (p->on_cpu || task_on_rq_queued(p)) {
 			raw_spin_lock(&rq->lock);
-			if (likely((p->on_cpu || task_on_rq_queued(p))
-				   && rq == task_rq(p))) {
+			if (likely((p->on_cpu || task_on_rq_queued(p)) && rq == task_rq(p))) {
 				*plock = &rq->lock;
 				return rq;
 			}
@@ -390,24 +387,21 @@ static inline struct rq
 	}
 }
 
-static inline void
-__task_access_unlock(struct task_struct *p, raw_spinlock_t *lock)
+static inline void __task_access_unlock(struct task_struct *p, raw_spinlock_t *lock)
 {
 	if (NULL != lock)
 		raw_spin_unlock(lock);
 }
 
-static inline struct rq
-*task_access_lock_irqsave(struct task_struct *p, raw_spinlock_t **plock,
-			  unsigned long *flags)
+static inline struct rq *
+task_access_lock_irqsave(struct task_struct *p, raw_spinlock_t **plock, unsigned long *flags)
 {
 	struct rq *rq;
 	for (;;) {
 		rq = task_rq(p);
 		if (p->on_cpu || task_on_rq_queued(p)) {
 			raw_spin_lock_irqsave(&rq->lock, *flags);
-			if (likely((p->on_cpu || task_on_rq_queued(p))
-				   && rq == task_rq(p))) {
+			if (likely((p->on_cpu || task_on_rq_queued(p)) && rq == task_rq(p))) {
 				*plock = &rq->lock;
 				return rq;
 			}
@@ -418,8 +412,7 @@ static inline struct rq
 			} while (unlikely(task_on_rq_migrating(p)));
 		} else {
 			raw_spin_lock_irqsave(&p->pi_lock, *flags);
-			if (likely(!p->on_cpu && !p->on_rq &&
-				   rq == task_rq(p))) {
+			if (likely(!p->on_cpu && !p->on_rq && rq == task_rq(p))) {
 				*plock = &p->pi_lock;
 				return rq;
 			}
@@ -429,8 +422,7 @@ static inline struct rq
 }
 
 static inline void
-task_access_unlock_irqrestore(struct task_struct *p, raw_spinlock_t *lock,
-			      unsigned long *flags)
+task_access_unlock_irqrestore(struct task_struct *p, raw_spinlock_t *lock, unsigned long *flags)
 {
 	raw_spin_unlock_irqrestore(lock, *flags);
 }
@@ -498,15 +490,13 @@ struct rq *task_rq_lock(struct task_struct *p, struct rq_flags *rf)
 	}
 }
 
-static inline void
-rq_lock_irqsave(struct rq *rq, struct rq_flags *rf)
+static inline void rq_lock_irqsave(struct rq *rq, struct rq_flags *rf)
 	__acquires(rq->lock)
 {
 	raw_spin_lock_irqsave(&rq->lock, rf->flags);
 }
 
-static inline void
-rq_unlock_irqrestore(struct rq *rq, struct rq_flags *rf)
+static inline void rq_unlock_irqrestore(struct rq *rq, struct rq_flags *rf)
 	__releases(rq->lock)
 {
 	raw_spin_unlock_irqrestore(&rq->lock, rf->flags);
@@ -626,8 +616,7 @@ static inline void update_rq_clock(struct rq *rq)
 static inline void rq_load_update(struct rq *rq)
 {
 	u64 time = rq->clock;
-	u64 delta = min(LOAD_BLOCK(time) - LOAD_BLOCK(rq->load_stamp),
-			RQ_LOAD_HISTORY_BITS - 1);
+	u64 delta = min(LOAD_BLOCK(time) - LOAD_BLOCK(rq->load_stamp), RQ_LOAD_HISTORY_BITS - 1);
 	u64 prev = !!(rq->load_history & CURRENT_LOAD_BIT);
 	u64 curr = !!rq->nr_running;
 
@@ -691,8 +680,7 @@ static inline void cpufreq_update_util(struct rq *rq, unsigned int flags)
 #ifdef CONFIG_SMP
 	rq_load_update(rq);
 #endif
-	data = rcu_dereference_sched(*per_cpu_ptr(&cpufreq_update_util_data,
-						  cpu_of(rq)));
+	data = rcu_dereference_sched(*per_cpu_ptr(&cpufreq_update_util_data, cpu_of(rq)));
 	if (data)
 		data->func(data, rq_clock(rq), flags);
 }
@@ -1717,8 +1705,7 @@ static inline bool is_cpu_allowed(struct task_struct *p, int cpu)
  *
  * Returns (locked) new rq. Old rq's lock is released.
  */
-static struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int
-				   new_cpu)
+static struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int new_cpu)
 {
 	int src_cpu;
 
@@ -1759,8 +1746,7 @@ struct migration_arg {
  * So we race with normal scheduler movements, but that's OK, as long
  * as the task is no longer on this CPU.
  */
-static struct rq *__migrate_task(struct rq *rq, struct task_struct *p, int
-				 dest_cpu)
+static struct rq *__migrate_task(struct rq *rq, struct task_struct *p, int dest_cpu)
 {
 	/* Affinity changed (again). */
 	if (!is_cpu_allowed(p, dest_cpu))
