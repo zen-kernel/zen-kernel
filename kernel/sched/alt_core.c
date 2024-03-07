@@ -162,6 +162,15 @@ static cpumask_t *const sched_ecore_idle_mask = &sched_preempt_mask[SCHED_QUEUE_
 static cpumask_t sched_pcore_mask;
 static cpumask_t sched_ecore_mask;
 
+static int __init sched_pcore_mask_setup(char *str)
+{
+	if (cpulist_parse(str, &sched_pcore_mask))
+		pr_warn("sched/alt: pcore_cpus= incorrect CPU range\n");
+
+	return 0;
+}
+__setup("pcore_cpus=", sched_pcore_mask_setup);
+
 /* task function */
 static inline const struct cpumask *task_user_cpus(struct task_struct *p)
 {
