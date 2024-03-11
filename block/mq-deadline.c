@@ -79,10 +79,24 @@ struct dd_per_prio {
 	struct io_stats_per_prio stats;
 };
 
+enum {
+	DD_DISPATCHING	= 0,
+};
+
 struct deadline_data {
 	/*
 	 * run time data
 	 */
+	struct {
+		spinlock_t lock;
+		spinlock_t insert_lock;
+		spinlock_t zone_lock;
+	} ____cacheline_aligned_in_smp;
+
+	unsigned long run_state;
+
+	struct list_head at_head;
+	struct list_head at_tail;
 
 	struct dd_per_prio per_prio[DD_PRIO_COUNT];
 
@@ -100,9 +114,6 @@ struct deadline_data {
 	int front_merges;
 	u32 async_depth;
 	int prio_aging_expire;
-
-	spinlock_t lock;
-	spinlock_t zone_lock;
 };
 
 /* Maps an I/O priority class to a deadline scheduler priority. */
@@ -112,6 +123,9 @@ static const enum dd_prio ioprio_class_to_prio[] = {
 	[IOPRIO_CLASS_BE]	= DD_BE_PRIO,
 	[IOPRIO_CLASS_IDLE]	= DD_IDLE_PRIO,
 };
+
+static void dd_insert_request(struct request_queue *q, struct request *rq,
+			      blk_insert_t flags, struct list_head *free);
 
 static inline struct rb_root *
 deadline_rb_root(struct dd_per_prio *per_prio, struct request *rq)
@@ -585,6 +599,33 @@ static struct request *dd_dispatch_prio_aged_requests(struct deadline_data *dd,
 	return NULL;
 }
 
+static void __dd_do_insert(struct request_queue *q, blk_insert_t flags,
+			   struct list_head *list, struct list_head *free)
+{
+	while (!list_empty(list)) {
+		struct request *rq;
+
+		rq = list_first_entry(list, struct request, queuelist);
+		list_del_init(&rq->queuelist);
+		dd_insert_request(q, rq, flags, free);
+	}
+}
+
+static void dd_do_insert(struct request_queue *q, struct list_head *free)
+{
+	struct deadline_data *dd = q->elevator->elevator_data;
+	LIST_HEAD(at_head);
+	LIST_HEAD(at_tail);
+
+	spin_lock(&dd->insert_lock);
+	list_splice_init(&dd->at_head, &at_head);
+	list_splice_init(&dd->at_tail, &at_tail);
+	spin_unlock(&dd->insert_lock);
+
+	__dd_do_insert(q, BLK_MQ_INSERT_AT_HEAD, &at_head, free);
+	__dd_do_insert(q, 0, &at_tail, free);
+}
+
 /*
  * Called from blk_mq_run_hw_queue() -> __blk_mq_sched_dispatch_requests().
  *
@@ -595,12 +636,27 @@ static struct request *dd_dispatch_prio_aged_requests(struct deadline_data *dd,
  */
 static struct request *dd_dispatch_request(struct blk_mq_hw_ctx *hctx)
 {
-	struct deadline_data *dd = hctx->queue->elevator->elevator_data;
+	struct request_queue *q = hctx->queue;
+	struct deadline_data *dd = q->elevator->elevator_data;
 	const unsigned long now = jiffies;
 	struct request *rq;
 	enum dd_prio prio;
+	LIST_HEAD(free);
+
+	/*
+	 * If someone else is already dispatching, skip this one. This will
+	 * defer the next dispatch event to when something completes, and could
+	 * potentially lower the queue depth for contended cases.
+	 *
+	 * See the logic in blk_mq_do_dispatch_sched(), which loops and
+	 * retries if nothing is dispatched.
+	 */
+	if (test_bit(DD_DISPATCHING, &dd->run_state) ||
+	    test_and_set_bit_lock(DD_DISPATCHING, &dd->run_state))
+		return NULL;
 
 	spin_lock(&dd->lock);
+	dd_do_insert(q, &free);
 	rq = dd_dispatch_prio_aged_requests(dd, now);
 	if (rq)
 		goto unlock;
@@ -616,8 +672,10 @@ static struct request *dd_dispatch_request(struct blk_mq_hw_ctx *hctx)
 	}
 
 unlock:
+	clear_bit_unlock(DD_DISPATCHING, &dd->run_state);
 	spin_unlock(&dd->lock);
 
+	blk_mq_free_requests(&free);
 	return rq;
 }
 
@@ -706,6 +764,13 @@ static int dd_init_sched(struct request_queue *q, struct elevator_type *e)
 
 	eq->elevator_data = dd;
 
+	spin_lock_init(&dd->lock);
+	spin_lock_init(&dd->insert_lock);
+	spin_lock_init(&dd->zone_lock);
+
+	INIT_LIST_HEAD(&dd->at_head);
+	INIT_LIST_HEAD(&dd->at_tail);
+
 	for (prio = 0; prio <= DD_PRIO_MAX; prio++) {
 		struct dd_per_prio *per_prio = &dd->per_prio[prio];
 
@@ -722,8 +787,6 @@ static int dd_init_sched(struct request_queue *q, struct elevator_type *e)
 	dd->last_dir = DD_WRITE;
 	dd->fifo_batch = fifo_batch;
 	dd->prio_aging_expire = prio_aging_expire;
-	spin_lock_init(&dd->lock);
-	spin_lock_init(&dd->zone_lock);
 
 	/* We dispatch from request queue wide instead of hw queue */
 	blk_queue_flag_set(QUEUE_FLAG_SQ_SCHED, q);
@@ -779,7 +842,19 @@ static bool dd_bio_merge(struct request_queue *q, struct bio *bio,
 	struct request *free = NULL;
 	bool ret;
 
-	spin_lock(&dd->lock);
+	/*
+	 * bio merging is called for every bio queued, and it's very easy
+	 * to run into contention because of that. If we fail getting
+	 * the dd lock, just skip this merge attempt. For related IO, the
+	 * plug will be the successful merging point. If we get here, we
+	 * already failed doing the obvious merge. Chances of actually
+	 * getting a merge off this path is a lot slimmer, so skipping an
+	 * occassional lookup that will most likely not succeed anyway should
+	 * not be a problem.
+	 */
+	if (!spin_trylock(&dd->lock))
+		return false;
+
 	ret = blk_mq_sched_try_merge(q, bio, nr_segs, &free);
 	spin_unlock(&dd->lock);
 
@@ -792,10 +867,9 @@ static bool dd_bio_merge(struct request_queue *q, struct bio *bio,
 /*
  * add rq to rbtree and fifo
  */
-static void dd_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
+static void dd_insert_request(struct request_queue *q, struct request *rq,
 			      blk_insert_t flags, struct list_head *free)
 {
-	struct request_queue *q = hctx->queue;
 	struct deadline_data *dd = q->elevator->elevator_data;
 	const enum dd_data_dir data_dir = rq_data_dir(rq);
 	u16 ioprio = req_get_ioprio(rq);
@@ -867,19 +941,13 @@ static void dd_insert_requests(struct blk_mq_hw_ctx *hctx,
 {
 	struct request_queue *q = hctx->queue;
 	struct deadline_data *dd = q->elevator->elevator_data;
-	LIST_HEAD(free);
 
-	spin_lock(&dd->lock);
-	while (!list_empty(list)) {
-		struct request *rq;
-
-		rq = list_first_entry(list, struct request, queuelist);
-		list_del_init(&rq->queuelist);
-		dd_insert_request(hctx, rq, flags, &free);
-	}
-	spin_unlock(&dd->lock);
-
-	blk_mq_free_requests(&free);
+	spin_lock(&dd->insert_lock);
+	if (flags & BLK_MQ_INSERT_AT_HEAD)
+		list_splice_init(list, &dd->at_head);
+	else
+		list_splice_init(list, &dd->at_tail);
+	spin_unlock(&dd->insert_lock);
 }
 
 /* Callback from inside blk_mq_rq_ctx_init(). */
@@ -957,6 +1025,10 @@ static bool dd_has_work(struct blk_mq_hw_ctx *hctx)
 {
 	struct deadline_data *dd = hctx->queue->elevator->elevator_data;
 	enum dd_prio prio;
+
+	if (!list_empty_careful(&dd->at_head) ||
+	    !list_empty_careful(&dd->at_tail))
+		return true;
 
 	for (prio = 0; prio <= DD_PRIO_MAX; prio++)
 		if (dd_has_work_for_prio(&dd->per_prio[prio]))
