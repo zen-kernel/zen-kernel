@@ -842,8 +842,17 @@ __SYSCALL(__NR_lsm_set_self_attr, sys_lsm_set_self_attr)
 #define __NR_lsm_list_modules 461
 __SYSCALL(__NR_lsm_list_modules, sys_lsm_list_modules)
 
+#define __NR_process_ksm_enable 462
+__SYSCALL(__NR_process_ksm_enable, sys_process_ksm_enable)
+
+#define __NR_process_ksm_disable 463
+__SYSCALL(__NR_process_ksm_disable, sys_process_ksm_disable)
+
+#define __NR_process_ksm_status 464
+__SYSCALL(__NR_process_ksm_status, sys_process_ksm_status)
+
 #undef __NR_syscalls
-#define __NR_syscalls 462
+#define __NR_syscalls 465
 
 /*
  * 32 bit systems traditionally used different
