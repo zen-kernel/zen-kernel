@@ -197,12 +197,17 @@ unsigned long sugov_effective_cpu_perf(int cpu, unsigned long actual,
 
 static void sugov_get_util(struct sugov_cpu *sg_cpu, unsigned long boost)
 {
+#ifndef CONFIG_SCHED_ALT
 	unsigned long min, max, util = cpu_util_cfs_boost(sg_cpu->cpu);
 
 	util = effective_cpu_util(sg_cpu->cpu, util, &min, &max);
 	util = max(util, boost);
 	sg_cpu->bw_min = min;
 	sg_cpu->util = sugov_effective_cpu_perf(sg_cpu->cpu, util, min, max);
+#else /* CONFIG_SCHED_ALT */
+	sg_cpu->bw_min = 0;
+	sg_cpu->util = rq_load_util(cpu_rq(sg_cpu->cpu), arch_scale_cpu_capacity(sg_cpu->cpu));
+#endif /* CONFIG_SCHED_ALT */
 }
 
 /**
@@ -343,8 +348,10 @@ static inline bool sugov_cpu_is_busy(struct sugov_cpu *sg_cpu) { return false; }
  */
 static inline void ignore_dl_rate_limit(struct sugov_cpu *sg_cpu)
 {
+#ifndef CONFIG_SCHED_ALT
 	if (cpu_bw_dl(cpu_rq(sg_cpu->cpu)) > sg_cpu->bw_min)
 		sg_cpu->sg_policy->limits_changed = true;
+#endif
 }
 
 static inline bool sugov_update_single_common(struct sugov_cpu *sg_cpu,
@@ -676,6 +683,7 @@ static int sugov_kthread_create(struct sugov_policy *sg_policy)
 	}
 
 	ret = sched_setattr_nocheck(thread, &attr);
+
 	if (ret) {
 		kthread_stop(thread);
 		pr_warn("%s: failed to set SCHED_DEADLINE\n", __func__);
