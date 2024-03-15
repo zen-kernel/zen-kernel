@@ -132,6 +132,7 @@ enum AMDGPU_DEBUG_MASK {
 };
 
 unsigned int amdgpu_vram_limit = UINT_MAX;
+int amdgpu_ignore_min_pcap = 0; /* do not ignore by default */
 int amdgpu_vis_vram_limit;
 int amdgpu_gart_size = -1; /* auto */
 int amdgpu_gtt_size = -1; /* auto */
@@ -242,6 +243,15 @@ struct amdgpu_watchdog_timer amdgpu_watchdog_timer = {
 	.timeout_fatal_disable = false,
 	.period = 0x0, /* default to 0x0 (timeout disable) */
 };
+
+/**
+ * DOC: ignore_min_pcap (int)
+ * Ignore the minimum power cap.
+ * Useful on graphics cards where the minimum power cap is very high.
+ * The default is 0 (Do not ignore).
+ */
+MODULE_PARM_DESC(ignore_min_pcap, "Ignore the minimum power cap");
+module_param_named(ignore_min_pcap, amdgpu_ignore_min_pcap, int, 0600);
 
 /**
  * DOC: vramlimit (int)
