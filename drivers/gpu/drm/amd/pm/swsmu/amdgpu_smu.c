@@ -3001,9 +3001,12 @@ int smu_get_ppt_limit(void *handle,
 			smu->ppt_limits.range[power_source][limit_type].max;
 		break;
 	case SMU_PPT_LIMIT_MIN:
-		*limit = smu->od_enabled ?
-			smu->ppt_limits.range[power_source][limit_type].od_min :
-			smu->ppt_limits.range[power_source][limit_type].min;
+		if (amdgpu_ignore_min_pcap && limit_type == SMU_DEFAULT_PPT_LIMIT)
+			*limit = 0;
+		else
+			*limit = smu->od_enabled ?
+				smu->ppt_limits.range[power_source][limit_type].od_min :
+				smu->ppt_limits.range[power_source][limit_type].min;
 		break;
 	default:
 		return -EINVAL;
@@ -3040,7 +3043,9 @@ static int smu_set_ppt_limit(void *handle, uint32_t limit_type, uint32_t limit)
 			return ret;
 	}
 
-	if (limit > max_limit || limit < min_limit) {
+	if (limit > max_limit ||
+	    (!(amdgpu_ignore_min_pcap && limit_type == SMU_DEFAULT_PPT_LIMIT) &&
+	     limit < min_limit)) {
 		dev_err(smu->adev->dev,
 			"New PPT limit (%d) is out of range [%d,%d]\n",
 			limit, min_limit, max_limit);
