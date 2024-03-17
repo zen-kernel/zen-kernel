@@ -8107,7 +8107,7 @@ static void cpu_cgroup_attach(struct cgroup_taskset *tset)
 #ifdef CONFIG_FAIR_GROUP_SCHED
 static DEFINE_MUTEX(shares_mutex);
 
-int sched_group_set_shares(struct task_group *tg, unsigned long shares)
+static int sched_group_set_shares(struct task_group *tg, unsigned long shares)
 {
 	/*
 	 * We can't change the weight of the root cgroup.
