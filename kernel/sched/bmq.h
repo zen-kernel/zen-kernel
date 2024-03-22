@@ -4,7 +4,7 @@
  * BMQ only routines
  */
 #define rq_switch_time(rq)	((rq)->clock - (rq)->last_ts_switch)
-#define boost_threshold(p)	(sysctl_sched_base_slice >> ((14 - (p)->boost_prio) / 2))
+#define boost_threshold(p)	(sysctl_sched_base_slice >> ((20 - (p)->boost_prio) / 2))
 
 static inline void boost_task(struct task_struct *p)
 {
@@ -15,7 +15,6 @@ static inline void boost_task(struct task_struct *p)
 		limit = -MAX_PRIORITY_ADJ;
 		break;
 	case SCHED_BATCH:
-	case SCHED_IDLE:
 		limit = 0;
 		break;
 	default:
@@ -37,6 +36,7 @@ static inline void deboost_task(struct task_struct *p)
  */
 static inline void sched_timeslice_imp(const int timeslice_ms) {}
 
+/* This API is used in task_prio(), return value readed by human users */
 static inline int
 task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 {
@@ -49,11 +49,9 @@ static inline int task_sched_prio(const struct task_struct *p)
 		MIN_SCHED_NORMAL_PRIO + (p->prio + p->boost_prio - MAX_RT_PRIO) / 2;
 }
 
-static inline int
-task_sched_prio_idx(const struct task_struct *p, const struct rq *rq)
-{
-	return task_sched_prio(p);
-}
+#define TASK_SCHED_PRIO_IDX(p, rq, idx, prio)	\
+	prio = task_sched_prio(p);		\
+	idx = prio;
 
 static inline int sched_prio2idx(int prio, struct rq *rq)
 {
@@ -63,6 +61,11 @@ static inline int sched_prio2idx(int prio, struct rq *rq)
 static inline int sched_idx2prio(int idx, struct rq *rq)
 {
 	return idx;
+}
+
+static inline int sched_rq_prio_idx(struct rq *rq)
+{
+	return rq->prio;
 }
 
 inline int task_running_nice(struct task_struct *p)
