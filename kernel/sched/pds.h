@@ -5,7 +5,7 @@ static const u64 RT_MASK = ((1ULL << MIN_SCHED_NORMAL_PRIO) - 1);
 #define SCHED_NORMAL_PRIO_NUM	(32)
 #define SCHED_EDGE_DELTA	(SCHED_NORMAL_PRIO_NUM - NICE_WIDTH / 2)
 
-/* PDS assume NORMAL_PRIO_NUM is power of 2 */
+/* PDS assume SCHED_NORMAL_PRIO_NUM is power of 2 */
 #define SCHED_NORMAL_PRIO_MOD(x)	((x) & (SCHED_NORMAL_PRIO_NUM - 1))
 
 /* default time slice 4ms -> shift 22, 2 time slice slots -> shift 23 */
@@ -14,24 +14,18 @@ static __read_mostly int sched_timeslice_shift = 23;
 /*
  * Common interfaces
  */
-static inline void sched_timeslice_imp(const int timeslice_ms)
-{
-	if (2 == timeslice_ms)
-		sched_timeslice_shift = 22;
-}
-
 static inline int
 task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 {
-	s64 delta = p->deadline - rq->time_edge + SCHED_EDGE_DELTA;
+	u64 sched_dl = max(p->deadline, rq->time_edge);
 
 #ifdef ALT_SCHED_DEBUG
-	if (WARN_ONCE(delta > NORMAL_PRIO_NUM - 1,
-		      "pds: task_sched_prio_normal() delta %lld\n", delta))
+	if (WARN_ONCE(sched_dl - rq->time_edge > NORMAL_PRIO_NUM - 1,
+		      "pds: task_sched_prio_normal() delta %lld\n", sched_dl - rq->time_edge))
 		return SCHED_NORMAL_PRIO_NUM - 1;
 #endif
 
-	return max(0LL, delta);
+	return sched_dl - rq->time_edge;
 }
 
 static inline int task_sched_prio(const struct task_struct *p)
@@ -40,18 +34,15 @@ static inline int task_sched_prio(const struct task_struct *p)
 		MIN_SCHED_NORMAL_PRIO + task_sched_prio_normal(p, task_rq(p));
 }
 
-static inline int
-task_sched_prio_idx(const struct task_struct *p, const struct rq *rq)
-{
-	u64 idx;
-
-	if (p->prio < MIN_NORMAL_PRIO)
-		return p->prio >> 2;
-
-	idx = max(p->deadline + SCHED_EDGE_DELTA, rq->time_edge);
-	/*printk(KERN_INFO "sched: task_sched_prio_idx edge:%llu, deadline=%llu idx=%llu\n", rq->time_edge, p->deadline, idx);*/
-	return MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(idx);
-}
+#define TASK_SCHED_PRIO_IDX(p, rq, idx, prio)							\
+	if (p->prio < MIN_NORMAL_PRIO) {							\
+		prio = p->prio >> 2;								\
+		idx = prio;									\
+	} else {										\
+		u64 sched_dl = max(p->deadline, rq->time_edge);					\
+		prio = MIN_SCHED_NORMAL_PRIO + sched_dl - rq->time_edge;			\
+		idx = MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(sched_dl);			\
+	}
 
 static inline int sched_prio2idx(int sched_prio, struct rq *rq)
 {
@@ -65,6 +56,11 @@ static inline int sched_idx2prio(int sched_idx, struct rq *rq)
 	return (sched_idx < MIN_SCHED_NORMAL_PRIO) ?
 		sched_idx :
 		MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(sched_idx - rq->time_edge);
+}
+
+static inline int sched_rq_prio_idx(struct rq *rq)
+{
+	return rq->prio_idx;
 }
 
 int task_running_nice(struct task_struct *p)
@@ -94,11 +90,7 @@ static inline void sched_update_rq_clock(struct rq *rq)
 
 	bitmap_shift_right(normal, rq->queue.bitmap, delta, SCHED_QUEUE_BITS);
 	if (!list_empty(&head)) {
-		struct task_struct *p;
 		u64 idx = MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(now);
-
-		list_for_each_entry(p, &head, sq_node)
-			p->sq_idx = idx;
 
 		__list_splice(&head, rq->queue.heads + idx, rq->queue.heads[idx].next);
 		set_bit(MIN_SCHED_NORMAL_PRIO, normal);
@@ -109,19 +101,20 @@ static inline void sched_update_rq_clock(struct rq *rq)
 	if (rq->prio < MIN_SCHED_NORMAL_PRIO || IDLE_TASK_SCHED_PRIO == rq->prio)
 		return;
 
-	rq->prio = (rq->prio < MIN_SCHED_NORMAL_PRIO + delta) ?
-		MIN_SCHED_NORMAL_PRIO : rq->prio - delta;
+	rq->prio = max_t(u64, MIN_SCHED_NORMAL_PRIO, rq->prio - delta);
+	rq->prio_idx = sched_prio2idx(rq->prio, rq);
 }
 
 static inline void sched_task_renew(struct task_struct *p, const struct rq *rq)
 {
 	if (p->prio >= MIN_NORMAL_PRIO)
-		p->deadline = rq->time_edge + (p->static_prio - (MAX_PRIO - NICE_WIDTH)) / 2;
+		p->deadline = rq->time_edge + SCHED_EDGE_DELTA +
+			      (p->static_prio - (MAX_PRIO - NICE_WIDTH)) / 2;
 }
 
 static inline void sched_task_sanity_check(struct task_struct *p, struct rq *rq)
 {
-	u64 max_dl = rq->time_edge + NICE_WIDTH / 2 - 1;
+	u64 max_dl = rq->time_edge + SCHED_EDGE_DELTA + NICE_WIDTH / 2 - 1;
 	if (unlikely(p->deadline > max_dl))
 		p->deadline = max_dl;
 }

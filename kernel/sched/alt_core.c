@@ -76,7 +76,7 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 #define sched_feat(x)	(0)
 #endif /* CONFIG_SCHED_DEBUG */
 
-#define ALT_SCHED_VERSION "v6.8-r1"
+#define ALT_SCHED_VERSION "v6.8-r2"
 
 /*
  * Compile time debug macro
@@ -186,7 +186,6 @@ static inline void sched_queue_init(struct sched_queue *q)
 static inline void sched_queue_init_idle(struct sched_queue *q,
 					 struct task_struct *idle)
 {
-	idle->sq_idx = IDLE_TASK_SCHED_PRIO;
 	INIT_LIST_HEAD(&q->heads[IDLE_TASK_SCHED_PRIO]);
 	list_add_tail(&idle->sq_node, &q->heads[IDLE_TASK_SCHED_PRIO]);
 	idle->on_rq = TASK_ON_RQ_QUEUED;
@@ -219,6 +218,9 @@ static inline void update_sched_preempt_mask(struct rq *rq)
 		return;
 
 	rq->prio = prio;
+#ifdef CONFIG_SCHED_PDS
+	rq->prio_idx = sched_prio2idx(rq->prio, rq);
+#endif
 	cpu = cpu_of(rq);
 	pr = atomic_read(&sched_prio_record);
 
@@ -255,7 +257,7 @@ static inline void update_sched_preempt_mask(struct rq *rq)
  */
 static inline struct task_struct *sched_rq_first_task(struct rq *rq)
 {
-	const struct list_head *head = &rq->queue.heads[sched_prio2idx(rq->prio, rq)];
+	const struct list_head *head = &rq->queue.heads[sched_rq_prio_idx(rq)];
 
 	return list_first_entry(head, struct task_struct, sq_node);
 }
@@ -263,12 +265,13 @@ static inline struct task_struct *sched_rq_first_task(struct rq *rq)
 static inline struct task_struct *
 sched_rq_next_task(struct task_struct *p, struct rq *rq)
 {
-	unsigned long idx = p->sq_idx;
-	struct list_head *head = &rq->queue.heads[idx];
+	struct list_head *next = p->sq_node.next;
 
-	if (list_is_last(&p->sq_node, head)) {
-		idx = find_next_bit(rq->queue.bitmap, SCHED_QUEUE_BITS,
-				    sched_idx2prio(idx, rq) + 1);
+	if (&rq->queue.heads[0] <= next && next < &rq->queue.heads[SCHED_LEVELS]) {
+		struct list_head *head;
+		unsigned long idx = next - &rq->queue.heads[0];
+
+		idx = find_next_bit(rq->queue.bitmap, SCHED_QUEUE_BITS, sched_idx2prio(idx, rq) + 1);
 		head = &rq->queue.heads[sched_prio2idx(idx, rq)];
 
 		return list_first_entry(head, struct task_struct, sq_node);
@@ -762,23 +765,26 @@ unsigned long get_wchan(struct task_struct *p)
  * Add/Remove/Requeue task to/from the runqueue routines
  * Context: rq->lock
  */
-#define __SCHED_DEQUEUE_TASK(p, rq, flags, func)				\
-	sched_info_dequeue(rq, p);						\
-										\
-	__list_del_entry(&p->sq_node);						\
-	if (p->sq_node.prev == p->sq_node.next) {				\
-		clear_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);	\
-		func;								\
+#define __SCHED_DEQUEUE_TASK(p, rq, flags, func)					\
+	sched_info_dequeue(rq, p);							\
+											\
+	__list_del_entry(&p->sq_node);							\
+	if (p->sq_node.prev == p->sq_node.next) {					\
+		clear_bit(sched_idx2prio(p->sq_node.next - &rq->queue.heads[0], rq),	\
+			  rq->queue.bitmap);						\
+		func;									\
 	}
 
-#define __SCHED_ENQUEUE_TASK(p, rq, flags, func)				\
-	sched_info_enqueue(rq, p);						\
-										\
-	p->sq_idx = task_sched_prio_idx(p, rq);					\
-	list_add_tail(&p->sq_node, &rq->queue.heads[p->sq_idx]);		\
-	if (list_is_first(&p->sq_node, &rq->queue.heads[p->sq_idx])) {		\
-		set_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);	\
-		func;								\
+#define __SCHED_ENQUEUE_TASK(p, rq, flags, func)					\
+	sched_info_enqueue(rq, p);							\
+	{										\
+	int idx, prio;									\
+	TASK_SCHED_PRIO_IDX(p, rq, idx, prio);						\
+	list_add_tail(&p->sq_node, &rq->queue.heads[idx]);				\
+	if (list_is_first(&p->sq_node, &rq->queue.heads[idx])) {			\
+		set_bit(prio, rq->queue.bitmap);					\
+		func;									\
+	}										\
 	}
 
 static inline void dequeue_task(struct task_struct *p, struct rq *rq, int flags)
@@ -821,10 +827,12 @@ static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
 	sched_update_tick_dependency(rq);
 }
 
-static inline void requeue_task(struct task_struct *p, struct rq *rq, int idx)
+static inline void requeue_task(struct task_struct *p, struct rq *rq)
 {
 	struct list_head *node = &p->sq_node;
+	int deq_idx, idx, prio;
 
+	TASK_SCHED_PRIO_IDX(p, rq, idx, prio);
 #ifdef ALT_SCHED_DEBUG
 	lockdep_assert_held(&rq->lock);
 	/*printk(KERN_INFO "sched: requeue(%d) %px %016llx\n", cpu_of(rq), p, p->deadline);*/
@@ -835,14 +843,12 @@ static inline void requeue_task(struct task_struct *p, struct rq *rq, int idx)
 		return;
 
 	__list_del_entry(node);
-	if (node->prev == node->next && idx != p->sq_idx)
-		clear_bit(sched_idx2prio(p->sq_idx, rq), rq->queue.bitmap);
-
-	p->sq_idx = idx;
+	if (node->prev == node->next && (deq_idx = node->next - &rq->queue.heads[0]) != idx)
+		clear_bit(sched_idx2prio(deq_idx, rq), rq->queue.bitmap);
 
 	list_add_tail(node, &rq->queue.heads[idx]);
 	if (list_is_first(node, &rq->queue.heads[idx]))
-		set_bit(sched_idx2prio(idx, rq), rq->queue.bitmap);
+		set_bit(prio, rq->queue.bitmap);
 	update_sched_preempt_mask(rq);
 }
 
@@ -4678,7 +4684,7 @@ static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 	sched_task_renew(p, rq);
 
 	if (SCHED_FIFO != p->policy && task_on_rq_queued(p))
-		requeue_task(p, rq, task_sched_prio_idx(p, rq));
+		requeue_task(p, rq);
 }
 
 /*
@@ -5246,14 +5252,9 @@ static inline void check_task_changed(struct task_struct *p, struct rq *rq)
 {
 	/* Trigger resched if task sched_prio has been modified. */
 	if (task_on_rq_queued(p)) {
-		int idx;
-
 		update_rq_clock(rq);
-		idx = task_sched_prio_idx(p, rq);
-		if (idx != p->sq_idx) {
-			requeue_task(p, rq, idx);
-			wakeup_preempt(rq);
-		}
+		requeue_task(p, rq);
+		wakeup_preempt(rq);
 	}
 }
 
@@ -6408,11 +6409,11 @@ static void do_sched_yield(void)
 	p = current;
 	if (rt_task(p)) {
 		if (task_on_rq_queued(p))
-			requeue_task(p, rq, task_sched_prio_idx(p, rq));
+			requeue_task(p, rq);
 	} else if (rq->nr_running > 1) {
 		do_sched_yield_type_1(p, rq);
 		if (task_on_rq_queued(p))
-			requeue_task(p, rq, task_sched_prio_idx(p, rq));
+			requeue_task(p, rq);
 	}
 
 	preempt_disable();
@@ -7710,6 +7711,9 @@ void __init sched_init(void)
 
 		sched_queue_init(&rq->queue);
 		rq->prio = IDLE_TASK_SCHED_PRIO;
+#ifdef CONFIG_SCHED_PDS
+		rq->prio_idx = rq->prio;
+#endif
 
 		raw_spin_lock_init(&rq->lock);
 		rq->nr_running = rq->nr_uninterruptible = 0;
