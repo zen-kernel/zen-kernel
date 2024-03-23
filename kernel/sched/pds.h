@@ -100,7 +100,7 @@ static inline void sched_update_rq_clock(struct rq *rq)
 		list_for_each_entry(p, &head, sq_node)
 			p->sq_idx = idx;
 
-		__list_splice(&head, rq->queue.heads + idx, rq->queue.heads[idx].next);
+		list_splice(&head, rq->queue.heads + idx);
 		set_bit(MIN_SCHED_NORMAL_PRIO, normal);
 	}
 	bitmap_replace(rq->queue.bitmap, normal, rq->queue.bitmap,
