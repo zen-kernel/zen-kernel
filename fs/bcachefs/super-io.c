@@ -966,6 +966,18 @@ int bch2_write_super(struct bch_fs *c)
 	if (!BCH_SB_INITIALIZED(c->disk_sb.sb))
 		goto out;
 
+	if (le16_to_cpu(c->disk_sb.sb->version) > bcachefs_metadata_version_current) {
+		struct printbuf buf = PRINTBUF;
+		prt_printf(&buf, "attempting to write superblock that wasn't version downgraded (");
+		bch2_version_to_text(&buf, le16_to_cpu(c->disk_sb.sb->version));
+		prt_str(&buf, " > ");
+		bch2_version_to_text(&buf, bcachefs_metadata_version_current);
+		prt_str(&buf, ")");
+		bch2_fs_fatal_error(c, "%s", buf.buf);
+		printbuf_exit(&buf);
+		return -BCH_ERR_sb_not_downgraded;
+	}
+
 	for_each_online_member(ca, c, i) {
 		__set_bit(ca->dev_idx, sb_written.d);
 		ca->sb_write_error = 0;
@@ -1073,13 +1085,22 @@ bool bch2_check_version_downgrade(struct bch_fs *c)
 	/*
 	 * Downgrade, if superblock is at a higher version than currently
 	 * supported:
+	 *
+	 * c->sb will be checked before we write the superblock, so update it as
+	 * well:
 	 */
-	if (BCH_SB_VERSION_UPGRADE_COMPLETE(c->disk_sb.sb) > bcachefs_metadata_version_current)
+	if (BCH_SB_VERSION_UPGRADE_COMPLETE(c->disk_sb.sb) > bcachefs_metadata_version_current) {
 		SET_BCH_SB_VERSION_UPGRADE_COMPLETE(c->disk_sb.sb, bcachefs_metadata_version_current);
-	if (c->sb.version > bcachefs_metadata_version_current)
+		c->sb.version_upgrade_complete = bcachefs_metadata_version_current;
+	}
+	if (c->sb.version > bcachefs_metadata_version_current) {
 		c->disk_sb.sb->version = cpu_to_le16(bcachefs_metadata_version_current);
-	if (c->sb.version_min > bcachefs_metadata_version_current)
+		c->sb.version = bcachefs_metadata_version_current;
+	}
+	if (c->sb.version_min > bcachefs_metadata_version_current) {
 		c->disk_sb.sb->version_min = cpu_to_le16(bcachefs_metadata_version_current);
+		c->sb.version_min = bcachefs_metadata_version_current;
+	}
 	c->disk_sb.sb->compat[0] &= cpu_to_le64((1ULL << BCH_COMPAT_NR) - 1);
 	return ret;
 }
