@@ -4251,8 +4251,8 @@ static inline int sg_balance_trigger(struct rq *src_rq, const int cpu)
 		stop_one_cpu_nowait(cpu, sg_balance_cpu_stop, p,
 				    &rq->active_balance_work);
 
-		raw_spin_lock(&src_rq->lock);
 		preempt_enable();
+		raw_spin_lock(&src_rq->lock);
 	}
 
 	return res;
