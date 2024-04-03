@@ -5374,7 +5374,8 @@ out_unlock:
 	/* Avoid rq from going away on us: */
 	preempt_disable();
 
-	__balance_callbacks(rq);
+	if (task_on_rq_queued(p))
+		__balance_callbacks(rq);
 	__task_access_unlock(p, lock);
 
 	preempt_enable();
