@@ -2258,23 +2258,16 @@ struct dc_state *dc_copy_state(struct dc_state *src_ctx)
 {
 	int i, j;
 	struct dc_state *new_ctx = kvmalloc(sizeof(struct dc_state), GFP_KERNEL);
-#ifdef CONFIG_DRM_AMD_DC_FP
-	struct dml2_context *dml2 =  NULL;
-#endif
 
 	if (!new_ctx)
 		return NULL;
 	memcpy(new_ctx, src_ctx, sizeof(struct dc_state));
 
 #ifdef CONFIG_DRM_AMD_DC_FP
-	if (new_ctx->bw_ctx.dml2) {
-		dml2 = kzalloc(sizeof(struct dml2_context), GFP_KERNEL);
-		if (!dml2)
-			return NULL;
-
-		memcpy(dml2, src_ctx->bw_ctx.dml2, sizeof(struct dml2_context));
-		new_ctx->bw_ctx.dml2 = dml2;
-	}
+	if (new_ctx->bw_ctx.dml2 && !dml2_create_copy(&new_ctx->bw_ctx.dml2, src_ctx->bw_ctx.dml2)) {
+		dc_release_state(new_ctx);
+		return NULL;
+ 	}
 #endif
 
 	for (i = 0; i < MAX_PIPES; i++) {
@@ -3338,6 +3331,9 @@ static bool dc_dmub_should_send_dirty_rect_cmd(struct dc *dc, struct dc_stream_s
 		return true;
 
 	if (stream->link->replay_settings.config.replay_supported)
+		return true;
+
+	if (stream->ctx->dce_version >= DCN_VERSION_3_5 && stream->abm_level)
 		return true;
 
 	return false;
@@ -4929,22 +4925,16 @@ void dc_allow_idle_optimizations(struct dc *dc, bool allow)
 
 bool dc_dmub_is_ips_idle_state(struct dc *dc)
 {
-	uint32_t idle_state = 0;
-
 	if (dc->debug.disable_idle_power_optimizations)
 		return false;
 
 	if (!dc->caps.ips_support || (dc->config.disable_ips == DMUB_IPS_DISABLE_ALL))
 		return false;
 
-	if (dc->hwss.get_idle_state)
-		idle_state = dc->hwss.get_idle_state(dc);
+	if (!dc->ctx->dmub_srv)
+		return false;
 
-	if (!(idle_state & DMUB_IPS1_ALLOW_MASK) ||
-		!(idle_state & DMUB_IPS2_ALLOW_MASK))
-		return true;
-
-	return false;
+	return dc->ctx->dmub_srv->idle_allowed;
 }
 
 /* set min and max memory clock to lowest and highest DPM level, respectively */

@@ -696,13 +696,13 @@ bool dml2_validate(const struct dc *in_dc, struct dc_state *context, bool fast_v
 	return out;
 }
 
-bool dml2_create(const struct dc *in_dc, const struct dml2_configuration_options *config, struct dml2_context **dml2)
+static inline struct dml2_context *dml2_allocate_memory(void)
 {
-	// Allocate Mode Lib Ctx
-	*dml2 = (struct dml2_context *) kzalloc(sizeof(struct dml2_context), GFP_KERNEL);
+	return (struct dml2_context *) kzalloc(sizeof(struct dml2_context), GFP_KERNEL);
+}
 
-	if (!(*dml2))
-		return false;
+static void dml2_init(const struct dc *in_dc, const struct dml2_configuration_options *config, struct dml2_context **dml2)
+{
 
 	// Store config options
 	(*dml2)->config = *config;
@@ -730,9 +730,18 @@ bool dml2_create(const struct dc *in_dc, const struct dml2_configuration_options
 	initialize_dml2_soc_bbox(*dml2, in_dc, &(*dml2)->v20.dml_core_ctx.soc);
 
 	initialize_dml2_soc_states(*dml2, in_dc, &(*dml2)->v20.dml_core_ctx.soc, &(*dml2)->v20.dml_core_ctx.states);
+}
 
-	/*Initialize DML20 instance which calls dml2_core_create, and core_dcn3_populate_informative*/
-	//dml2_initialize_instance(&(*dml_ctx)->v20.dml_init);
+bool dml2_create(const struct dc *in_dc, const struct dml2_configuration_options *config, struct dml2_context **dml2)
+{
+	// Allocate Mode Lib Ctx
+	*dml2 = dml2_allocate_memory();
+
+	if (!(*dml2))
+		return false;
+
+	dml2_init(in_dc, config, dml2);
+
 	return true;
 }
 
@@ -749,4 +758,34 @@ void dml2_extract_dram_and_fclk_change_support(struct dml2_context *dml2,
 {
 	*fclk_change_support = (unsigned int) dml2->v20.dml_core_ctx.ms.support.FCLKChangeSupport[0];
 	*dram_clk_change_support = (unsigned int) dml2->v20.dml_core_ctx.ms.support.DRAMClockChangeSupport[0];
+}
+
+void dml2_copy(struct dml2_context *dst_dml2,
+	struct dml2_context *src_dml2)
+{
+	/* copy Mode Lib Ctx */
+	memcpy(dst_dml2, src_dml2, sizeof(struct dml2_context));
+}
+
+bool dml2_create_copy(struct dml2_context **dst_dml2,
+	struct dml2_context *src_dml2)
+{
+	/* Allocate Mode Lib Ctx */
+	*dst_dml2 = dml2_allocate_memory();
+
+	if (!(*dst_dml2))
+		return false;
+
+	/* copy Mode Lib Ctx */
+	dml2_copy(*dst_dml2, src_dml2);
+
+	return true;
+}
+
+void dml2_reinit(const struct dc *in_dc,
+				 const struct dml2_configuration_options *config,
+				 struct dml2_context **dml2)
+{
+
+	dml2_init(in_dc, config, dml2);
 }

@@ -590,8 +590,8 @@ static int aio_setup_ring(struct kioctx *ctx, unsigned int nr_events)
 
 void kiocb_set_cancel_fn(struct kiocb *iocb, kiocb_cancel_fn *cancel)
 {
-	struct aio_kiocb *req = container_of(iocb, struct aio_kiocb, rw);
-	struct kioctx *ctx = req->ki_ctx;
+	struct aio_kiocb *req;
+	struct kioctx *ctx;
 	unsigned long flags;
 
 	/*
@@ -601,8 +601,12 @@ void kiocb_set_cancel_fn(struct kiocb *iocb, kiocb_cancel_fn *cancel)
 	if (!(iocb->ki_flags & IOCB_AIO_RW))
 		return;
 
+	req = container_of(iocb, struct aio_kiocb, rw);
+
 	if (WARN_ON_ONCE(!list_empty(&req->ki_list)))
 		return;
+
+	ctx = req->ki_ctx;
 
 	spin_lock_irqsave(&ctx->ctx_lock, flags);
 	list_add_tail(&req->ki_list, &ctx->active_reqs);
@@ -1173,7 +1177,7 @@ static void aio_complete(struct aio_kiocb *iocb)
 	 * from IRQ context.
 	 */
 	if (iocb->ki_eventfd)
-		eventfd_signal(iocb->ki_eventfd, 1);
+		eventfd_signal(iocb->ki_eventfd);
 
 	/*
 	 * We have to order our ring_info tail store above and test
