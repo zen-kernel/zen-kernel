@@ -76,7 +76,7 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 #define sched_feat(x)	(0)
 #endif /* CONFIG_SCHED_DEBUG */
 
-#define ALT_SCHED_VERSION "v6.8-r2"
+#define ALT_SCHED_VERSION "v6.8-r4"
 
 /*
  * Compile time debug macro
@@ -4255,8 +4255,8 @@ static inline int sg_balance_trigger(struct rq *src_rq, const int cpu)
 		stop_one_cpu_nowait(cpu, sg_balance_cpu_stop, p,
 				    &rq->active_balance_work);
 
-		raw_spin_lock(&src_rq->lock);
 		preempt_enable();
+		raw_spin_lock(&src_rq->lock);
 	}
 
 	return res;
@@ -5378,7 +5378,8 @@ out_unlock:
 	/* Avoid rq from going away on us: */
 	preempt_disable();
 
-	__balance_callbacks(rq);
+	if (task_on_rq_queued(p))
+		__balance_callbacks(rq);
 	__task_access_unlock(p, lock);
 
 	preempt_enable();

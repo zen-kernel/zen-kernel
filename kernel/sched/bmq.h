@@ -77,8 +77,7 @@ static inline void sched_update_rq_clock(struct rq *rq) {}
 
 static inline void sched_task_renew(struct task_struct *p, const struct rq *rq)
 {
-	if (rq_switch_time(rq) > sysctl_sched_base_slice)
-		deboost_task(p);
+	deboost_task(p);
 }
 
 static inline void sched_task_sanity_check(struct task_struct *p, struct rq *rq) {}
