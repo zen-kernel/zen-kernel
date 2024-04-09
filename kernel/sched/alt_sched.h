@@ -235,9 +235,6 @@ struct rq {
 	/* Ensure that all clocks are in the same cache line */
 	u64			clock ____cacheline_aligned;
 	u64			clock_task;
-#ifdef CONFIG_SCHED_BMQ
-	u64			last_ts_switch;
-#endif
 
 	unsigned int  nr_running;
 	unsigned long nr_uninterruptible;
