@@ -3,10 +3,7 @@
 /*
  * BMQ only routines
  */
-#define rq_switch_time(rq)	((rq)->clock - (rq)->last_ts_switch)
-#define boost_threshold(p)	(sysctl_sched_base_slice >> ((20 - (p)->boost_prio) / 2))
-
-static inline void boost_task(struct task_struct *p)
+static inline void boost_task(struct task_struct *p, int n)
 {
 	int limit;
 
@@ -21,8 +18,7 @@ static inline void boost_task(struct task_struct *p)
 		return;
 	}
 
-	if (p->boost_prio > limit)
-		p->boost_prio--;
+	p->boost_prio = max(limit, p->boost_prio - n);
 }
 
 static inline void deboost_task(struct task_struct *p)
@@ -40,13 +36,13 @@ static inline void sched_timeslice_imp(const int timeslice_ms) {}
 static inline int
 task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 {
-	return p->prio + p->boost_prio - MAX_RT_PRIO;
+	return p->prio + p->boost_prio - MIN_NORMAL_PRIO;
 }
 
 static inline int task_sched_prio(const struct task_struct *p)
 {
-	return (p->prio < MAX_RT_PRIO)? (p->prio >> 2) :
-		MIN_SCHED_NORMAL_PRIO + (p->prio + p->boost_prio - MAX_RT_PRIO) / 2;
+	return (p->prio < MIN_NORMAL_PRIO)? (p->prio >> 2) :
+		MIN_SCHED_NORMAL_PRIO + (p->prio + p->boost_prio - MIN_NORMAL_PRIO) / 2;
 }
 
 #define TASK_SCHED_PRIO_IDX(p, rq, idx, prio)	\
@@ -70,7 +66,7 @@ static inline int sched_rq_prio_idx(struct rq *rq)
 
 inline int task_running_nice(struct task_struct *p)
 {
-	return (p->prio + p->boost_prio > DEFAULT_PRIO + MAX_PRIORITY_ADJ);
+	return (p->prio + p->boost_prio > DEFAULT_PRIO);
 }
 
 static inline void sched_update_rq_clock(struct rq *rq) {}
@@ -90,12 +86,13 @@ static inline void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
 
 static inline void sched_task_ttwu(struct task_struct *p)
 {
-	if(this_rq()->clock_task - p->last_ran > sysctl_sched_base_slice)
-		boost_task(p);
+	s64 delta = this_rq()->clock_task > p->last_ran;
+
+	if (likely(delta > 0))
+		boost_task(p, delta  >> 22);
 }
 
 static inline void sched_task_deactivate(struct task_struct *p, struct rq *rq)
 {
-	if (rq_switch_time(rq) < boost_threshold(p))
-		boost_task(p);
+	boost_task(p, 1);
 }
