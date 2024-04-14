@@ -76,7 +76,7 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 #define sched_feat(x)	(0)
 #endif /* CONFIG_SCHED_DEBUG */
 
-#define ALT_SCHED_VERSION "v6.8-r4"
+#define ALT_SCHED_VERSION "v6.8-r5"
 
 /*
  * Compile time debug macro
@@ -1452,8 +1452,7 @@ static inline void hrtick_rq_init(struct rq *rq)
 
 static inline int __normal_prio(int policy, int rt_prio, int static_prio)
 {
-	return rt_policy(policy) ? (MAX_RT_PRIO - 1 - rt_prio) :
-		static_prio + MAX_PRIORITY_ADJ;
+	return rt_policy(policy) ? (MAX_RT_PRIO - 1 - rt_prio) : static_prio;
 }
 
 /*
@@ -4879,9 +4878,6 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 #endif
 
 	if (likely(prev != next)) {
-#ifdef CONFIG_SCHED_BMQ
-		rq->last_ts_switch = rq->clock;
-#endif
 		next->last_ran = rq->clock_task;
 
 		/*printk(KERN_INFO "sched: %px -> %px\n", prev, next);*/
