@@ -2795,6 +2795,8 @@ void partition_sched_domains(int ndoms_new, cpumask_var_t doms_new[],
 	mutex_unlock(&sched_domains_mutex);
 }
 #else /* CONFIG_SCHED_ALT */
+DEFINE_STATIC_KEY_FALSE(sched_asym_cpucapacity);
+
 void partition_sched_domains(int ndoms_new, cpumask_var_t doms_new[],
 			     struct sched_domain_attr *dattr_new)
 {}
