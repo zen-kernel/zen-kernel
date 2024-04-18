@@ -4172,6 +4172,8 @@ void scheduler_tick(void)
 		wq_worker_tick(curr);
 }
 
+#ifdef CONFIG_SMP
+
 static int active_balance_cpu_stop(void *data)
 {
 	struct balance_arg *arg = data;
@@ -4263,6 +4265,8 @@ static DEFINE_PER_CPU(struct balance_callback, sg_balance_head) = {
 	.func = sg_balance,
 };
 #endif /* CONFIG_SCHED_SMT */
+
+#endif /* CONFIG_SMP */
 
 #ifdef CONFIG_NO_HZ_FULL
 
@@ -7667,7 +7671,9 @@ void __init sched_init(void)
 {
 	int i;
 	struct rq *rq;
+#ifdef CONFIG_SCHED_SMT
 	struct balance_arg balance_arg = {.cpumask = sched_sg_idle_mask, .active = 0};
+#endif
 
 	printk(KERN_INFO "sched/alt: "ALT_SCHED_NAME" CPU Scheduler "ALT_SCHED_VERSION\
 			 " by Alfred Chen.\n");
