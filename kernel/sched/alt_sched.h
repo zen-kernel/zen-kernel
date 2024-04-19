@@ -156,6 +156,12 @@ struct balance_callback {
 	void (*func)(struct rq *rq);
 };
 
+struct balance_arg {
+	struct task_struct	*task;
+	int			active;
+	cpumask_t		*cpumask;
+};
+
 /*
  * This is the main, per-CPU runqueue data structure.
  * This data should only be modified by the local cpu.
@@ -170,11 +176,12 @@ struct rq {
 	struct mm_struct		*prev_mm;
 
 	struct sched_queue		queue		____cacheline_aligned;
+
+	int				prio;
 #ifdef CONFIG_SCHED_PDS
-	u64			time_edge;
-	unsigned long			prio_idx;
+	int				prio_idx;
+	u64				time_edge;
 #endif
-	unsigned long			prio;
 
 	/* switch count */
 	u64 nr_switches;
@@ -203,9 +210,10 @@ struct rq {
 #endif
 
 #ifdef CONFIG_SCHED_SMT
-	int active_balance;
-	struct cpu_stop_work	active_balance_work;
+	struct balance_arg	sg_balance_arg		____cacheline_aligned;
 #endif
+	struct cpu_stop_work	active_balance_work;
+
 	struct balance_callback	*balance_callback;
 #ifdef CONFIG_HOTPLUG_CPU
 	struct rcuwait		hotplug_wait;
@@ -343,10 +351,6 @@ static inline int best_mask_cpu(int cpu, const cpumask_t *mask)
 	return __best_mask_cpu(mask, per_cpu(sched_cpu_topo_masks, cpu));
 }
 
-extern void flush_smp_call_function_queue(void);
-
-#else  /* !CONFIG_SMP */
-static inline void flush_smp_call_function_queue(void) { }
 #endif
 
 #ifndef arch_scale_freq_tick
