@@ -1,5 +1,5 @@
-#ifndef ALT_SCHED_H
-#define ALT_SCHED_H
+#ifndef _KERNEL_SCHED_ALT_SCHED_H
+#define _KERNEL_SCHED_ALT_SCHED_H
 
 #include <linux/context_tracking.h>
 #include <linux/profile.h>
@@ -201,6 +201,9 @@ struct rq {
 	int membarrier_state;
 #endif
 
+	set_idle_mask_func_t	set_idle_mask_func;
+	clear_idle_mask_func_t	clear_idle_mask_func;
+
 #ifdef CONFIG_SMP
 	int cpu;		/* cpu of this runqueue */
 	bool online;
@@ -213,8 +216,6 @@ struct rq {
 	struct sched_avg	avg_irq;
 #endif
 
-	set_idle_mask_func_t	set_idle_mask_func;
-	clear_idle_mask_func_t	clear_idle_mask_func;
 	balance_func_t		balance_func;
 	struct balance_arg	active_balance_arg		____cacheline_aligned;
 	struct cpu_stop_work	active_balance_work;
@@ -528,8 +529,6 @@ static inline bool task_on_cpu(struct task_struct *p)
 {
 	return p->on_cpu;
 }
-
-extern int task_running_nice(struct task_struct *p);
 
 extern struct static_key_false sched_schedstats;
 
@@ -980,4 +979,11 @@ queue_balance_callback(struct rq *rq,
 }
 #endif /* CONFIG_SMP */
 
-#endif /* ALT_SCHED_H */
+#ifdef CONFIG_SCHED_BMQ
+#include "bmq.h"
+#endif
+#ifdef CONFIG_SCHED_PDS
+#include "pds.h"
+#endif
+
+#endif /* _KERNEL_SCHED_ALT_SCHED_H */
