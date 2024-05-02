@@ -254,7 +254,8 @@ static int l2cap_sock_connect(struct socket *sock, struct sockaddr *addr,
 		chan->mode = L2CAP_MODE_LE_FLOWCTL;
 
 	err = l2cap_chan_connect(chan, la.l2_psm, __le16_to_cpu(la.l2_cid),
-				 &la.l2_bdaddr, la.l2_bdaddr_type);
+				 &la.l2_bdaddr, la.l2_bdaddr_type,
+				 sk->sk_sndtimeo);
 	if (err)
 		return err;
 
@@ -438,7 +439,8 @@ static int l2cap_sock_getsockopt_old(struct socket *sock, int optname,
 	struct l2cap_chan *chan = l2cap_pi(sk)->chan;
 	struct l2cap_options opts;
 	struct l2cap_conninfo cinfo;
-	int len, err = 0;
+	int err = 0;
+	size_t len;
 	u32 opt;
 
 	BT_DBG("sk %p", sk);
@@ -485,7 +487,7 @@ static int l2cap_sock_getsockopt_old(struct socket *sock, int optname,
 
 		BT_DBG("mode 0x%2.2x", chan->mode);
 
-		len = min_t(unsigned int, len, sizeof(opts));
+		len = min(len, sizeof(opts));
 		if (copy_to_user(optval, (char *) &opts, len))
 			err = -EFAULT;
 
@@ -535,7 +537,7 @@ static int l2cap_sock_getsockopt_old(struct socket *sock, int optname,
 		cinfo.hci_handle = chan->conn->hcon->handle;
 		memcpy(cinfo.dev_class, chan->conn->hcon->dev_class, 3);
 
-		len = min_t(unsigned int, len, sizeof(cinfo));
+		len = min(len, sizeof(cinfo));
 		if (copy_to_user(optval, (char *) &cinfo, len))
 			err = -EFAULT;
 

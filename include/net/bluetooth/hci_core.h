@@ -735,8 +735,11 @@ struct hci_conn {
 	__u16		le_supv_timeout;
 	__u8		le_adv_data[HCI_MAX_EXT_AD_LENGTH];
 	__u8		le_adv_data_len;
-	__u8		le_per_adv_data[HCI_MAX_PER_AD_LENGTH];
-	__u8		le_per_adv_data_len;
+	__u8		le_per_adv_data[HCI_MAX_PER_AD_TOT_LEN];
+	__u16		le_per_adv_data_len;
+	__u16		le_per_adv_data_offset;
+	__u8		le_adv_phy;
+	__u8		le_adv_sec_phy;
 	__u8		le_tx_phy;
 	__u8		le_rx_phy;
 	__s8		rssi;
@@ -1082,6 +1085,24 @@ static inline unsigned int hci_conn_count(struct hci_dev *hdev)
 	struct hci_conn_hash *c = &hdev->conn_hash;
 
 	return c->acl_num + c->amp_num + c->sco_num + c->le_num + c->iso_num;
+}
+
+static inline bool hci_conn_valid(struct hci_dev *hdev, struct hci_conn *conn)
+{
+	struct hci_conn_hash *h = &hdev->conn_hash;
+	struct hci_conn  *c;
+
+	rcu_read_lock();
+
+	list_for_each_entry_rcu(c, &h->list, list) {
+		if (c == conn) {
+			rcu_read_unlock();
+			return true;
+		}
+	}
+	rcu_read_unlock();
+
+	return false;
 }
 
 static inline __u8 hci_conn_lookup_type(struct hci_dev *hdev, __u16 handle)
@@ -1481,7 +1502,6 @@ struct hci_conn *hci_conn_add_unset(struct hci_dev *hdev, int type,
 				    bdaddr_t *dst, u8 role);
 void hci_conn_del(struct hci_conn *conn);
 void hci_conn_hash_flush(struct hci_dev *hdev);
-void hci_conn_check_pending(struct hci_dev *hdev);
 
 struct hci_chan *hci_chan_create(struct hci_conn *conn);
 void hci_chan_del(struct hci_chan *chan);
@@ -1494,12 +1514,14 @@ struct hci_conn *hci_connect_le_scan(struct hci_dev *hdev, bdaddr_t *dst,
 				     enum conn_reasons conn_reason);
 struct hci_conn *hci_connect_le(struct hci_dev *hdev, bdaddr_t *dst,
 				u8 dst_type, bool dst_resolved, u8 sec_level,
-				u16 conn_timeout, u8 role);
+				u16 conn_timeout, u8 role, u8 phy, u8 sec_phy);
+void hci_connect_le_scan_cleanup(struct hci_conn *conn, u8 status);
 struct hci_conn *hci_connect_acl(struct hci_dev *hdev, bdaddr_t *dst,
 				 u8 sec_level, u8 auth_type,
-				 enum conn_reasons conn_reason);
+				 enum conn_reasons conn_reason, u16 timeout);
 struct hci_conn *hci_connect_sco(struct hci_dev *hdev, int type, bdaddr_t *dst,
-				 __u16 setting, struct bt_codec *codec);
+				 __u16 setting, struct bt_codec *codec,
+				 u16 timeout);
 struct hci_conn *hci_bind_cis(struct hci_dev *hdev, bdaddr_t *dst,
 			      __u8 dst_type, struct bt_iso_qos *qos);
 struct hci_conn *hci_bind_bis(struct hci_dev *hdev, bdaddr_t *dst,
@@ -1884,6 +1906,10 @@ void hci_conn_del_sysfs(struct hci_conn *conn);
 
 #define privacy_mode_capable(dev) (use_ll_privacy(dev) && \
 				   (hdev->commands[39] & 0x04))
+
+#define read_key_size_capable(dev) \
+	((dev)->commands[20] & 0x10 && \
+	 !test_bit(HCI_QUIRK_BROKEN_READ_ENC_KEY_SIZE, &hdev->quirks))
 
 /* Use enhanced synchronous connection if command is supported and its quirk
  * has not been set.

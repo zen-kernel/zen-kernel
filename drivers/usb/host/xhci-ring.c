@@ -3075,74 +3075,23 @@ static void xhci_clear_interrupt_pending(struct xhci_hcd *xhci,
 	}
 }
 
-/*
- * xHCI spec says we can get an interrupt, and if the HC has an error condition,
- * we might get bad data out of the event ring.  Section 4.10.2.7 has a list of
- * indicators of an event TRB error, but we check the status *first* to be safe.
- */
-irqreturn_t xhci_irq(struct usb_hcd *hcd)
+static int xhci_handle_events(struct xhci_hcd *xhci, struct xhci_interrupter *ir)
 {
-	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
-	struct xhci_interrupter *ir;
-	irqreturn_t ret = IRQ_NONE;
-	u64 temp_64;
-	u32 status;
 	int event_loop = 0;
-
-	spin_lock(&xhci->lock);
-	/* Check if the xHC generated the interrupt, or the irq is shared */
-	status = readl(&xhci->op_regs->status);
-	if (status == ~(u32)0) {
-		xhci_hc_died(xhci);
-		ret = IRQ_HANDLED;
-		goto out;
-	}
-
-	if (!(status & STS_EINT))
-		goto out;
-
-	if (status & STS_HCE) {
-		xhci_warn(xhci, "WARNING: Host Controller Error\n");
-		goto out;
-	}
-
-	if (status & STS_FATAL) {
-		xhci_warn(xhci, "WARNING: Host System Error\n");
-		xhci_halt(xhci);
-		ret = IRQ_HANDLED;
-		goto out;
-	}
-
-	/*
-	 * Clear the op reg interrupt status first,
-	 * so we can receive interrupts from other MSI-X interrupters.
-	 * Write 1 to clear the interrupt status.
-	 */
-	status |= STS_EINT;
-	writel(status, &xhci->op_regs->status);
-
-	/* This is the handler of the primary interrupter */
-	ir = xhci->interrupters[0];
+	u64 temp;
 
 	xhci_clear_interrupt_pending(xhci, ir);
 
 	if (xhci->xhc_state & XHCI_STATE_DYING ||
 	    xhci->xhc_state & XHCI_STATE_HALTED) {
-		xhci_dbg(xhci, "xHCI dying, ignoring interrupt. "
-				"Shouldn't IRQs be disabled?\n");
-		/* Clear the event handler busy flag (RW1C);
-		 * the event ring should be empty.
-		 */
-		temp_64 = xhci_read_64(xhci, &ir->ir_set->erst_dequeue);
-		xhci_write_64(xhci, temp_64 | ERST_EHB,
-				&ir->ir_set->erst_dequeue);
-		ret = IRQ_HANDLED;
-		goto out;
+		xhci_dbg(xhci, "xHCI dying, ignoring interrupt. Shouldn't IRQs be disabled?\n");
+
+		/* Clear the event handler busy flag (RW1C) */
+		temp = xhci_read_64(xhci, &ir->ir_set->erst_dequeue);
+		xhci_write_64(xhci, temp | ERST_EHB, &ir->ir_set->erst_dequeue);
+		return -ENODEV;
 	}
 
-	/* FIXME this should be a delayed service routine
-	 * that clears the EHB.
-	 */
 	while (xhci_handle_event(xhci, ir) > 0) {
 		/*
 		 * If half a segment of events have been handled in one go then
@@ -3162,8 +3111,55 @@ irqreturn_t xhci_irq(struct usb_hcd *hcd)
 	}
 
 	xhci_update_erst_dequeue(xhci, ir, true);
-	ret = IRQ_HANDLED;
 
+	return 0;
+}
+
+/*
+ * xHCI spec says we can get an interrupt, and if the HC has an error condition,
+ * we might get bad data out of the event ring.  Section 4.10.2.7 has a list of
+ * indicators of an event TRB error, but we check the status *first* to be safe.
+ */
+irqreturn_t xhci_irq(struct usb_hcd *hcd)
+{
+	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
+	irqreturn_t ret = IRQ_HANDLED;
+	u32 status;
+
+	spin_lock(&xhci->lock);
+	/* Check if the xHC generated the interrupt, or the irq is shared */
+	status = readl(&xhci->op_regs->status);
+	if (status == ~(u32)0) {
+		xhci_hc_died(xhci);
+		goto out;
+	}
+
+	if (!(status & STS_EINT)) {
+		ret = IRQ_NONE;
+		goto out;
+	}
+
+	if (status & STS_HCE) {
+		xhci_warn(xhci, "WARNING: Host Controller Error\n");
+		goto out;
+	}
+
+	if (status & STS_FATAL) {
+		xhci_warn(xhci, "WARNING: Host System Error\n");
+		xhci_halt(xhci);
+		goto out;
+	}
+
+	/*
+	 * Clear the op reg interrupt status first,
+	 * so we can receive interrupts from other MSI-X interrupters.
+	 * Write 1 to clear the interrupt status.
+	 */
+	status |= STS_EINT;
+	writel(status, &xhci->op_regs->status);
+
+	/* This is the handler of the primary interrupter */
+	xhci_handle_events(xhci, xhci->interrupters[0]);
 out:
 	spin_unlock(&xhci->lock);
 

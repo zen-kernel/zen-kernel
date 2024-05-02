@@ -68,7 +68,7 @@ static const struct sco_param esco_param_msbc[] = {
 };
 
 /* This function requires the caller holds hdev->lock */
-static void hci_connect_le_scan_cleanup(struct hci_conn *conn, u8 status)
+void hci_connect_le_scan_cleanup(struct hci_conn *conn, u8 status)
 {
 	struct hci_conn_params *params;
 	struct hci_dev *hdev = conn->hdev;
@@ -176,64 +176,6 @@ static void hci_conn_cleanup(struct hci_conn *conn)
 	hci_conn_del_sysfs(conn);
 
 	hci_dev_put(hdev);
-}
-
-static void hci_acl_create_connection(struct hci_conn *conn)
-{
-	struct hci_dev *hdev = conn->hdev;
-	struct inquiry_entry *ie;
-	struct hci_cp_create_conn cp;
-
-	BT_DBG("hcon %p", conn);
-
-	/* Many controllers disallow HCI Create Connection while it is doing
-	 * HCI Inquiry. So we cancel the Inquiry first before issuing HCI Create
-	 * Connection. This may cause the MGMT discovering state to become false
-	 * without user space's request but it is okay since the MGMT Discovery
-	 * APIs do not promise that discovery should be done forever. Instead,
-	 * the user space monitors the status of MGMT discovering and it may
-	 * request for discovery again when this flag becomes false.
-	 */
-	if (test_bit(HCI_INQUIRY, &hdev->flags)) {
-		/* Put this connection to "pending" state so that it will be
-		 * executed after the inquiry cancel command complete event.
-		 */
-		conn->state = BT_CONNECT2;
-		hci_send_cmd(hdev, HCI_OP_INQUIRY_CANCEL, 0, NULL);
-		return;
-	}
-
-	conn->state = BT_CONNECT;
-	conn->out = true;
-	conn->role = HCI_ROLE_MASTER;
-
-	conn->attempt++;
-
-	conn->link_policy = hdev->link_policy;
-
-	memset(&cp, 0, sizeof(cp));
-	bacpy(&cp.bdaddr, &conn->dst);
-	cp.pscan_rep_mode = 0x02;
-
-	ie = hci_inquiry_cache_lookup(hdev, &conn->dst);
-	if (ie) {
-		if (inquiry_entry_age(ie) <= INQUIRY_ENTRY_AGE_MAX) {
-			cp.pscan_rep_mode = ie->data.pscan_rep_mode;
-			cp.pscan_mode     = ie->data.pscan_mode;
-			cp.clock_offset   = ie->data.clock_offset |
-					    cpu_to_le16(0x8000);
-		}
-
-		memcpy(conn->dev_class, ie->data.dev_class, 3);
-	}
-
-	cp.pkt_type = cpu_to_le16(conn->pkt_type);
-	if (lmp_rswitch_capable(hdev) && !(hdev->link_mode & HCI_LM_MASTER))
-		cp.role_switch = 0x01;
-	else
-		cp.role_switch = 0x00;
-
-	hci_send_cmd(hdev, HCI_OP_CREATE_CONN, sizeof(cp), &cp);
 }
 
 int hci_disconnect(struct hci_conn *conn, __u8 reason)
@@ -1182,6 +1124,9 @@ void hci_conn_del(struct hci_conn *conn)
 	 * rest of hci_conn_del.
 	 */
 	hci_conn_cleanup(conn);
+
+	/* Dequeue callbacks using connection pointer as data */
+	hci_cmd_sync_dequeue(hdev, NULL, conn, NULL);
 }
 
 struct hci_dev *hci_get_route(bdaddr_t *dst, bdaddr_t *src, uint8_t src_type)
@@ -1316,56 +1261,9 @@ u8 hci_conn_set_handle(struct hci_conn *conn, u16 handle)
 	return 0;
 }
 
-static void create_le_conn_complete(struct hci_dev *hdev, void *data, int err)
-{
-	struct hci_conn *conn;
-	u16 handle = PTR_UINT(data);
-
-	conn = hci_conn_hash_lookup_handle(hdev, handle);
-	if (!conn)
-		return;
-
-	bt_dev_dbg(hdev, "err %d", err);
-
-	hci_dev_lock(hdev);
-
-	if (!err) {
-		hci_connect_le_scan_cleanup(conn, 0x00);
-		goto done;
-	}
-
-	/* Check if connection is still pending */
-	if (conn != hci_lookup_le_connect(hdev))
-		goto done;
-
-	/* Flush to make sure we send create conn cancel command if needed */
-	flush_delayed_work(&conn->le_conn_timeout);
-	hci_conn_failed(conn, bt_status(err));
-
-done:
-	hci_dev_unlock(hdev);
-}
-
-static int hci_connect_le_sync(struct hci_dev *hdev, void *data)
-{
-	struct hci_conn *conn;
-	u16 handle = PTR_UINT(data);
-
-	conn = hci_conn_hash_lookup_handle(hdev, handle);
-	if (!conn)
-		return 0;
-
-	bt_dev_dbg(hdev, "conn %p", conn);
-
-	clear_bit(HCI_CONN_SCANNING, &conn->flags);
-	conn->state = BT_CONNECT;
-
-	return hci_le_create_conn_sync(hdev, conn);
-}
-
 struct hci_conn *hci_connect_le(struct hci_dev *hdev, bdaddr_t *dst,
 				u8 dst_type, bool dst_resolved, u8 sec_level,
-				u16 conn_timeout, u8 role)
+				u16 conn_timeout, u8 role, u8 phy, u8 sec_phy)
 {
 	struct hci_conn *conn;
 	struct smp_irk *irk;
@@ -1428,10 +1326,10 @@ struct hci_conn *hci_connect_le(struct hci_dev *hdev, bdaddr_t *dst,
 	conn->dst_type = dst_type;
 	conn->sec_level = BT_SECURITY_LOW;
 	conn->conn_timeout = conn_timeout;
+	conn->le_adv_phy = phy;
+	conn->le_adv_sec_phy = sec_phy;
 
-	err = hci_cmd_sync_queue(hdev, hci_connect_le_sync,
-				 UINT_PTR(conn->handle),
-				 create_le_conn_complete);
+	err = hci_connect_le_sync(hdev, conn);
 	if (err) {
 		hci_conn_del(conn);
 		return ERR_PTR(err);
@@ -1665,7 +1563,7 @@ done:
 
 struct hci_conn *hci_connect_acl(struct hci_dev *hdev, bdaddr_t *dst,
 				 u8 sec_level, u8 auth_type,
-				 enum conn_reasons conn_reason)
+				 enum conn_reasons conn_reason, u16 timeout)
 {
 	struct hci_conn *acl;
 
@@ -1696,10 +1594,18 @@ struct hci_conn *hci_connect_acl(struct hci_dev *hdev, bdaddr_t *dst,
 
 	acl->conn_reason = conn_reason;
 	if (acl->state == BT_OPEN || acl->state == BT_CLOSED) {
+		int err;
+
 		acl->sec_level = BT_SECURITY_LOW;
 		acl->pending_sec_level = sec_level;
 		acl->auth_type = auth_type;
-		hci_acl_create_connection(acl);
+		acl->conn_timeout = timeout;
+
+		err = hci_connect_acl_sync(hdev, acl);
+		if (err) {
+			hci_conn_del(acl);
+			return ERR_PTR(err);
+		}
 	}
 
 	return acl;
@@ -1734,14 +1640,15 @@ static struct hci_link *hci_conn_link(struct hci_conn *parent,
 }
 
 struct hci_conn *hci_connect_sco(struct hci_dev *hdev, int type, bdaddr_t *dst,
-				 __u16 setting, struct bt_codec *codec)
+				 __u16 setting, struct bt_codec *codec,
+				 u16 timeout)
 {
 	struct hci_conn *acl;
 	struct hci_conn *sco;
 	struct hci_link *link;
 
 	acl = hci_connect_acl(hdev, dst, BT_SECURITY_LOW, HCI_AT_NO_BONDING,
-			      CONN_REASON_SCO_CONNECT);
+			      CONN_REASON_SCO_CONNECT, timeout);
 	if (IS_ERR(acl))
 		return acl;
 
@@ -2348,7 +2255,7 @@ struct hci_conn *hci_connect_cis(struct hci_dev *hdev, bdaddr_t *dst,
 		le = hci_connect_le(hdev, dst, dst_type, false,
 				    BT_SECURITY_LOW,
 				    HCI_LE_CONN_TIMEOUT,
-				    HCI_ROLE_SLAVE);
+				    HCI_ROLE_SLAVE, 0, 0);
 	else
 		le = hci_connect_le_scan(hdev, dst, dst_type,
 					 BT_SECURITY_LOW,
@@ -2641,22 +2548,6 @@ void hci_conn_hash_flush(struct hci_dev *hdev)
 		hci_disconn_cfm(conn, HCI_ERROR_LOCAL_HOST_TERM);
 		hci_conn_del(conn);
 	}
-}
-
-/* Check pending connect attempts */
-void hci_conn_check_pending(struct hci_dev *hdev)
-{
-	struct hci_conn *conn;
-
-	BT_DBG("hdev %s", hdev->name);
-
-	hci_dev_lock(hdev);
-
-	conn = hci_conn_hash_lookup_state(hdev, ACL_LINK, BT_CONNECT2);
-	if (conn)
-		hci_acl_create_connection(conn);
-
-	hci_dev_unlock(hdev);
 }
 
 static u32 get_link_mode(struct hci_conn *conn)
@@ -2974,12 +2865,10 @@ u32 hci_conn_get_phy(struct hci_conn *conn)
 
 static int abort_conn_sync(struct hci_dev *hdev, void *data)
 {
-	struct hci_conn *conn;
-	u16 handle = PTR_UINT(data);
+	struct hci_conn *conn = data;
 
-	conn = hci_conn_hash_lookup_handle(hdev, handle);
-	if (!conn)
-		return 0;
+	if (!hci_conn_valid(hdev, conn))
+		return -ECANCELED;
 
 	return hci_abort_conn_sync(hdev, conn, conn->abort_reason);
 }
@@ -3007,14 +2896,17 @@ int hci_abort_conn(struct hci_conn *conn, u8 reason)
 	 */
 	if (conn->state == BT_CONNECT && hdev->req_status == HCI_REQ_PEND) {
 		switch (hci_skb_event(hdev->sent_cmd)) {
+		case HCI_EV_CONN_COMPLETE:
 		case HCI_EV_LE_CONN_COMPLETE:
 		case HCI_EV_LE_ENHANCED_CONN_COMPLETE:
 		case HCI_EVT_LE_CIS_ESTABLISHED:
 			hci_cmd_sync_cancel(hdev, ECANCELED);
 			break;
 		}
+	/* Cancel connect attempt if still queued/pending */
+	} else if (!hci_cancel_connect_sync(hdev, conn)) {
+		return 0;
 	}
 
-	return hci_cmd_sync_queue(hdev, abort_conn_sync, UINT_PTR(conn->handle),
-				  NULL);
+	return hci_cmd_sync_queue_once(hdev, abort_conn_sync, conn, NULL);
 }
