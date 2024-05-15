@@ -449,3 +449,6 @@
 459	o32	lsm_get_self_attr		sys_lsm_get_self_attr
 460	o32	lsm_set_self_attr		sys_lsm_set_self_attr
 461	o32	lsm_list_modules		sys_lsm_list_modules
+462	o32	process_ksm_enable		sys_process_ksm_enable
+463	o32	process_ksm_disable		sys_process_ksm_disable
+464	o32	process_ksm_status		sys_process_ksm_status
