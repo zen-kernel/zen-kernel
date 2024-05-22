@@ -30,7 +30,10 @@ place where this information is gathered.
    sysfs-platform_profile
    vduse
    futex2
-   ntsync
+   lsm
+   tee
+   isapnp
+   dcdbas
 
 .. only::  subproject and html
 
