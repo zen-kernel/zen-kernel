@@ -21,10 +21,11 @@ The ntsync driver exposes three types of synchronization primitives:
 semaphores, mutexes, and events.
 
 A semaphore holds a single volatile 32-bit counter, and a static 32-bit
-integer denoting the maximum value. It is considered signaled when the
-counter is nonzero. The counter is decremented by one when a wait is
-satisfied. Both the initial and maximum count are established when the
-semaphore is created.
+integer denoting the maximum value. It is considered signaled (that is,
+can be acquired without contention, or will wake up a waiting thread)
+when the counter is nonzero. The counter is decremented by one when a
+wait is satisfied. Both the initial and maximum count are established
+when the semaphore is created.
 
 A mutex holds a volatile 32-bit recursion count, and a volatile 32-bit
 identifier denoting its owner. A mutex is considered signaled when its
@@ -44,10 +45,11 @@ intended use is to store a thread identifier; however, the ntsync
 driver does not actually validate that a calling thread provides
 consistent or unique identifiers.
 
-An event holds a volatile boolean state denoting whether it is signaled
-or not. There are two types of events, auto-reset and manual-reset. An
-auto-reset event is designaled when a wait is satisfied; a manual-reset
-event is not. The event type is specified when the event is created.
+An event is similar to a semaphore with a maximum count of one. It holds
+a volatile boolean state denoting whether it is signaled or not. There
+are two types of events, auto-reset and manual-reset. An auto-reset
+event is designaled when a wait is satisfied; a manual-reset event is
+not. The event type is specified when the event is created.
 
 Unless specified otherwise, all operations on an object are atomic and
 totally ordered with respect to other operations on the same object.
@@ -340,8 +342,7 @@ The ioctls on the individual objects are as follows:
   operations on the same object. If two wait operations (with different
   ``owner`` identifiers) are queued on the same mutex, only one is
   signaled. If two wait operations are queued on the same semaphore,
-  and a value of one is posted to it, only one is signaled. The order
-  in which threads are signaled is not specified.
+  and a value of one is posted to it, only one is signaled.
 
   If an abandoned mutex is acquired, the ioctl fails with
   ``EOWNERDEAD``. Although this is a failure return, the function may
@@ -350,9 +351,7 @@ The ioctls on the individual objects are as follows:
   abandoned, and ``index`` is still set to the index of the mutex.
 
   The ``alert`` argument is an "extra" event which can terminate the
-  wait, independently of all other objects. If members of ``objs`` and
-  ``alert`` are both simultaneously signaled, a member of ``objs`` will
-  always be given priority and acquired first.
+  wait, independently of all other objects.
 
   It is valid to pass the same object more than once, including by
   passing the same event in the ``objs`` array and in ``alert``. If a

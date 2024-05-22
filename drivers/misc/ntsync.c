@@ -13,6 +13,7 @@
 #include <linux/ktime.h>
 #include <linux/miscdevice.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/overflow.h>
 #include <linux/sched.h>
 #include <linux/sched/signal.h>
@@ -43,6 +44,7 @@ enum ntsync_type {
 
 struct ntsync_obj {
 	spinlock_t lock;
+	int dev_locked;
 
 	enum ntsync_type type;
 
@@ -57,7 +59,7 @@ struct ntsync_obj {
 		} sem;
 		struct {
 			__u32 count;
-			__u32 owner;
+			pid_t owner;
 			bool ownerdead;
 		} mutex;
 		struct {
@@ -85,10 +87,6 @@ struct ntsync_obj {
 	 * lock for every wake would create unnecessary contention.
 	 * Therefore we first check whether all_hint is zero, and, if it is,
 	 * we skip trying to wake "all" waiters.
-	 *
-	 * This hint isn't protected by any lock. It might change during the
-	 * course of a wake, but there's no meaningful race there; it's only a
-	 * hint.
 	 *
 	 * Since wait requests must originate from user-space threads, we're
 	 * limited here by PID_MAX_LIMIT, so there's no risk of overflow.
@@ -127,19 +125,111 @@ struct ntsync_device {
 	 * If one thread is trying to acquire several objects, another thread
 	 * cannot touch the object at the same time.
 	 *
-	 * We achieve this by grabbing multiple object locks at the same time.
-	 * However, this creates a lock ordering problem. To solve that problem,
-	 * wait_all_lock is taken first whenever multiple objects must be locked
-	 * at the same time.
+	 * This device-wide lock is used to serialize wait-for-all
+	 * operations, and operations on an object that is involved in a
+	 * wait-for-all.
 	 */
-	spinlock_t wait_all_lock;
+	struct mutex wait_all_lock;
 
 	struct file *file;
 };
 
+/*
+ * Single objects are locked using obj->lock.
+ *
+ * Multiple objects are 'locked' while holding dev->wait_all_lock.
+ * In this case however, individual objects are not locked by holding
+ * obj->lock, but by setting obj->dev_locked.
+ *
+ * This means that in order to lock a single object, the sequence is slightly
+ * more complicated than usual. Specifically it needs to check obj->dev_locked
+ * after acquiring obj->lock, if set, it needs to drop the lock and acquire
+ * dev->wait_all_lock in order to serialize against the multi-object operation.
+ */
+
+static void dev_lock_obj(struct ntsync_device *dev, struct ntsync_obj *obj)
+{
+	lockdep_assert_held(&dev->wait_all_lock);
+	lockdep_assert(obj->dev == dev);
+	spin_lock(&obj->lock);
+	/*
+	 * By setting obj->dev_locked inside obj->lock, it is ensured that
+	 * anyone holding obj->lock must see the value.
+	 */
+	obj->dev_locked = 1;
+	spin_unlock(&obj->lock);
+}
+
+static void dev_unlock_obj(struct ntsync_device *dev, struct ntsync_obj *obj)
+{
+	lockdep_assert_held(&dev->wait_all_lock);
+	lockdep_assert(obj->dev == dev);
+	spin_lock(&obj->lock);
+	obj->dev_locked = 0;
+	spin_unlock(&obj->lock);
+}
+
+static void obj_lock(struct ntsync_obj *obj)
+{
+	struct ntsync_device *dev = obj->dev;
+
+	for (;;) {
+		spin_lock(&obj->lock);
+		if (likely(!obj->dev_locked))
+			break;
+
+		spin_unlock(&obj->lock);
+		mutex_lock(&dev->wait_all_lock);
+		spin_lock(&obj->lock);
+		/*
+		 * obj->dev_locked should be set and released under the same
+		 * wait_all_lock section, since we now own this lock, it should
+		 * be clear.
+		 */
+		lockdep_assert(!obj->dev_locked);
+		spin_unlock(&obj->lock);
+		mutex_unlock(&dev->wait_all_lock);
+	}
+}
+
+static void obj_unlock(struct ntsync_obj *obj)
+{
+	spin_unlock(&obj->lock);
+}
+
+static bool ntsync_lock_obj(struct ntsync_device *dev, struct ntsync_obj *obj)
+{
+	bool all;
+
+	obj_lock(obj);
+	all = atomic_read(&obj->all_hint);
+	if (unlikely(all)) {
+		obj_unlock(obj);
+		mutex_lock(&dev->wait_all_lock);
+		dev_lock_obj(dev, obj);
+	}
+
+	return all;
+}
+
+static void ntsync_unlock_obj(struct ntsync_device *dev, struct ntsync_obj *obj, bool all)
+{
+	if (all) {
+		dev_unlock_obj(dev, obj);
+		mutex_unlock(&dev->wait_all_lock);
+	} else {
+		obj_unlock(obj);
+	}
+}
+
+#define ntsync_assert_held(obj) \
+	lockdep_assert((lockdep_is_held(&(obj)->lock) != LOCK_STATE_NOT_HELD) || \
+		       ((lockdep_is_held(&(obj)->dev->wait_all_lock) != LOCK_STATE_NOT_HELD) && \
+			(obj)->dev_locked))
+
 static bool is_signaled(struct ntsync_obj *obj, __u32 owner)
 {
-	lockdep_assert_held(&obj->lock);
+	ntsync_assert_held(obj);
 
 	switch (obj->type) {
 	case NTSYNC_TYPE_SEM:
@@ -171,11 +261,11 @@ static void try_wake_all(struct ntsync_device *dev, struct ntsync_q *q,
 
 	lockdep_assert_held(&dev->wait_all_lock);
 	if (locked_obj)
-		lockdep_assert_held(&locked_obj->lock);
+		lockdep_assert(locked_obj->dev_locked);
 
 	for (i = 0; i < count; i++) {
 		if (q->entries[i].obj != locked_obj)
-			spin_lock_nest_lock(&q->entries[i].obj->lock, &dev->wait_all_lock);
+			dev_lock_obj(dev, q->entries[i].obj);
 	}
 
 	for (i = 0; i < count; i++) {
@@ -211,7 +301,7 @@ static void try_wake_all(struct ntsync_device *dev, struct ntsync_q *q,
 
 	for (i = 0; i < count; i++) {
 		if (q->entries[i].obj != locked_obj)
-			spin_unlock(&q->entries[i].obj->lock);
+			dev_unlock_obj(dev, q->entries[i].obj);
 	}
 }
 
@@ -220,7 +310,7 @@ static void try_wake_all_obj(struct ntsync_device *dev, struct ntsync_obj *obj)
 	struct ntsync_q_entry *entry;
 
 	lockdep_assert_held(&dev->wait_all_lock);
-	lockdep_assert_held(&obj->lock);
+	lockdep_assert(obj->dev_locked);
 
 	list_for_each_entry(entry, &obj->all_waiters, node)
 		try_wake_all(dev, entry->q, obj);
@@ -230,7 +320,8 @@ static void try_wake_any_sem(struct ntsync_obj *sem)
 {
 	struct ntsync_q_entry *entry;
 
-	lockdep_assert_held(&sem->lock);
+	ntsync_assert_held(sem);
+	lockdep_assert(sem->type == NTSYNC_TYPE_SEM);
 
 	list_for_each_entry(entry, &sem->any_waiters, node) {
 		struct ntsync_q *q = entry->q;
@@ -250,7 +341,8 @@ static void try_wake_any_mutex(struct ntsync_obj *mutex)
 {
 	struct ntsync_q_entry *entry;
 
-	lockdep_assert_held(&mutex->lock);
+	ntsync_assert_held(mutex);
+	lockdep_assert(mutex->type == NTSYNC_TYPE_MUTEX);
 
 	list_for_each_entry(entry, &mutex->any_waiters, node) {
 		struct ntsync_q *q = entry->q;
@@ -276,7 +368,8 @@ static void try_wake_any_event(struct ntsync_obj *event)
 {
 	struct ntsync_q_entry *entry;
 
-	lockdep_assert_held(&event->lock);
+	ntsync_assert_held(event);
+	lockdep_assert(event->type == NTSYNC_TYPE_EVENT);
 
 	list_for_each_entry(entry, &event->any_waiters, node) {
 		struct ntsync_q *q = entry->q;
@@ -301,7 +394,7 @@ static int post_sem_state(struct ntsync_obj *sem, __u32 count)
 {
 	__u32 sum;
 
-	lockdep_assert_held(&sem->lock);
+	ntsync_assert_held(sem);
 
 	if (check_add_overflow(sem->u.sem.count, count, &sum) ||
 	    sum > sem->u.sem.max)
@@ -317,6 +410,7 @@ static int ntsync_sem_post(struct ntsync_obj *sem, void __user *argp)
 	__u32 __user *user_args = argp;
 	__u32 prev_count;
 	__u32 args;
+	bool all;
 	int ret;
 
 	if (copy_from_user(&args, argp, sizeof(args)))
@@ -325,29 +419,17 @@ static int ntsync_sem_post(struct ntsync_obj *sem, void __user *argp)
 	if (sem->type != NTSYNC_TYPE_SEM)
 		return -EINVAL;
 
-	if (atomic_read(&sem->all_hint) > 0) {
-		spin_lock(&dev->wait_all_lock);
-		spin_lock_nest_lock(&sem->lock, &dev->wait_all_lock);
+	all = ntsync_lock_obj(dev, sem);
 
-		prev_count = sem->u.sem.count;
-		ret = post_sem_state(sem, args);
-		if (!ret) {
+	prev_count = sem->u.sem.count;
+	ret = post_sem_state(sem, args);
+	if (!ret) {
+		if (all)
 			try_wake_all_obj(dev, sem);
-			try_wake_any_sem(sem);
-		}
-
-		spin_unlock(&sem->lock);
-		spin_unlock(&dev->wait_all_lock);
-	} else {
-		spin_lock(&sem->lock);
-
-		prev_count = sem->u.sem.count;
-		ret = post_sem_state(sem, args);
-		if (!ret)
-			try_wake_any_sem(sem);
-
-		spin_unlock(&sem->lock);
+		try_wake_any_sem(sem);
 	}
+
+	ntsync_unlock_obj(dev, sem, all);
 
 	if (!ret && put_user(prev_count, user_args))
 		ret = -EFAULT;
@@ -361,7 +443,7 @@ static int ntsync_sem_post(struct ntsync_obj *sem, void __user *argp)
 static int unlock_mutex_state(struct ntsync_obj *mutex,
 			      const struct ntsync_mutex_args *args)
 {
-	lockdep_assert_held(&mutex->lock);
+	ntsync_assert_held(mutex);
 
 	if (mutex->u.mutex.owner != args->owner)
 		return -EPERM;
@@ -377,6 +459,7 @@ static int ntsync_mutex_unlock(struct ntsync_obj *mutex, void __user *argp)
 	struct ntsync_device *dev = mutex->dev;
 	struct ntsync_mutex_args args;
 	__u32 prev_count;
+	bool all;
 	int ret;
 
 	if (copy_from_user(&args, argp, sizeof(args)))
@@ -387,29 +470,17 @@ static int ntsync_mutex_unlock(struct ntsync_obj *mutex, void __user *argp)
 	if (mutex->type != NTSYNC_TYPE_MUTEX)
 		return -EINVAL;
 
-	if (atomic_read(&mutex->all_hint) > 0) {
-		spin_lock(&dev->wait_all_lock);
-		spin_lock_nest_lock(&mutex->lock, &dev->wait_all_lock);
+	all = ntsync_lock_obj(dev, mutex);
 
-		prev_count = mutex->u.mutex.count;
-		ret = unlock_mutex_state(mutex, &args);
-		if (!ret) {
+	prev_count = mutex->u.mutex.count;
+	ret = unlock_mutex_state(mutex, &args);
+	if (!ret) {
+		if (all)
 			try_wake_all_obj(dev, mutex);
-			try_wake_any_mutex(mutex);
-		}
-
-		spin_unlock(&mutex->lock);
-		spin_unlock(&dev->wait_all_lock);
-	} else {
-		spin_lock(&mutex->lock);
-
-		prev_count = mutex->u.mutex.count;
-		ret = unlock_mutex_state(mutex, &args);
-		if (!ret)
-			try_wake_any_mutex(mutex);
-
-		spin_unlock(&mutex->lock);
+		try_wake_any_mutex(mutex);
 	}
+
+	ntsync_unlock_obj(dev, mutex, all);
 
 	if (!ret && put_user(prev_count, &user_args->count))
 		ret = -EFAULT;
@@ -423,7 +494,7 @@ static int ntsync_mutex_unlock(struct ntsync_obj *mutex, void __user *argp)
  */
 static int kill_mutex_state(struct ntsync_obj *mutex, __u32 owner)
 {
-	lockdep_assert_held(&mutex->lock);
+	ntsync_assert_held(mutex);
 
 	if (mutex->u.mutex.owner != owner)
 		return -EPERM;
@@ -438,6 +509,7 @@ static int ntsync_mutex_kill(struct ntsync_obj *mutex, void __user *argp)
 {
 	struct ntsync_device *dev = mutex->dev;
 	__u32 owner;
+	bool all;
 	int ret;
 
 	if (get_user(owner, (__u32 __user *)argp))
@@ -448,27 +520,16 @@ static int ntsync_mutex_kill(struct ntsync_obj *mutex, void __user *argp)
 	if (mutex->type != NTSYNC_TYPE_MUTEX)
 		return -EINVAL;
 
-	if (atomic_read(&mutex->all_hint) > 0) {
-		spin_lock(&dev->wait_all_lock);
-		spin_lock_nest_lock(&mutex->lock, &dev->wait_all_lock);
+	all = ntsync_lock_obj(dev, mutex);
 
-		ret = kill_mutex_state(mutex, owner);
-		if (!ret) {
+	ret = kill_mutex_state(mutex, owner);
+	if (!ret) {
+		if (all)
 			try_wake_all_obj(dev, mutex);
-			try_wake_any_mutex(mutex);
-		}
-
-		spin_unlock(&mutex->lock);
-		spin_unlock(&dev->wait_all_lock);
-	} else {
-		spin_lock(&mutex->lock);
-
-		ret = kill_mutex_state(mutex, owner);
-		if (!ret)
-			try_wake_any_mutex(mutex);
-
-		spin_unlock(&mutex->lock);
+		try_wake_any_mutex(mutex);
 	}
+
+	ntsync_unlock_obj(dev, mutex, all);
 
 	return ret;
 }
@@ -477,34 +538,22 @@ static int ntsync_event_set(struct ntsync_obj *event, void __user *argp, bool pu
 {
 	struct ntsync_device *dev = event->dev;
 	__u32 prev_state;
+	bool all;
 
 	if (event->type != NTSYNC_TYPE_EVENT)
 		return -EINVAL;
 
-	if (atomic_read(&event->all_hint) > 0) {
-		spin_lock(&dev->wait_all_lock);
-		spin_lock_nest_lock(&event->lock, &dev->wait_all_lock);
+	all = ntsync_lock_obj(dev, event);
 
-		prev_state = event->u.event.signaled;
-		event->u.event.signaled = true;
+	prev_state = event->u.event.signaled;
+	event->u.event.signaled = true;
+	if (all)
 		try_wake_all_obj(dev, event);
-		try_wake_any_event(event);
-		if (pulse)
-			event->u.event.signaled = false;
+	try_wake_any_event(event);
+	if (pulse)
+		event->u.event.signaled = false;
 
-		spin_unlock(&event->lock);
-		spin_unlock(&dev->wait_all_lock);
-	} else {
-		spin_lock(&event->lock);
-
-		prev_state = event->u.event.signaled;
-		event->u.event.signaled = true;
-		try_wake_any_event(event);
-		if (pulse)
-			event->u.event.signaled = false;
-
-		spin_unlock(&event->lock);
-	}
+	ntsync_unlock_obj(dev, event, all);
 
 	if (put_user(prev_state, (__u32 __user *)argp))
 		return -EFAULT;
@@ -514,17 +563,19 @@ static int ntsync_event_set(struct ntsync_obj *event, void __user *argp, bool pu
 
 static int ntsync_event_reset(struct ntsync_obj *event, void __user *argp)
 {
+	struct ntsync_device *dev = event->dev;
 	__u32 prev_state;
+	bool all;
 
 	if (event->type != NTSYNC_TYPE_EVENT)
 		return -EINVAL;
 
-	spin_lock(&event->lock);
+	all = ntsync_lock_obj(dev, event);
 
 	prev_state = event->u.event.signaled;
 	event->u.event.signaled = false;
 
-	spin_unlock(&event->lock);
+	ntsync_unlock_obj(dev, event, all);
 
 	if (put_user(prev_state, (__u32 __user *)argp))
 		return -EFAULT;
@@ -535,16 +586,21 @@ static int ntsync_event_reset(struct ntsync_obj *event, void __user *argp)
 static int ntsync_sem_read(struct ntsync_obj *sem, void __user *argp)
 {
 	struct ntsync_sem_args __user *user_args = argp;
+	struct ntsync_device *dev = sem->dev;
 	struct ntsync_sem_args args;
+	bool all;
 
 	if (sem->type != NTSYNC_TYPE_SEM)
 		return -EINVAL;
 
 	args.sem = 0;
-	spin_lock(&sem->lock);
+
+	all = ntsync_lock_obj(dev, sem);
+
 	args.count = sem->u.sem.count;
 	args.max = sem->u.sem.max;
-	spin_unlock(&sem->lock);
+
+	ntsync_unlock_obj(dev, sem, all);
 
 	if (copy_to_user(user_args, &args, sizeof(args)))
 		return -EFAULT;
@@ -554,18 +610,23 @@ static int ntsync_sem_read(struct ntsync_obj *sem, void __user *argp)
 static int ntsync_mutex_read(struct ntsync_obj *mutex, void __user *argp)
 {
 	struct ntsync_mutex_args __user *user_args = argp;
+	struct ntsync_device *dev = mutex->dev;
 	struct ntsync_mutex_args args;
+	bool all;
 	int ret;
 
 	if (mutex->type != NTSYNC_TYPE_MUTEX)
 		return -EINVAL;
 
 	args.mutex = 0;
-	spin_lock(&mutex->lock);
+
+	all = ntsync_lock_obj(dev, mutex);
+
 	args.count = mutex->u.mutex.count;
 	args.owner = mutex->u.mutex.owner;
 	ret = mutex->u.mutex.ownerdead ? -EOWNERDEAD : 0;
-	spin_unlock(&mutex->lock);
+
+	ntsync_unlock_obj(dev, mutex, all);
 
 	if (copy_to_user(user_args, &args, sizeof(args)))
 		return -EFAULT;
@@ -575,16 +636,21 @@ static int ntsync_mutex_read(struct ntsync_obj *mutex, void __user *argp)
 static int ntsync_event_read(struct ntsync_obj *event, void __user *argp)
 {
 	struct ntsync_event_args __user *user_args = argp;
+	struct ntsync_device *dev = event->dev;
 	struct ntsync_event_args args;
+	bool all;
 
 	if (event->type != NTSYNC_TYPE_EVENT)
 		return -EINVAL;
 
 	args.event = 0;
-	spin_lock(&event->lock);
+
+	all = ntsync_lock_obj(dev, event);
+
 	args.manual = event->u.event.manual;
 	args.signaled = event->u.event.signaled;
-	spin_unlock(&event->lock);
+
+	ntsync_unlock_obj(dev, event, all);
 
 	if (copy_to_user(user_args, &args, sizeof(args)))
 		return -EFAULT;
@@ -825,9 +891,6 @@ static int setup_wait(struct ntsync_device *dev,
 	__u32 total_count;
 	__u32 i, j;
 
-	if (!args->owner)
-		return -EINVAL;
-
 	if (args->pad || (args->flags & ~NTSYNC_WAIT_REALTIME))
 		return -EINVAL;
 
@@ -907,6 +970,7 @@ static int ntsync_wait_any(struct ntsync_device *dev, void __user *argp)
 	__u32 i, total_count;
 	struct ntsync_q *q;
 	int signaled;
+	bool all;
 	int ret;
 
 	if (copy_from_user(&args, argp, sizeof(args)))
@@ -926,9 +990,9 @@ static int ntsync_wait_any(struct ntsync_device *dev, void __user *argp)
 		struct ntsync_q_entry *entry = &q->entries[i];
 		struct ntsync_obj *obj = entry->obj;
 
-		spin_lock(&obj->lock);
+		all = ntsync_lock_obj(dev, obj);
 		list_add_tail(&entry->node, &obj->any_waiters);
-		spin_unlock(&obj->lock);
+		ntsync_unlock_obj(dev, obj, all);
 	}
 
 	/*
@@ -945,9 +1009,9 @@ static int ntsync_wait_any(struct ntsync_device *dev, void __user *argp)
 		if (atomic_read(&q->signaled) != -1)
 			break;
 
-		spin_lock(&obj->lock);
+		all = ntsync_lock_obj(dev, obj);
 		try_wake_any_obj(obj);
-		spin_unlock(&obj->lock);
+		ntsync_unlock_obj(dev, obj, all);
 	}
 
 	/* sleep */
@@ -960,9 +1024,9 @@ static int ntsync_wait_any(struct ntsync_device *dev, void __user *argp)
 		struct ntsync_q_entry *entry = &q->entries[i];
 		struct ntsync_obj *obj = entry->obj;
 
-		spin_lock(&obj->lock);
+		all = ntsync_lock_obj(dev, obj);
 		list_del(&entry->node);
-		spin_unlock(&obj->lock);
+		ntsync_unlock_obj(dev, obj, all);
 
 		put_obj(obj);
 	}
@@ -1001,7 +1065,7 @@ static int ntsync_wait_all(struct ntsync_device *dev, void __user *argp)
 
 	/* queue ourselves */
 
-	spin_lock(&dev->wait_all_lock);
+	mutex_lock(&dev->wait_all_lock);
 
 	for (i = 0; i < args.count; i++) {
 		struct ntsync_q_entry *entry = &q->entries[i];
@@ -1020,16 +1084,16 @@ static int ntsync_wait_all(struct ntsync_device *dev, void __user *argp)
 		struct ntsync_q_entry *entry = &q->entries[args.count];
 		struct ntsync_obj *obj = entry->obj;
 
-		spin_lock_nest_lock(&obj->lock, &dev->wait_all_lock);
+		dev_lock_obj(dev, obj);
 		list_add_tail(&entry->node, &obj->any_waiters);
-		spin_unlock(&obj->lock);
+		dev_unlock_obj(dev, obj);
 	}
 
 	/* check if we are already signaled */
 
 	try_wake_all(dev, q, NULL);
 
-	spin_unlock(&dev->wait_all_lock);
+	mutex_unlock(&dev->wait_all_lock);
 
 	/*
 	 * Check if the alert event is signaled, making sure to do so only
@@ -1040,9 +1104,9 @@ static int ntsync_wait_all(struct ntsync_device *dev, void __user *argp)
 		struct ntsync_obj *obj = q->entries[args.count].obj;
 
 		if (atomic_read(&q->signaled) == -1) {
-			spin_lock(&obj->lock);
+			bool all = ntsync_lock_obj(dev, obj);
 			try_wake_any_obj(obj);
-			spin_unlock(&obj->lock);
+			ntsync_unlock_obj(dev, obj, all);
 		}
 	}
 
@@ -1052,7 +1116,7 @@ static int ntsync_wait_all(struct ntsync_device *dev, void __user *argp)
 
 	/* and finally, unqueue */
 
-	spin_lock(&dev->wait_all_lock);
+	mutex_lock(&dev->wait_all_lock);
 
 	for (i = 0; i < args.count; i++) {
 		struct ntsync_q_entry *entry = &q->entries[i];
@@ -1068,18 +1132,20 @@ static int ntsync_wait_all(struct ntsync_device *dev, void __user *argp)
 
 		put_obj(obj);
 	}
+
+	mutex_unlock(&dev->wait_all_lock);
+
 	if (args.alert) {
 		struct ntsync_q_entry *entry = &q->entries[args.count];
 		struct ntsync_obj *obj = entry->obj;
+		bool all;
 
-		spin_lock_nest_lock(&obj->lock, &dev->wait_all_lock);
+		all = ntsync_lock_obj(dev, obj);
 		list_del(&entry->node);
-		spin_unlock(&obj->lock);
+		ntsync_unlock_obj(dev, obj, all);
 
 		put_obj(obj);
 	}
-
-	spin_unlock(&dev->wait_all_lock);
 
 	signaled = atomic_read(&q->signaled);
 	if (signaled != -1) {
@@ -1106,7 +1172,7 @@ static int ntsync_char_open(struct inode *inode, struct file *file)
 	if (!dev)
 		return -ENOMEM;
 
-	spin_lock_init(&dev->wait_all_lock);
+	mutex_init(&dev->wait_all_lock);
 
 	file->private_data = dev;
 	dev->file = file;

@@ -34,9 +34,9 @@ struct ntsync_wait_args {
 	__u64 timeout;
 	__u64 objs;
 	__u32 count;
-	__u32 owner;
 	__u32 index;
 	__u32 flags;
+	__u32 owner;
 	__u32 alert;
 	__u32 pad;
 };
