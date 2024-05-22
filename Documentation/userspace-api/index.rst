@@ -62,7 +62,6 @@ Everything else
    vduse
    futex2
    perf_ring_buffer
-   ntsync
 
 .. only::  subproject and html
 
