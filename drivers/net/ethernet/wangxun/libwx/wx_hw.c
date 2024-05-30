@@ -1958,7 +1958,7 @@ int wx_sw_init(struct wx *wx)
 		return -ENOMEM;
 	}
 
-	wx->msix_in_use = false;
+	bitmap_zero(wx->state, WX_STATE_NBITS);
 
 	return 0;
 }

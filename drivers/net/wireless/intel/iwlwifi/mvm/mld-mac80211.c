@@ -14,6 +14,8 @@ static int iwl_mvm_mld_mac_add_interface(struct ieee80211_hw *hw,
 
 	mutex_lock(&mvm->mutex);
 
+	iwl_mvm_mac_init_mvmvif(mvm, mvmvif);
+
 	mvmvif->mvm = mvm;
 
 	/* Not much to do here. The stack will not allow interface
@@ -189,17 +191,13 @@ static void iwl_mvm_mld_mac_remove_interface(struct ieee80211_hw *hw,
 	mutex_unlock(&mvm->mutex);
 }
 
-static unsigned int iwl_mvm_mld_count_active_links(struct ieee80211_vif *vif)
+static unsigned int iwl_mvm_mld_count_active_links(struct iwl_mvm_vif *mvmvif)
 {
 	unsigned int n_active = 0;
 	int i;
 
 	for (i = 0; i < IEEE80211_MLD_MAX_NUM_LINKS; i++) {
-		struct ieee80211_bss_conf *link_conf;
-
-		link_conf = link_conf_dereference_protected(vif, i);
-		if (link_conf &&
-		    rcu_access_pointer(link_conf->chanctx_conf))
+		if (mvmvif->link[i] && mvmvif->link[i]->phy_ctxt)
 			n_active++;
 	}
 
@@ -245,20 +243,17 @@ __iwl_mvm_mld_assign_vif_chanctx(struct iwl_mvm *mvm,
 {
 	u16 *phy_ctxt_id = (u16 *)ctx->drv_priv;
 	struct iwl_mvm_phy_ctxt *phy_ctxt = &mvm->phy_ctxts[*phy_ctxt_id];
-	unsigned int n_active = iwl_mvm_mld_count_active_links(vif);
 	struct iwl_mvm_vif *mvmvif = iwl_mvm_vif_from_mac80211(vif);
+	unsigned int n_active = iwl_mvm_mld_count_active_links(mvmvif);
 	unsigned int link_id = link_conf->link_id;
 	int ret;
 
-	/* if the assigned one was not counted yet, count it now */
-	if (!rcu_access_pointer(link_conf->chanctx_conf))
-		n_active++;
-
-	if (n_active > iwl_mvm_max_active_links(mvm, vif))
-		return -EOPNOTSUPP;
-
 	if (WARN_ON_ONCE(!mvmvif->link[link_id]))
 		return -EINVAL;
+
+	/* if the assigned one was not counted yet, count it now */
+	if (!mvmvif->link[link_id]->phy_ctxt)
+		n_active++;
 
 	/* mac parameters such as HE support can change at this stage
 	 * For sta, need first to configure correct state from drv_sta_state
@@ -299,13 +294,8 @@ __iwl_mvm_mld_assign_vif_chanctx(struct iwl_mvm *mvm,
 	 * this needs the phy context assigned (and in FW?), and we cannot
 	 * do it later because it needs to be initialized as soon as we're
 	 * able to TX on the link, i.e. when active.
-	 *
-	 * Firmware restart isn't quite correct yet for MLO, but we don't
-	 * need to do it in that case anyway since it will happen from the
-	 * normal station state callback.
 	 */
-	if (mvmvif->ap_sta &&
-	    !test_bit(IWL_MVM_STATUS_IN_HW_RESTART, &mvm->status)) {
+	if (mvmvif->ap_sta) {
 		struct ieee80211_link_sta *link_sta;
 
 		rcu_read_lock();
@@ -419,7 +409,7 @@ __iwl_mvm_mld_unassign_vif_chanctx(struct iwl_mvm *mvm,
 
 {
 	struct iwl_mvm_vif *mvmvif = iwl_mvm_vif_from_mac80211(vif);
-	unsigned int n_active = iwl_mvm_mld_count_active_links(vif);
+	unsigned int n_active = iwl_mvm_mld_count_active_links(mvmvif);
 	unsigned int link_id = link_conf->link_id;
 
 	/* shouldn't happen, but verify link_id is valid before accessing */
@@ -1122,16 +1112,11 @@ iwl_mvm_mld_change_vif_links(struct ieee80211_hw *hw,
 			     struct ieee80211_bss_conf *old[IEEE80211_MLD_MAX_NUM_LINKS])
 {
 	struct iwl_mvm_vif_link_info *new_link[IEEE80211_MLD_MAX_NUM_LINKS] = {};
-	unsigned int n_active = iwl_mvm_mld_count_active_links(vif);
 	struct iwl_mvm_vif *mvmvif = iwl_mvm_vif_from_mac80211(vif);
 	struct iwl_mvm *mvm = IWL_MAC80211_GET_MVM(hw);
 	u16 removed = old_links & ~new_links;
 	u16 added = new_links & ~old_links;
 	int err, i;
-
-	if (hweight16(new_links) > 1 &&
-	    n_active > iwl_mvm_max_active_links(mvm, vif))
-		return -EOPNOTSUPP;
 
 	for (i = 0; i < IEEE80211_MLD_MAX_NUM_LINKS; i++) {
 		int r;
@@ -1222,6 +1207,15 @@ iwl_mvm_mld_change_sta_links(struct ieee80211_hw *hw,
 	mutex_unlock(&mvm->mutex);
 
 	return ret;
+}
+
+static bool iwl_mvm_mld_can_activate_links(struct ieee80211_hw *hw,
+					   struct ieee80211_vif *vif,
+					   u16 desired_links)
+{
+	struct iwl_mvm *mvm = IWL_MAC80211_GET_MVM(hw);
+
+	return hweight16(desired_links) <= iwl_mvm_max_active_links(mvm, vif);
 }
 
 const struct ieee80211_ops iwl_mvm_mld_hw_ops = {
@@ -1318,4 +1312,5 @@ const struct ieee80211_ops iwl_mvm_mld_hw_ops = {
 
 	.change_vif_links = iwl_mvm_mld_change_vif_links,
 	.change_sta_links = iwl_mvm_mld_change_sta_links,
+	.can_activate_links = iwl_mvm_mld_can_activate_links,
 };
