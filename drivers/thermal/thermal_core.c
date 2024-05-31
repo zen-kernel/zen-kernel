@@ -431,7 +431,6 @@ static void update_temperature(struct thermal_zone_device *tz)
 	trace_thermal_temperature(tz);
 
 	thermal_genl_sampling_temp(tz->id, temp);
-	thermal_debug_update_temp(tz);
 }
 
 static void thermal_zone_device_check(struct work_struct *work)
@@ -474,6 +473,8 @@ void __thermal_zone_device_update(struct thermal_zone_device *tz,
 
 	for_each_trip(tz, trip)
 		handle_thermal_trip(tz, trip);
+
+	thermal_debug_update_temp(tz);
 
 	monitor_thermal_zone(tz);
 }
@@ -897,6 +898,7 @@ __thermal_cooling_device_register(struct device_node *np,
 {
 	struct thermal_cooling_device *cdev;
 	struct thermal_zone_device *pos = NULL;
+	unsigned long current_state;
 	int id, ret;
 
 	if (!ops || !ops->get_max_state || !ops->get_cur_state ||
@@ -934,6 +936,10 @@ __thermal_cooling_device_register(struct device_node *np,
 	if (ret)
 		goto out_cdev_type;
 
+	ret = cdev->ops->get_cur_state(cdev, &current_state);
+	if (ret)
+		goto out_cdev_type;
+
 	thermal_cooling_device_setup_sysfs(cdev);
 
 	ret = dev_set_name(&cdev->device, "cooling_device%d", cdev->id);
@@ -946,6 +952,8 @@ __thermal_cooling_device_register(struct device_node *np,
 		put_device(&cdev->device);
 		return ERR_PTR(ret);
 	}
+
+	thermal_debug_cdev_add(cdev, current_state);
 
 	/* Add 'this' new cdev to the global cdev list */
 	mutex_lock(&thermal_list_lock);
@@ -961,8 +969,6 @@ __thermal_cooling_device_register(struct device_node *np,
 						   THERMAL_EVENT_UNSPECIFIED);
 
 	mutex_unlock(&thermal_list_lock);
-
-	thermal_debug_cdev_add(cdev);
 
 	return cdev;
 

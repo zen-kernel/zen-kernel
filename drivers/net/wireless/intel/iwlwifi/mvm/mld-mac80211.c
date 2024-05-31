@@ -14,6 +14,8 @@ static int iwl_mvm_mld_mac_add_interface(struct ieee80211_hw *hw,
 
 	mutex_lock(&mvm->mutex);
 
+	iwl_mvm_mac_init_mvmvif(mvm, mvmvif);
+
 	mvmvif->mvm = mvm;
 
 	/* Not much to do here. The stack will not allow interface
@@ -91,6 +93,9 @@ static int iwl_mvm_mld_mac_add_interface(struct ieee80211_hw *hw,
 		iwl_mei_set_netdev(ieee80211_vif_to_wdev(vif)->netdev);
 		mvm->csme_vif = vif;
 	}
+
+	if (vif->p2p || iwl_fw_lookup_cmd_ver(mvm->fw, PHY_CONTEXT_CMD, 1) < 5)
+		vif->driver_flags |= IEEE80211_VIF_IGNORE_OFDMA_WIDER_BW;
 
 	goto out_unlock;
 
@@ -189,17 +194,13 @@ static void iwl_mvm_mld_mac_remove_interface(struct ieee80211_hw *hw,
 	mutex_unlock(&mvm->mutex);
 }
 
-static unsigned int iwl_mvm_mld_count_active_links(struct ieee80211_vif *vif)
+static unsigned int iwl_mvm_mld_count_active_links(struct iwl_mvm_vif *mvmvif)
 {
 	unsigned int n_active = 0;
 	int i;
 
 	for (i = 0; i < IEEE80211_MLD_MAX_NUM_LINKS; i++) {
-		struct ieee80211_bss_conf *link_conf;
-
-		link_conf = link_conf_dereference_protected(vif, i);
-		if (link_conf &&
-		    rcu_access_pointer(link_conf->chanctx_conf))
+		if (mvmvif->link[i] && mvmvif->link[i]->phy_ctxt)
 			n_active++;
 	}
 
@@ -245,17 +246,17 @@ __iwl_mvm_mld_assign_vif_chanctx(struct iwl_mvm *mvm,
 {
 	u16 *phy_ctxt_id = (u16 *)ctx->drv_priv;
 	struct iwl_mvm_phy_ctxt *phy_ctxt = &mvm->phy_ctxts[*phy_ctxt_id];
-	unsigned int n_active = iwl_mvm_mld_count_active_links(vif);
 	struct iwl_mvm_vif *mvmvif = iwl_mvm_vif_from_mac80211(vif);
+	unsigned int n_active = iwl_mvm_mld_count_active_links(mvmvif);
 	unsigned int link_id = link_conf->link_id;
 	int ret;
 
-	/* if the assigned one was not counted yet, count it now */
-	if (!rcu_access_pointer(link_conf->chanctx_conf))
-		n_active++;
-
 	if (WARN_ON_ONCE(!mvmvif->link[link_id]))
 		return -EINVAL;
+
+	/* if the assigned one was not counted yet, count it now */
+	if (!mvmvif->link[link_id]->phy_ctxt)
+		n_active++;
 
 	/* mac parameters such as HE support can change at this stage
 	 * For sta, need first to configure correct state from drv_sta_state
@@ -296,13 +297,8 @@ __iwl_mvm_mld_assign_vif_chanctx(struct iwl_mvm *mvm,
 	 * this needs the phy context assigned (and in FW?), and we cannot
 	 * do it later because it needs to be initialized as soon as we're
 	 * able to TX on the link, i.e. when active.
-	 *
-	 * Firmware restart isn't quite correct yet for MLO, but we don't
-	 * need to do it in that case anyway since it will happen from the
-	 * normal station state callback.
 	 */
-	if (mvmvif->ap_sta &&
-	    !test_bit(IWL_MVM_STATUS_IN_HW_RESTART, &mvm->status)) {
+	if (mvmvif->ap_sta) {
 		struct ieee80211_link_sta *link_sta;
 
 		rcu_read_lock();
@@ -416,7 +412,7 @@ __iwl_mvm_mld_unassign_vif_chanctx(struct iwl_mvm *mvm,
 
 {
 	struct iwl_mvm_vif *mvmvif = iwl_mvm_vif_from_mac80211(vif);
-	unsigned int n_active = iwl_mvm_mld_count_active_links(vif);
+	unsigned int n_active = iwl_mvm_mld_count_active_links(mvmvif);
 	unsigned int link_id = link_conf->link_id;
 
 	/* shouldn't happen, but verify link_id is valid before accessing */
@@ -608,10 +604,49 @@ struct iwl_mvm_link_sel_data {
 	bool active;
 };
 
-static bool iwl_mvm_mld_valid_link_pair(struct iwl_mvm_link_sel_data *a,
+static bool iwl_mvm_mld_valid_link_pair(struct ieee80211_vif *vif,
+					struct iwl_mvm_link_sel_data *a,
 					struct iwl_mvm_link_sel_data *b)
 {
-	return a->band != b->band;
+	struct iwl_mvm_vif *mvmvif = iwl_mvm_vif_from_mac80211(vif);
+
+	if (a->band == b->band)
+		return false;
+
+	/* BT Coex effects eSR mode only if one of the link is on LB */
+	if (a->band == NL80211_BAND_2GHZ || b->band == NL80211_BAND_2GHZ)
+		return !(mvmvif->esr_disable_reason & IWL_MVM_ESR_DISABLE_COEX);
+
+	return true;
+}
+
+static u8
+iwl_mvm_set_link_selection_data(struct ieee80211_vif *vif,
+				struct iwl_mvm_link_sel_data *data,
+				unsigned long usable_links)
+{
+	u8 n_data = 0;
+	unsigned long link_id;
+
+	rcu_read_lock();
+
+	for_each_set_bit(link_id, &usable_links, IEEE80211_MLD_MAX_NUM_LINKS) {
+		struct ieee80211_bss_conf *link_conf =
+			rcu_dereference(vif->link_conf[link_id]);
+
+		if (WARN_ON_ONCE(!link_conf))
+			continue;
+
+		data[n_data].link_id = link_id;
+		data[n_data].band = link_conf->chanreq.oper.chan->band;
+		data[n_data].width = link_conf->chanreq.oper.width;
+		data[n_data].active = vif->active_links & BIT(link_id);
+		n_data++;
+	}
+
+	rcu_read_unlock();
+
+	return n_data;
 }
 
 void iwl_mvm_mld_select_links(struct iwl_mvm *mvm, struct ieee80211_vif *vif,
@@ -621,7 +656,7 @@ void iwl_mvm_mld_select_links(struct iwl_mvm *mvm, struct ieee80211_vif *vif,
 	unsigned long usable_links = ieee80211_vif_usable_links(vif);
 	u32 max_active_links = iwl_mvm_max_active_links(mvm, vif);
 	u16 new_active_links;
-	u8 link_id, n_data = 0, i, j;
+	u8 n_data, i, j;
 
 	if (!IWL_MVM_AUTO_EML_ENABLE)
 		return;
@@ -646,23 +681,7 @@ void iwl_mvm_mld_select_links(struct iwl_mvm *mvm, struct ieee80211_vif *vif,
 	if (hweight16(vif->active_links) == max_active_links)
 		return;
 
-	rcu_read_lock();
-
-	for_each_set_bit(link_id, &usable_links, IEEE80211_MLD_MAX_NUM_LINKS) {
-		struct ieee80211_bss_conf *link_conf =
-			rcu_dereference(vif->link_conf[link_id]);
-
-		if (WARN_ON_ONCE(!link_conf))
-			continue;
-
-		data[n_data].link_id = link_id;
-		data[n_data].band = link_conf->chanreq.oper.chan->band;
-		data[n_data].width = link_conf->chanreq.oper.width;
-		data[n_data].active = vif->active_links & BIT(link_id);
-		n_data++;
-	}
-
-	rcu_read_unlock();
+	n_data = iwl_mvm_set_link_selection_data(vif, data, usable_links);
 
 	/* this is expected to be the current active link */
 	if (n_data == 1)
@@ -686,7 +705,8 @@ void iwl_mvm_mld_select_links(struct iwl_mvm *mvm, struct ieee80211_vif *vif,
 			if (i == j)
 				continue;
 
-			if (iwl_mvm_mld_valid_link_pair(&data[i], &data[j]))
+			if (iwl_mvm_mld_valid_link_pair(vif, &data[i],
+							&data[j]))
 				break;
 		}
 
@@ -702,7 +722,7 @@ void iwl_mvm_mld_select_links(struct iwl_mvm *mvm, struct ieee80211_vif *vif,
 				if (i == j)
 					continue;
 
-				if (iwl_mvm_mld_valid_link_pair(&data[i],
+				if (iwl_mvm_mld_valid_link_pair(vif, &data[i],
 								&data[j]))
 					break;
 			}
@@ -1264,6 +1284,33 @@ int iwl_mvm_mld_get_primary_link(struct iwl_mvm *mvm,
 	return data[1].link_id;
 }
 
+void iwl_mvm_recalc_esr(struct iwl_mvm *mvm, struct ieee80211_vif *vif)
+{
+	struct iwl_mvm_vif *mvmvif = iwl_mvm_vif_from_mac80211(vif);
+	bool enable = !mvmvif->esr_disable_reason;
+	int link_id;
+
+	/* Nothing to do */
+	if (mvmvif->esr_active == enable)
+		return;
+
+	if (enable) {
+		/* Try to re-enable eSR */
+		iwl_mvm_mld_select_links(mvm, vif, false);
+		return;
+	}
+
+	/*
+	 * Find the primary link, as we want to switch to it and drop the
+	 * secondary one.
+	 */
+	link_id = iwl_mvm_mld_get_primary_link(mvm, vif, vif->active_links);
+	WARN_ON(link_id < 0);
+
+	ieee80211_set_active_links_async(vif,
+					 vif->active_links & BIT(link_id));
+}
+
 /*
  * This function receives a bitmap of usable links and check if we can enter
  * eSR on those links.
@@ -1272,14 +1319,13 @@ static bool iwl_mvm_can_enter_esr(struct iwl_mvm *mvm,
 				  struct ieee80211_vif *vif,
 				  unsigned long desired_links)
 {
-	struct iwl_mvm_vif *mvmvif = iwl_mvm_vif_from_mac80211(vif);
-	int primary_link = iwl_mvm_mld_get_primary_link(mvm, vif,
-							desired_links);
+	u16 usable_links = ieee80211_vif_usable_links(vif);
+	struct iwl_mvm_link_sel_data data[IEEE80211_MLD_MAX_NUM_LINKS];
 	const struct wiphy_iftype_ext_capab *ext_capa;
-	bool ret = true;
-	int link_id;
+	u8 n_data;
 
-	if (primary_link < 0)
+	if (!ieee80211_vif_is_mld(vif) || !vif->cfg.assoc ||
+	    hweight16(usable_links) <= 1)
 		return false;
 
 	if (!(vif->cfg.eml_cap & IEEE80211_EML_CAP_EMLSR_SUPP))
@@ -1291,26 +1337,13 @@ static bool iwl_mvm_can_enter_esr(struct iwl_mvm *mvm,
 	    !(ext_capa->eml_capabilities & IEEE80211_EML_CAP_EMLSR_SUPP))
 		return false;
 
-	for_each_set_bit(link_id, &desired_links, IEEE80211_MLD_MAX_NUM_LINKS) {
-		struct ieee80211_bss_conf *link_conf =
-			link_conf_dereference_protected(vif, link_id);
+	n_data = iwl_mvm_set_link_selection_data(vif, data, desired_links);
 
-		if (WARN_ON_ONCE(!link_conf))
-			continue;
+	if (n_data != 2)
+		return false;
 
-		/* BT Coex effects eSR mode only if one of the link is on LB */
-		if (link_conf->chanreq.oper.chan->band != NL80211_BAND_2GHZ)
-			continue;
 
-		ret = iwl_mvm_bt_coex_calculate_esr_mode(mvm, vif, link_id,
-							 primary_link);
-		// Mark eSR as disabled for the next time
-		if (!ret)
-			mvmvif->bt_coex_esr_disabled = true;
-		break;
-	}
-
-	return ret;
+	return iwl_mvm_mld_valid_link_pair(vif, &data[0], &data[1]);
 }
 
 static bool iwl_mvm_mld_can_activate_links(struct ieee80211_hw *hw,
