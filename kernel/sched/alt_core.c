@@ -98,6 +98,7 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 unsigned int sysctl_sched_base_slice __read_mostly	= (2 << 20);
 #else
 unsigned int sysctl_sched_base_slice __read_mostly	= (4 << 20);
+#endif
 
 #ifdef CONFIG_SCHED_BMQ
 #include "bmq.h"
