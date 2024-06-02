@@ -10,7 +10,7 @@ static const u64 RT_MASK = ((1ULL << MIN_SCHED_NORMAL_PRIO) - 1);
 
 /* default time slice 4ms -> shift 22, 2 time slice slots -> shift 23 */
 #ifdef CONFIG_ZEN_INTERACTIVE
-static __read_mostly int sched_timeslice_shift = 21;
+static __read_mostly int sched_timeslice_shift = 22;
 #else
 static __read_mostly int sched_timeslice_shift = 23;
 #endif
