@@ -1287,7 +1287,7 @@ static int dso__load_kcore(struct dso *dso, struct map *map,
 {
 	struct maps *kmaps = map__kmaps(map);
 	struct kcore_mapfn_data md;
-	struct map *replacement_map = NULL;
+	struct map *map_ref, *replacement_map = NULL;
 	struct machine *machine;
 	bool is_64_bit;
 	int err, fd;
@@ -1365,6 +1365,24 @@ static int dso__load_kcore(struct dso *dso, struct map *map,
 	if (!replacement_map)
 		replacement_map = list_entry(md.maps.next, struct map_list_node, node)->map;
 
+	/*
+	 * Update addresses of vmlinux map. Re-insert it to ensure maps are
+	 * correctly ordered. Do this before using maps__merge_in() for the
+	 * remaining maps so vmlinux gets split if necessary.
+	 */
+	map_ref = map__get(map);
+	maps__remove(kmaps, map_ref);
+
+	map__set_start(map_ref, map__start(replacement_map));
+	map__set_end(map_ref, map__end(replacement_map));
+	map__set_pgoff(map_ref, map__pgoff(replacement_map));
+	map__set_mapping_type(map_ref, map__mapping_type(replacement_map));
+
+	err = maps__insert(kmaps, map_ref);
+	map__put(map_ref);
+	if (err)
+		goto out_err;
+
 	/* Add new maps */
 	while (!list_empty(&md.maps)) {
 		struct map_list_node *new_node = list_entry(md.maps.next, struct map_list_node, node);
@@ -1372,22 +1390,8 @@ static int dso__load_kcore(struct dso *dso, struct map *map,
 
 		list_del_init(&new_node->node);
 
-		if (RC_CHK_EQUAL(new_map, replacement_map)) {
-			struct map *map_ref;
-
-			map__set_start(map, map__start(new_map));
-			map__set_end(map, map__end(new_map));
-			map__set_pgoff(map, map__pgoff(new_map));
-			map__set_mapping_type(map, map__mapping_type(new_map));
-			/* Ensure maps are correctly ordered */
-			map_ref = map__get(map);
-			maps__remove(kmaps, map_ref);
-			err = maps__insert(kmaps, map_ref);
-			map__put(map_ref);
-			map__put(new_map);
-			if (err)
-				goto out_err;
-		} else {
+		/* skip if replacement_map, already inserted above */
+		if (!RC_CHK_EQUAL(new_map, replacement_map)) {
 			/*
 			 * Merge kcore map into existing maps,
 			 * and ensure that current maps (eBPF)
@@ -1969,6 +1973,10 @@ out:
 	return ret;
 }
 
+/*
+ * Always takes ownership of vmlinux when vmlinux_allocated == true, even if
+ * it returns an error.
+ */
 int dso__load_vmlinux(struct dso *dso, struct map *map,
 		      const char *vmlinux, bool vmlinux_allocated)
 {
@@ -1987,8 +1995,11 @@ int dso__load_vmlinux(struct dso *dso, struct map *map,
 	else
 		symtab_type = DSO_BINARY_TYPE__VMLINUX;
 
-	if (symsrc__init(&ss, dso, symfs_vmlinux, symtab_type))
+	if (symsrc__init(&ss, dso, symfs_vmlinux, symtab_type)) {
+		if (vmlinux_allocated)
+			free((char *) vmlinux);
 		return -1;
+	}
 
 	/*
 	 * dso__load_sym() may copy 'dso' which will result in the copies having
@@ -2031,7 +2042,6 @@ int dso__load_vmlinux_path(struct dso *dso, struct map *map)
 		err = dso__load_vmlinux(dso, map, filename, true);
 		if (err > 0)
 			goto out;
-		free(filename);
 	}
 out:
 	return err;
@@ -2183,7 +2193,6 @@ static int dso__load_kernel_sym(struct dso *dso, struct map *map)
 		err = dso__load_vmlinux(dso, map, filename, true);
 		if (err > 0)
 			return err;
-		free(filename);
 	}
 
 	if (!symbol_conf.ignore_vmlinux && vmlinux_path != NULL) {
