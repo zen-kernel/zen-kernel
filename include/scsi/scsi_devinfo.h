@@ -69,7 +69,7 @@
 #define BLIST_RETRY_ITF		((__force blist_flags_t)(1ULL << 32))
 /* Always retry ABORTED_COMMAND with ASC 0xc1 */
 #define BLIST_RETRY_ASC_C1	((__force blist_flags_t)(1ULL << 33))
-/* Do not query the IO advice hints grouping mode page */
+/* Do not query the IO Advice Hints Grouping mode page */
 #define BLIST_SKIP_IO_HINTS	((__force blist_flags_t)(1ULL << 34))
 
 #define __BLIST_LAST_USED BLIST_SKIP_IO_HINTS
