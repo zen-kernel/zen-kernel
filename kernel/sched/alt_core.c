@@ -3363,7 +3363,6 @@ static struct ctl_table sched_core_sysctls[] = {
 		.extra1         = SYSCTL_ZERO,
 		.extra2         = SYSCTL_ONE,
 	},
-	{}
 };
 static int __init sched_core_sysctl_init(void)
 {
