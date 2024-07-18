@@ -2,8 +2,8 @@
 VERSION = 6
 PATCHLEVEL = 17
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Baby Opossum Posse
+EXTRAVERSION = -zen
+NAME = Channeling Inner Peace for Peak Performance
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
