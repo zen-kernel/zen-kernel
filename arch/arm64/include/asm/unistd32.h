@@ -931,6 +931,12 @@ __SYSCALL(__NR_lsm_set_self_attr, sys_lsm_set_self_attr)
 __SYSCALL(__NR_lsm_list_modules, sys_lsm_list_modules)
 #define __NR_mseal 462
 __SYSCALL(__NR_mseal, sys_mseal)
+#define __NR_process_ksm_enable 463
+__SYSCALL(__NR_process_ksm_enable, sys_process_ksm_enable)
+#define __NR_process_ksm_disable 464
+__SYSCALL(__NR_process_ksm_disable, sys_process_ksm_disable)
+#define __NR_process_ksm_status 465
+__SYSCALL(__NR_process_ksm_status, sys_process_ksm_status)
 
 /*
  * Please add new compat syscalls above this comment and update
