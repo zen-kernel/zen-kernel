@@ -132,6 +132,46 @@ config THREAD_INFO_IN_TASK
 
 menu "General setup"
 
+config ZEN_INTERACTIVE
+	bool "Tune kernel for interactivity"
+	default y
+	help
+	  Tunes the kernel for responsiveness at the cost of throughput and power usage.
+
+	  --- Block Layer ----------------------------------------
+
+	    Default scheduler for SQ..: mq-deadline ->   bfq
+	    Default scheduler for MQ..:        none ->   kyber
+	    DM-Crypt workqueues.......:        yes  ->   no
+
+	  --- Virtual Memory Subsystem ---------------------------
+
+	    Background-reclaim hugepages...:   no   ->   yes
+	    MG-LRU minimum cache TTL.......:   0    ->   1000 ms
+	    Compact unevictable............:   yes  ->   no
+	    Compaction proactiveness.......:  20    ->   0
+	    Watermark boost factor.........:   1.5  ->   0
+	    Pageblock order................:  10    ->   3
+	    Swap-in readahead..............:   3    ->   0
+
+	  --- EEVDF CPU Scheduler --------------------------------
+
+	    Minimal granularity............:   0.75 ->   0.4  ms
+	    Migration cost.................:   0.5  ->   0.25 ms
+	    Bandwidth slice size...........:   5    ->   3    ms
+	    Task rebalancing threshold.....:  32    ->   8
+
+	  --- PDS/BMQ CPU Scheduler ------------------------------
+
+	    Scheduling timeslice...........:   4    ->   2    ms
+	    Yield type.....................:   1    ->   0
+
+	  --- CPUFreq Settings -----------------------------------
+
+	    Ondemand sampling down factor..:   1    ->   5
+	    Ondemand default up threshold..:  80    ->  55
+	    Ondemand micro up threshold....:  95    ->  60
+
 config BROKEN
 	bool
 
@@ -1251,6 +1291,22 @@ config USER_NS
 
 	  If unsure, say N.
 
+config USER_NS_UNPRIVILEGED
+	bool "Allow unprivileged users to create namespaces"
+	default y
+	depends on USER_NS
+	help
+	  When disabled, unprivileged users will not be able to create
+	  new namespaces. Allowing users to create their own namespaces
+	  has been part of several recent local privilege escalation
+	  exploits, so if you need user namespaces but are
+	  paranoid^Wsecurity-conscious you want to disable this.
+
+	  This setting can be overridden at runtime via the
+	  kernel.unprivileged_userns_clone sysctl.
+
+	  If unsure, say Y.
+
 config PID_NS
 	bool "PID Namespaces"
 	default y
@@ -1392,6 +1448,12 @@ config CC_OPTIMIZE_FOR_PERFORMANCE
 	  This is the default optimization level for the kernel, building
 	  with the "-O2" compiler flag for best performance and most
 	  helpful compile-time warnings.
+
+config CC_OPTIMIZE_FOR_PERFORMANCE_O3
+	bool "Optimize more for performance (-O3)"
+	help
+	  Choosing this option will pass "-O3" to your compiler to optimize
+	  the kernel yet more for performance.
 
 config CC_OPTIMIZE_FOR_SIZE
 	bool "Optimize for size (-Os)"

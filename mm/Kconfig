@@ -613,7 +613,7 @@ config COMPACTION
 config COMPACT_UNEVICTABLE_DEFAULT
 	int
 	depends on COMPACTION
-	default 0 if PREEMPT_RT
+	default 0 if PREEMPT_RT || ZEN_INTERACTIVE
 	default 1
 
 #
