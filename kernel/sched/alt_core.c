@@ -78,11 +78,6 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 
 #define ALT_SCHED_VERSION "v6.10-r0"
 
-/*
- * Compile time debug macro
- * #define ALT_SCHED_DEBUG
- */
-
 /* rt_prio(prio) defined in include/linux/sched/rt.h */
 #define rt_task(p)		rt_prio((p)->prio)
 #define rt_policy(policy)	((policy) == SCHED_FIFO || (policy) == SCHED_RR)
@@ -151,6 +146,7 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 static cpumask_t sched_preempt_mask[SCHED_QUEUE_BITS + 2] ____cacheline_aligned_in_smp;
 
 cpumask_t *const sched_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS - 1];
+cpumask_t *const sched_sg_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS];
 cpumask_t *const sched_pcore_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS];
 cpumask_t *const sched_ecore_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS + 1];
 
