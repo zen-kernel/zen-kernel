@@ -639,7 +639,7 @@ void amd_uncore_df_ctx_scan(struct amd_uncore *uncore, unsigned int cpu)
 	info.split.aux_data = 0;
 	info.split.num_pmcs = NUM_COUNTERS_NB;
 	info.split.gid = 0;
-	info.split.cid = topology_die_id(cpu);
+	info.split.cid = topology_logical_package_id(cpu);
 
 	if (pmu_version >= 2) {
 		ebx.full = cpuid_ebx(EXT_PERFMON_DEBUG_FEATURES);
@@ -654,17 +654,20 @@ int amd_uncore_df_ctx_init(struct amd_uncore *uncore, unsigned int cpu)
 {
 	struct attribute **df_attr = amd_uncore_df_format_attr;
 	struct amd_uncore_pmu *pmu;
+	int num_counters;
 
 	/* Run just once */
 	if (uncore->init_done)
 		return amd_uncore_ctx_init(uncore, cpu);
 
+	num_counters = amd_uncore_ctx_num_pmcs(uncore, cpu);
+	if (!num_counters)
+		goto done;
+
 	/* No grouping, single instance for a system */
 	uncore->pmus = kzalloc(sizeof(*uncore->pmus), GFP_KERNEL);
-	if (!uncore->pmus) {
-		uncore->num_pmus = 0;
+	if (!uncore->pmus)
 		goto done;
-	}
 
 	/*
 	 * For Family 17h and above, the Northbridge counters are repurposed
@@ -674,7 +677,7 @@ int amd_uncore_df_ctx_init(struct amd_uncore *uncore, unsigned int cpu)
 	pmu = &uncore->pmus[0];
 	strscpy(pmu->name, boot_cpu_data.x86 >= 0x17 ? "amd_df" : "amd_nb",
 		sizeof(pmu->name));
-	pmu->num_counters = amd_uncore_ctx_num_pmcs(uncore, cpu);
+	pmu->num_counters = num_counters;
 	pmu->msr_base = MSR_F15H_NB_PERF_CTL;
 	pmu->rdpmc_base = RDPMC_BASE_NB;
 	pmu->group = amd_uncore_ctx_gid(uncore, cpu);
@@ -785,17 +788,20 @@ int amd_uncore_l3_ctx_init(struct amd_uncore *uncore, unsigned int cpu)
 {
 	struct attribute **l3_attr = amd_uncore_l3_format_attr;
 	struct amd_uncore_pmu *pmu;
+	int num_counters;
 
 	/* Run just once */
 	if (uncore->init_done)
 		return amd_uncore_ctx_init(uncore, cpu);
 
+	num_counters = amd_uncore_ctx_num_pmcs(uncore, cpu);
+	if (!num_counters)
+		goto done;
+
 	/* No grouping, single instance for a system */
 	uncore->pmus = kzalloc(sizeof(*uncore->pmus), GFP_KERNEL);
-	if (!uncore->pmus) {
-		uncore->num_pmus = 0;
+	if (!uncore->pmus)
 		goto done;
-	}
 
 	/*
 	 * For Family 17h and above, L3 cache counters are available instead
@@ -805,7 +811,7 @@ int amd_uncore_l3_ctx_init(struct amd_uncore *uncore, unsigned int cpu)
 	pmu = &uncore->pmus[0];
 	strscpy(pmu->name, boot_cpu_data.x86 >= 0x17 ? "amd_l3" : "amd_l2",
 		sizeof(pmu->name));
-	pmu->num_counters = amd_uncore_ctx_num_pmcs(uncore, cpu);
+	pmu->num_counters = num_counters;
 	pmu->msr_base = MSR_F16H_L2I_PERF_CTL;
 	pmu->rdpmc_base = RDPMC_BASE_LLC;
 	pmu->group = amd_uncore_ctx_gid(uncore, cpu);
@@ -893,8 +899,8 @@ void amd_uncore_umc_ctx_scan(struct amd_uncore *uncore, unsigned int cpu)
 	cpuid(EXT_PERFMON_DEBUG_FEATURES, &eax, &ebx.full, &ecx, &edx);
 	info.split.aux_data = ecx;	/* stash active mask */
 	info.split.num_pmcs = ebx.split.num_umc_pmc;
-	info.split.gid = topology_die_id(cpu);
-	info.split.cid = topology_die_id(cpu);
+	info.split.gid = topology_logical_package_id(cpu);
+	info.split.cid = topology_logical_package_id(cpu);
 	*per_cpu_ptr(uncore->info, cpu) = info;
 }
 

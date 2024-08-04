@@ -1722,9 +1722,16 @@ FIXTURE_VARIANT(iommufd_dirty_tracking)
 
 FIXTURE_SETUP(iommufd_dirty_tracking)
 {
+	unsigned long size;
 	int mmap_flags;
 	void *vrc;
 	int rc;
+
+	if (variant->buffer_size < MOCK_PAGE_SIZE) {
+		SKIP(return,
+		     "Skipping buffer_size=%lu, less than MOCK_PAGE_SIZE=%lu",
+		     variant->buffer_size, MOCK_PAGE_SIZE);
+	}
 
 	self->fd = open("/dev/iommu", O_RDWR);
 	ASSERT_NE(-1, self->fd);
@@ -1749,12 +1756,11 @@ FIXTURE_SETUP(iommufd_dirty_tracking)
 	assert(vrc == self->buffer);
 
 	self->page_size = MOCK_PAGE_SIZE;
-	self->bitmap_size =
-		variant->buffer_size / self->page_size / BITS_PER_BYTE;
+	self->bitmap_size = variant->buffer_size / self->page_size;
 
 	/* Provision with an extra (PAGE_SIZE) for the unaligned case */
-	rc = posix_memalign(&self->bitmap, PAGE_SIZE,
-			    self->bitmap_size + PAGE_SIZE);
+	size = DIV_ROUND_UP(self->bitmap_size, BITS_PER_BYTE);
+	rc = posix_memalign(&self->bitmap, PAGE_SIZE, size + PAGE_SIZE);
 	assert(!rc);
 	assert(self->bitmap);
 	assert((uintptr_t)self->bitmap % PAGE_SIZE == 0);
@@ -1775,51 +1781,63 @@ FIXTURE_SETUP(iommufd_dirty_tracking)
 FIXTURE_TEARDOWN(iommufd_dirty_tracking)
 {
 	munmap(self->buffer, variant->buffer_size);
-	munmap(self->bitmap, self->bitmap_size);
+	munmap(self->bitmap, DIV_ROUND_UP(self->bitmap_size, BITS_PER_BYTE));
 	teardown_iommufd(self->fd, _metadata);
 }
 
-FIXTURE_VARIANT_ADD(iommufd_dirty_tracking, domain_dirty128k)
+FIXTURE_VARIANT_ADD(iommufd_dirty_tracking, domain_dirty8k)
+{
+	/* half of an u8 index bitmap */
+	.buffer_size = 8UL * 1024UL,
+};
+
+FIXTURE_VARIANT_ADD(iommufd_dirty_tracking, domain_dirty16k)
+{
+	/* one u8 index bitmap */
+	.buffer_size = 16UL * 1024UL,
+};
+
+FIXTURE_VARIANT_ADD(iommufd_dirty_tracking, domain_dirty64k)
 {
 	/* one u32 index bitmap */
+	.buffer_size = 64UL * 1024UL,
+};
+
+FIXTURE_VARIANT_ADD(iommufd_dirty_tracking, domain_dirty128k)
+{
+	/* one u64 index bitmap */
 	.buffer_size = 128UL * 1024UL,
 };
 
-FIXTURE_VARIANT_ADD(iommufd_dirty_tracking, domain_dirty256k)
-{
-	/* one u64 index bitmap */
-	.buffer_size = 256UL * 1024UL,
-};
-
-FIXTURE_VARIANT_ADD(iommufd_dirty_tracking, domain_dirty640k)
+FIXTURE_VARIANT_ADD(iommufd_dirty_tracking, domain_dirty320k)
 {
 	/* two u64 index and trailing end bitmap */
-	.buffer_size = 640UL * 1024UL,
+	.buffer_size = 320UL * 1024UL,
+};
+
+FIXTURE_VARIANT_ADD(iommufd_dirty_tracking, domain_dirty64M)
+{
+	/* 4K bitmap (64M IOVA range) */
+	.buffer_size = 64UL * 1024UL * 1024UL,
+};
+
+FIXTURE_VARIANT_ADD(iommufd_dirty_tracking, domain_dirty64M_huge)
+{
+	/* 4K bitmap (64M IOVA range) */
+	.buffer_size = 64UL * 1024UL * 1024UL,
+	.hugepages = true,
 };
 
 FIXTURE_VARIANT_ADD(iommufd_dirty_tracking, domain_dirty128M)
 {
-	/* 4K bitmap (128M IOVA range) */
+	/* 8K bitmap (128M IOVA range) */
 	.buffer_size = 128UL * 1024UL * 1024UL,
 };
 
 FIXTURE_VARIANT_ADD(iommufd_dirty_tracking, domain_dirty128M_huge)
 {
-	/* 4K bitmap (128M IOVA range) */
+	/* 8K bitmap (128M IOVA range) */
 	.buffer_size = 128UL * 1024UL * 1024UL,
-	.hugepages = true,
-};
-
-FIXTURE_VARIANT_ADD(iommufd_dirty_tracking, domain_dirty256M)
-{
-	/* 8K bitmap (256M IOVA range) */
-	.buffer_size = 256UL * 1024UL * 1024UL,
-};
-
-FIXTURE_VARIANT_ADD(iommufd_dirty_tracking, domain_dirty256M_huge)
-{
-	/* 8K bitmap (256M IOVA range) */
-	.buffer_size = 256UL * 1024UL * 1024UL,
 	.hugepages = true,
 };
 
