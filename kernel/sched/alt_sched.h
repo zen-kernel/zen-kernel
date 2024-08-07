@@ -1,5 +1,5 @@
-#ifndef ALT_SCHED_H
-#define ALT_SCHED_H
+#ifndef _KERNEL_SCHED_ALT_SCHED_H
+#define _KERNEL_SCHED_ALT_SCHED_H
 
 #include <linux/context_tracking.h>
 #include <linux/profile.h>
@@ -156,6 +156,10 @@ struct balance_callback {
 	void (*func)(struct rq *rq);
 };
 
+typedef void (*balance_func_t)(struct rq *rq, int cpu);
+typedef void (*set_idle_mask_func_t)(unsigned int cpu, struct cpumask *dstp);
+typedef void (*clear_idle_mask_func_t)(int cpu, struct cpumask *dstp);
+
 struct balance_arg {
 	struct task_struct	*task;
 	int			active;
@@ -197,6 +201,9 @@ struct rq {
 	int membarrier_state;
 #endif
 
+	set_idle_mask_func_t	set_idle_mask_func;
+	clear_idle_mask_func_t	clear_idle_mask_func;
+
 #ifdef CONFIG_SMP
 	int cpu;		/* cpu of this runqueue */
 	bool online;
@@ -209,9 +216,8 @@ struct rq {
 	struct sched_avg	avg_irq;
 #endif
 
-#ifdef CONFIG_SCHED_SMT
-	struct balance_arg	sg_balance_arg		____cacheline_aligned;
-#endif
+	balance_func_t		balance_func;
+	struct balance_arg	active_balance_arg		____cacheline_aligned;
 	struct cpu_stop_work	active_balance_work;
 
 	struct balance_callback	*balance_callback;
@@ -523,8 +529,6 @@ static inline bool task_on_cpu(struct task_struct *p)
 {
 	return p->on_cpu;
 }
-
-extern int task_running_nice(struct task_struct *p);
 
 extern struct static_key_false sched_schedstats;
 
@@ -955,8 +959,9 @@ static inline void init_sched_mm_cid(struct task_struct *t) { }
 extern struct balance_callback balance_push_callback;
 
 static inline void
-__queue_balance_callback(struct rq *rq,
-			 struct balance_callback *head)
+queue_balance_callback(struct rq *rq,
+		       struct balance_callback *head,
+		       void (*func)(struct rq *rq))
 {
 	lockdep_assert_rq_held(rq);
 
@@ -968,9 +973,17 @@ __queue_balance_callback(struct rq *rq,
 	if (unlikely(head->next || rq->balance_callback == &balance_push_callback))
 		return;
 
+	head->func = func;
 	head->next = rq->balance_callback;
 	rq->balance_callback = head;
 }
 #endif /* CONFIG_SMP */
 
-#endif /* ALT_SCHED_H */
+#ifdef CONFIG_SCHED_BMQ
+#include "bmq.h"
+#endif
+#ifdef CONFIG_SCHED_PDS
+#include "pds.h"
+#endif
+
+#endif /* _KERNEL_SCHED_ALT_SCHED_H */

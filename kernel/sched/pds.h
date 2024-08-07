@@ -1,3 +1,6 @@
+#ifndef _KERNEL_SCHED_PDS_H
+#define _KERNEL_SCHED_PDS_H
+
 #define ALT_SCHED_NAME "PDS"
 
 static const u64 RT_MASK = ((1ULL << MIN_SCHED_NORMAL_PRIO) - 1);
@@ -67,7 +70,7 @@ static inline int sched_rq_prio_idx(struct rq *rq)
 	return rq->prio_idx;
 }
 
-int task_running_nice(struct task_struct *p)
+static inline int task_running_nice(struct task_struct *p)
 {
 	return (p->prio > DEFAULT_PRIO);
 }
@@ -123,7 +126,7 @@ static inline void sched_task_sanity_check(struct task_struct *p, struct rq *rq)
 		p->deadline = max_dl;
 }
 
-static void sched_task_fork(struct task_struct *p, struct rq *rq)
+static inline void sched_task_fork(struct task_struct *p, struct rq *rq)
 {
 	sched_task_renew(p, rq);
 }
@@ -136,3 +139,5 @@ static inline void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
 
 static inline void sched_task_ttwu(struct task_struct *p) {}
 static inline void sched_task_deactivate(struct task_struct *p, struct rq *rq) {}
+
+#endif /* _KERNEL_SCHED_PDS_H */
