@@ -858,8 +858,6 @@ struct task_struct {
 	u8				__pad;
 
 	struct __call_single_node	wake_entry;
-#endif
-
 #ifndef CONFIG_SCHED_ALT
 	unsigned int			wakee_flips;
 	unsigned long			wakee_flip_decay_ts;
