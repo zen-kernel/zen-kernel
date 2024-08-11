@@ -1634,6 +1634,7 @@ operations:
         request:
           attributes:
             - header
+            - context
         reply:
           attributes:
             - header
@@ -1642,7 +1643,6 @@ operations:
             - indir
             - hkey
             - input_xfrm
-      dump: *rss-get-op
     -
       name: plca-get-cfg
       doc: Get PLCA params.
