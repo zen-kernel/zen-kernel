@@ -454,7 +454,8 @@ bool dp_handle_hpd_rx_irq(struct dc_link *link,
 	 * If we got sink count changed it means
 	 * Downstream port status changed,
 	 * then DM should call DC to do the detection.
-	 * NOTE: Do not handle link loss on eDP since it is internal link*/
+	 * NOTE: Do not handle link loss on eDP since it is internal link
+	 */
 	if ((link->connector_signal != SIGNAL_TYPE_EDP) &&
 			dp_parse_link_loss_status(
 					link,

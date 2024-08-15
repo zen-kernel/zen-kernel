@@ -104,10 +104,7 @@ int btrfs_lookup_extent_info(struct btrfs_trans_handle *trans,
 	struct btrfs_delayed_ref_head *head;
 	struct btrfs_delayed_ref_root *delayed_refs;
 	struct btrfs_path *path;
-	struct btrfs_extent_item *ei;
-	struct extent_buffer *leaf;
 	struct btrfs_key key;
-	u32 item_size;
 	u64 num_refs;
 	u64 extent_flags;
 	u64 owner = 0;
@@ -157,16 +154,11 @@ search_again:
 	}
 
 	if (ret == 0) {
-		leaf = path->nodes[0];
-		item_size = btrfs_item_size(leaf, path->slots[0]);
-		if (item_size >= sizeof(*ei)) {
-			ei = btrfs_item_ptr(leaf, path->slots[0],
-					    struct btrfs_extent_item);
-			num_refs = btrfs_extent_refs(leaf, ei);
-			extent_flags = btrfs_extent_flags(leaf, ei);
-			owner = btrfs_get_extent_owner_root(fs_info, leaf,
-							    path->slots[0]);
-		} else {
+		struct extent_buffer *leaf = path->nodes[0];
+		struct btrfs_extent_item *ei;
+		const u32 item_size = btrfs_item_size(leaf, path->slots[0]);
+
+		if (unlikely(item_size < sizeof(*ei))) {
 			ret = -EUCLEAN;
 			btrfs_err(fs_info,
 			"unexpected extent item size, has %u expect >= %zu",
@@ -179,6 +171,10 @@ search_again:
 			goto out_free;
 		}
 
+		ei = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_extent_item);
+		num_refs = btrfs_extent_refs(leaf, ei);
+		extent_flags = btrfs_extent_flags(leaf, ei);
+		owner = btrfs_get_extent_owner_root(fs_info, leaf, path->slots[0]);
 		BUG_ON(num_refs == 0);
 	} else {
 		num_refs = 0;
@@ -3420,10 +3416,10 @@ out_delayed_unlock:
 	return 0;
 }
 
-void btrfs_free_tree_block(struct btrfs_trans_handle *trans,
-			   u64 root_id,
-			   struct extent_buffer *buf,
-			   u64 parent, int last_ref)
+int btrfs_free_tree_block(struct btrfs_trans_handle *trans,
+			  u64 root_id,
+			  struct extent_buffer *buf,
+			  u64 parent, int last_ref)
 {
 	struct btrfs_fs_info *fs_info = trans->fs_info;
 	struct btrfs_block_group *bg;
@@ -3450,11 +3446,12 @@ void btrfs_free_tree_block(struct btrfs_trans_handle *trans,
 		btrfs_init_tree_ref(&generic_ref, btrfs_header_level(buf), 0, false);
 		btrfs_ref_tree_mod(fs_info, &generic_ref);
 		ret = btrfs_add_delayed_tree_ref(trans, &generic_ref, NULL);
-		BUG_ON(ret); /* -ENOMEM */
+		if (ret < 0)
+			return ret;
 	}
 
 	if (!last_ref)
-		return;
+		return 0;
 
 	if (btrfs_header_generation(buf) != trans->transid)
 		goto out;
@@ -3511,6 +3508,7 @@ out:
 	 * matter anymore.
 	 */
 	clear_bit(EXTENT_BUFFER_CORRUPT, &buf->bflags);
+	return 0;
 }
 
 /* Can return -ENOMEM */
@@ -5644,7 +5642,7 @@ static noinline int walk_up_proc(struct btrfs_trans_handle *trans,
 				 struct walk_control *wc)
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
-	int ret;
+	int ret = 0;
 	int level = wc->level;
 	struct extent_buffer *eb = path->nodes[level];
 	u64 parent = 0;
@@ -5731,12 +5729,14 @@ static noinline int walk_up_proc(struct btrfs_trans_handle *trans,
 			goto owner_mismatch;
 	}
 
-	btrfs_free_tree_block(trans, btrfs_root_id(root), eb, parent,
-			      wc->refs[level] == 1);
+	ret = btrfs_free_tree_block(trans, btrfs_root_id(root), eb, parent,
+				    wc->refs[level] == 1);
+	if (ret < 0)
+		btrfs_abort_transaction(trans, ret);
 out:
 	wc->refs[level] = 0;
 	wc->flags[level] = 0;
-	return 0;
+	return ret;
 
 owner_mismatch:
 	btrfs_err_rl(fs_info, "unexpected tree owner, have %llu expect %llu",

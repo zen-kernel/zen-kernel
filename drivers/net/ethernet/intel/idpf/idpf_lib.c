@@ -905,8 +905,8 @@ static void idpf_vport_stop(struct idpf_vport *vport)
 
 	vport->link_up = false;
 	idpf_vport_intr_deinit(vport);
-	idpf_vport_intr_rel(vport);
 	idpf_vport_queues_rel(vport);
+	idpf_vport_intr_rel(vport);
 	np->state = __IDPF_VPORT_DOWN;
 }
 
@@ -1337,9 +1337,8 @@ static void idpf_rx_init_buf_tail(struct idpf_vport *vport)
 /**
  * idpf_vport_open - Bring up a vport
  * @vport: vport to bring up
- * @alloc_res: allocate queue resources
  */
-static int idpf_vport_open(struct idpf_vport *vport, bool alloc_res)
+static int idpf_vport_open(struct idpf_vport *vport)
 {
 	struct idpf_netdev_priv *np = netdev_priv(vport->netdev);
 	struct idpf_adapter *adapter = vport->adapter;
@@ -1352,45 +1351,43 @@ static int idpf_vport_open(struct idpf_vport *vport, bool alloc_res)
 	/* we do not allow interface up just yet */
 	netif_carrier_off(vport->netdev);
 
-	if (alloc_res) {
-		err = idpf_vport_queues_alloc(vport);
-		if (err)
-			return err;
-	}
-
 	err = idpf_vport_intr_alloc(vport);
 	if (err) {
 		dev_err(&adapter->pdev->dev, "Failed to allocate interrupts for vport %u: %d\n",
 			vport->vport_id, err);
-		goto queues_rel;
+		return err;
 	}
+
+	err = idpf_vport_queues_alloc(vport);
+	if (err)
+		goto intr_rel;
 
 	err = idpf_vport_queue_ids_init(vport);
 	if (err) {
 		dev_err(&adapter->pdev->dev, "Failed to initialize queue ids for vport %u: %d\n",
 			vport->vport_id, err);
-		goto intr_rel;
+		goto queues_rel;
 	}
 
 	err = idpf_vport_intr_init(vport);
 	if (err) {
 		dev_err(&adapter->pdev->dev, "Failed to initialize interrupts for vport %u: %d\n",
 			vport->vport_id, err);
-		goto intr_rel;
+		goto queues_rel;
 	}
 
 	err = idpf_rx_bufs_init_all(vport);
 	if (err) {
 		dev_err(&adapter->pdev->dev, "Failed to initialize RX buffers for vport %u: %d\n",
 			vport->vport_id, err);
-		goto intr_rel;
+		goto queues_rel;
 	}
 
 	err = idpf_queue_reg_init(vport);
 	if (err) {
 		dev_err(&adapter->pdev->dev, "Failed to initialize queue registers for vport %u: %d\n",
 			vport->vport_id, err);
-		goto intr_rel;
+		goto queues_rel;
 	}
 
 	idpf_rx_init_buf_tail(vport);
@@ -1457,10 +1454,10 @@ unmap_queue_vectors:
 	idpf_send_map_unmap_queue_vector_msg(vport, false);
 intr_deinit:
 	idpf_vport_intr_deinit(vport);
-intr_rel:
-	idpf_vport_intr_rel(vport);
 queues_rel:
 	idpf_vport_queues_rel(vport);
+intr_rel:
+	idpf_vport_intr_rel(vport);
 
 	return err;
 }
@@ -1541,7 +1538,7 @@ void idpf_init_task(struct work_struct *work)
 	np = netdev_priv(vport->netdev);
 	np->state = __IDPF_VPORT_DOWN;
 	if (test_and_clear_bit(IDPF_VPORT_UP_REQUESTED, vport_config->flags))
-		idpf_vport_open(vport, true);
+		idpf_vport_open(vport);
 
 	/* Spawn and return 'idpf_init_task' work queue until all the
 	 * default vports are created
@@ -1900,9 +1897,6 @@ int idpf_initiate_soft_reset(struct idpf_vport *vport,
 		goto free_vport;
 	}
 
-	err = idpf_vport_queues_alloc(new_vport);
-	if (err)
-		goto free_vport;
 	if (current_state <= __IDPF_VPORT_DOWN) {
 		idpf_send_delete_queues_msg(vport);
 	} else {
@@ -1974,17 +1968,23 @@ int idpf_initiate_soft_reset(struct idpf_vport *vport,
 
 	err = idpf_set_real_num_queues(vport);
 	if (err)
-		goto err_reset;
+		goto err_open;
 
 	if (current_state == __IDPF_VPORT_UP)
-		err = idpf_vport_open(vport, false);
+		err = idpf_vport_open(vport);
 
 	kfree(new_vport);
 
 	return err;
 
 err_reset:
-	idpf_vport_queues_rel(new_vport);
+	idpf_send_add_queues_msg(vport, vport->num_txq, vport->num_complq,
+				 vport->num_rxq, vport->num_bufq);
+
+err_open:
+	if (current_state == __IDPF_VPORT_UP)
+		idpf_vport_open(vport);
+
 free_vport:
 	kfree(new_vport);
 
@@ -2213,7 +2213,7 @@ static int idpf_open(struct net_device *netdev)
 	idpf_vport_ctrl_lock(netdev);
 	vport = idpf_netdev_to_vport(netdev);
 
-	err = idpf_vport_open(vport, true);
+	err = idpf_vport_open(vport);
 
 	idpf_vport_ctrl_unlock(netdev);
 

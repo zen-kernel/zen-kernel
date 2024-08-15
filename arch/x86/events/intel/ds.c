@@ -1137,8 +1137,7 @@ void intel_pmu_pebs_sched_task(struct perf_event_pmu_context *pmu_ctx, bool sche
 static inline void pebs_update_threshold(struct cpu_hw_events *cpuc)
 {
 	struct debug_store *ds = cpuc->ds;
-	int max_pebs_events = hybrid(cpuc->pmu, max_pebs_events);
-	int num_counters_fixed = hybrid(cpuc->pmu, num_counters_fixed);
+	int max_pebs_events = intel_pmu_max_num_pebs(cpuc->pmu);
 	u64 threshold;
 	int reserved;
 
@@ -1146,7 +1145,7 @@ static inline void pebs_update_threshold(struct cpu_hw_events *cpuc)
 		return;
 
 	if (x86_pmu.flags & PMU_FL_PEBS_ALL)
-		reserved = max_pebs_events + num_counters_fixed;
+		reserved = max_pebs_events + x86_pmu_max_num_counters_fixed(cpuc->pmu);
 	else
 		reserved = max_pebs_events;
 
@@ -2161,6 +2160,7 @@ static void intel_pmu_drain_pebs_nhm(struct pt_regs *iregs, struct perf_sample_d
 	void *base, *at, *top;
 	short counts[INTEL_PMC_IDX_FIXED + MAX_FIXED_PEBS_EVENTS] = {};
 	short error[INTEL_PMC_IDX_FIXED + MAX_FIXED_PEBS_EVENTS] = {};
+	int max_pebs_events = intel_pmu_max_num_pebs(NULL);
 	int bit, i, size;
 	u64 mask;
 
@@ -2172,11 +2172,11 @@ static void intel_pmu_drain_pebs_nhm(struct pt_regs *iregs, struct perf_sample_d
 
 	ds->pebs_index = ds->pebs_buffer_base;
 
-	mask = (1ULL << x86_pmu.max_pebs_events) - 1;
-	size = x86_pmu.max_pebs_events;
+	mask = x86_pmu.pebs_events_mask;
+	size = max_pebs_events;
 	if (x86_pmu.flags & PMU_FL_PEBS_ALL) {
-		mask |= ((1ULL << x86_pmu.num_counters_fixed) - 1) << INTEL_PMC_IDX_FIXED;
-		size = INTEL_PMC_IDX_FIXED + x86_pmu.num_counters_fixed;
+		mask |= x86_pmu.fixed_cntr_mask64 << INTEL_PMC_IDX_FIXED;
+		size = INTEL_PMC_IDX_FIXED + x86_pmu_max_num_counters_fixed(NULL);
 	}
 
 	if (unlikely(base >= top)) {
@@ -2212,8 +2212,9 @@ static void intel_pmu_drain_pebs_nhm(struct pt_regs *iregs, struct perf_sample_d
 			pebs_status = p->status = cpuc->pebs_enabled;
 
 		bit = find_first_bit((unsigned long *)&pebs_status,
-					x86_pmu.max_pebs_events);
-		if (bit >= x86_pmu.max_pebs_events)
+				     max_pebs_events);
+
+		if (!(x86_pmu.pebs_events_mask & (1 << bit)))
 			continue;
 
 		/*
@@ -2271,12 +2272,10 @@ static void intel_pmu_drain_pebs_icl(struct pt_regs *iregs, struct perf_sample_d
 {
 	short counts[INTEL_PMC_IDX_FIXED + MAX_FIXED_PEBS_EVENTS] = {};
 	struct cpu_hw_events *cpuc = this_cpu_ptr(&cpu_hw_events);
-	int max_pebs_events = hybrid(cpuc->pmu, max_pebs_events);
-	int num_counters_fixed = hybrid(cpuc->pmu, num_counters_fixed);
 	struct debug_store *ds = cpuc->ds;
 	struct perf_event *event;
 	void *base, *at, *top;
-	int bit, size;
+	int bit;
 	u64 mask;
 
 	if (!x86_pmu.pebs_active)
@@ -2287,12 +2286,11 @@ static void intel_pmu_drain_pebs_icl(struct pt_regs *iregs, struct perf_sample_d
 
 	ds->pebs_index = ds->pebs_buffer_base;
 
-	mask = ((1ULL << max_pebs_events) - 1) |
-	       (((1ULL << num_counters_fixed) - 1) << INTEL_PMC_IDX_FIXED);
-	size = INTEL_PMC_IDX_FIXED + num_counters_fixed;
+	mask = hybrid(cpuc->pmu, pebs_events_mask) |
+	       (hybrid(cpuc->pmu, fixed_cntr_mask64) << INTEL_PMC_IDX_FIXED);
 
 	if (unlikely(base >= top)) {
-		intel_pmu_pebs_event_update_no_drain(cpuc, size);
+		intel_pmu_pebs_event_update_no_drain(cpuc, X86_PMC_IDX_MAX);
 		return;
 	}
 
@@ -2302,11 +2300,11 @@ static void intel_pmu_drain_pebs_icl(struct pt_regs *iregs, struct perf_sample_d
 		pebs_status = get_pebs_status(at) & cpuc->pebs_enabled;
 		pebs_status &= mask;
 
-		for_each_set_bit(bit, (unsigned long *)&pebs_status, size)
+		for_each_set_bit(bit, (unsigned long *)&pebs_status, X86_PMC_IDX_MAX)
 			counts[bit]++;
 	}
 
-	for_each_set_bit(bit, (unsigned long *)&mask, size) {
+	for_each_set_bit(bit, (unsigned long *)&mask, X86_PMC_IDX_MAX) {
 		if (counts[bit] == 0)
 			continue;
 
