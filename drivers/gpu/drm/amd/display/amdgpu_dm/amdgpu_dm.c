@@ -2944,6 +2944,7 @@ static int dm_resume(void *handle)
 
 		commit_params.streams = dc_state->streams;
 		commit_params.stream_count = dc_state->stream_count;
+		dc_exit_ips_for_hw_access(dm->dc);
 		WARN_ON(!dc_commit_streams(dm->dc, &commit_params));
 
 		dm_gpureset_commit_state(dm->cached_dc_state, dm);
@@ -3016,7 +3017,8 @@ static int dm_resume(void *handle)
 			emulated_link_detect(aconnector->dc_link);
 		} else {
 			mutex_lock(&dm->dc_lock);
-			dc_link_detect(aconnector->dc_link, DETECT_REASON_HPD);
+			dc_exit_ips_for_hw_access(dm->dc);
+			dc_link_detect(aconnector->dc_link, DETECT_REASON_RESUMEFROMS3S4);
 			mutex_unlock(&dm->dc_lock);
 		}
 
@@ -3352,6 +3354,7 @@ static void handle_hpd_irq_helper(struct amdgpu_dm_connector *aconnector)
 	enum dc_connection_type new_connection_type = dc_connection_none;
 	struct amdgpu_device *adev = drm_to_adev(dev);
 	struct dm_connector_state *dm_con_state = to_dm_connector_state(connector->state);
+	struct dc *dc = aconnector->dc_link->ctx->dc;
 	bool ret = false;
 
 	if (adev->dm.disable_hpd_irq)
@@ -3386,6 +3389,7 @@ static void handle_hpd_irq_helper(struct amdgpu_dm_connector *aconnector)
 			drm_kms_helper_connector_hotplug_event(connector);
 	} else {
 		mutex_lock(&adev->dm.dc_lock);
+		dc_exit_ips_for_hw_access(dc);
 		ret = dc_link_detect(aconnector->dc_link, DETECT_REASON_HPD);
 		mutex_unlock(&adev->dm.dc_lock);
 		if (ret) {
@@ -3445,6 +3449,7 @@ static void handle_hpd_rx_irq(void *param)
 	bool has_left_work = false;
 	int idx = dc_link->link_index;
 	struct hpd_rx_irq_offload_work_queue *offload_wq = &adev->dm.hpd_rx_offload_wq[idx];
+	struct dc *dc = aconnector->dc_link->ctx->dc;
 
 	memset(&hpd_irq_data, 0, sizeof(hpd_irq_data));
 
@@ -3534,6 +3539,7 @@ out:
 			bool ret = false;
 
 			mutex_lock(&adev->dm.dc_lock);
+			dc_exit_ips_for_hw_access(dc);
 			ret = dc_link_detect(dc_link, DETECT_REASON_HPDRX);
 			mutex_unlock(&adev->dm.dc_lock);
 
@@ -4640,6 +4646,7 @@ static int amdgpu_dm_initialize_drm_device(struct amdgpu_device *adev)
 			bool ret = false;
 
 			mutex_lock(&dm->dc_lock);
+			dc_exit_ips_for_hw_access(dm->dc);
 			ret = dc_link_detect(link, DETECT_REASON_BOOT);
 			mutex_unlock(&dm->dc_lock);
 
@@ -8948,7 +8955,8 @@ static void amdgpu_dm_commit_streams(struct drm_atomic_state *state,
 
 			memset(&position, 0, sizeof(position));
 			mutex_lock(&dm->dc_lock);
-			dc_stream_set_cursor_position(dm_old_crtc_state->stream, &position);
+			dc_exit_ips_for_hw_access(dm->dc);
+			dc_stream_program_cursor_position(dm_old_crtc_state->stream, &position);
 			mutex_unlock(&dm->dc_lock);
 		}
 
@@ -9017,6 +9025,7 @@ static void amdgpu_dm_commit_streams(struct drm_atomic_state *state,
 
 	dm_enable_per_frame_crtc_master_sync(dc_state);
 	mutex_lock(&dm->dc_lock);
+	dc_exit_ips_for_hw_access(dm->dc);
 	WARN_ON(!dc_commit_streams(dm->dc, &params));
 
 	/* Allow idle optimization when vblank count is 0 for display off */
@@ -9382,6 +9391,7 @@ static void amdgpu_dm_atomic_commit_tail(struct drm_atomic_state *state)
 
 
 		mutex_lock(&dm->dc_lock);
+		dc_exit_ips_for_hw_access(dm->dc);
 		dc_update_planes_and_stream(dm->dc,
 					    dummy_updates,
 					    status->plane_count,
