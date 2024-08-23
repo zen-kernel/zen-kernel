@@ -188,6 +188,7 @@ static const char * const pci_reset_types[] = {
 	[PCI_DEV_WAIT_BUS_RESET] = "bus reset",
 	[PCI_DEV_WAIT_RESUME] = "resume",
 	[PCI_DEV_WAIT_DPC] = "DPC",
+	[PCI_DEV_WAIT_D3COLD_D0] = "D3cold->D0",
 };
 static_assert(ARRAY_SIZE(pci_reset_types) == PCI_DEV_WAIT_MAX);
 
@@ -1397,6 +1398,17 @@ int pci_power_up(struct pci_dev *dev)
 	else if (state == PCI_D2)
 		udelay(PCI_PM_D2_DELAY);
 
+	/*
+	 * D3cold -> D0 will have gone through a conventional reset and may need
+	 * time to be ready.
+	 */
+	if (dev->current_state == PCI_D3cold) {
+		int ret;
+
+		ret = pci_dev_wait(dev, PCI_DEV_WAIT_D3COLD_D0, PCI_RESET_WAIT);
+		if (ret)
+			return ret;
+	}
 end:
 	dev->current_state = PCI_D0;
 	if (need_restore)
