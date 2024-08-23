@@ -4,6 +4,16 @@
 
 #include <linux/pci.h>
 
+enum pci_reset_type {
+	PCI_DEV_WAIT_FLR,
+	PCI_DEV_WAIT_AF_FLR,
+	PCI_DEV_WAIT_D3HOT_D0,
+	PCI_DEV_WAIT_BUS_RESET,
+	PCI_DEV_WAIT_RESUME,
+	PCI_DEV_WAIT_DPC,
+	PCI_DEV_WAIT_MAX,
+};
+
 /* Number of possible devfns: 0.0 to 1f.7 inclusive */
 #define MAX_NR_DEVFNS 256
 
@@ -94,7 +104,7 @@ void pci_msi_init(struct pci_dev *dev);
 void pci_msix_init(struct pci_dev *dev);
 bool pci_bridge_d3_possible(struct pci_dev *dev);
 void pci_bridge_d3_update(struct pci_dev *dev);
-int pci_bridge_wait_for_secondary_bus(struct pci_dev *dev, char *reset_type);
+int pci_bridge_wait_for_secondary_bus(struct pci_dev *dev, enum pci_reset_type reset_type);
 
 static inline void pci_wakeup_event(struct pci_dev *dev)
 {
