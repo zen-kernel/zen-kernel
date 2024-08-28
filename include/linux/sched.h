@@ -778,7 +778,7 @@ struct task_struct {
 	int				on_cpu;
 #endif
 
-#if defined(CONFIG_SMP) || defined(CONFIG_SCHED_ALT)
+#if defined(CONFIG_SMP) && defined(CONFIG_SCHED_ALT)
 	struct __call_single_node	wake_entry;
 #endif
 
