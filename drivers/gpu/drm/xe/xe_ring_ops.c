@@ -380,7 +380,7 @@ static void emit_migration_job_gen12(struct xe_sched_job *job,
 
 	dw[i++] = MI_ARB_ON_OFF | MI_ARB_DISABLE; /* Enabled again below */
 
-	i = emit_bb_start(job->batch_addr[0], BIT(8), dw, i);
+	i = emit_bb_start(job->ptrs[0].batch_addr, BIT(8), dw, i);
 
 	if (!IS_SRIOV_VF(gt_to_xe(job->q->gt))) {
 		/* XXX: Do we need this? Leaving for now. */
@@ -389,7 +389,7 @@ static void emit_migration_job_gen12(struct xe_sched_job *job,
 		dw[i++] = preparser_disable(false);
 	}
 
-	i = emit_bb_start(job->batch_addr[1], BIT(8), dw, i);
+	i = emit_bb_start(job->ptrs[1].batch_addr, BIT(8), dw, i);
 
 	dw[i++] = MI_FLUSH_DW | MI_INVALIDATE_TLB | job->migrate_flush_flags |
 		MI_FLUSH_DW_OP_STOREDW | MI_FLUSH_IMM_DW;
@@ -411,8 +411,8 @@ static void emit_job_gen12_gsc(struct xe_sched_job *job)
 	xe_gt_assert(gt, job->q->width <= 1); /* no parallel submission for GSCCS */
 
 	__emit_job_gen12_simple(job, job->q->lrc,
-				job->batch_addr[0],
-				xe_sched_job_seqno(job));
+				job->ptrs[0].batch_addr,
+				xe_sched_job_lrc_seqno(job));
 }
 
 static void emit_job_gen12_copy(struct xe_sched_job *job)
@@ -421,14 +421,14 @@ static void emit_job_gen12_copy(struct xe_sched_job *job)
 
 	if (xe_sched_job_is_migration(job->q)) {
 		emit_migration_job_gen12(job, job->q->lrc,
-					 xe_sched_job_seqno(job));
+					 xe_sched_job_lrc_seqno(job));
 		return;
 	}
 
 	for (i = 0; i < job->q->width; ++i)
 		__emit_job_gen12_simple(job, job->q->lrc + i,
-				        job->batch_addr[i],
-				        xe_sched_job_seqno(job));
+					job->ptrs[i].batch_addr,
+					xe_sched_job_lrc_seqno(job));
 }
 
 static void emit_job_gen12_video(struct xe_sched_job *job)
@@ -438,8 +438,8 @@ static void emit_job_gen12_video(struct xe_sched_job *job)
 	/* FIXME: Not doing parallel handshake for now */
 	for (i = 0; i < job->q->width; ++i)
 		__emit_job_gen12_video(job, job->q->lrc + i,
-				       job->batch_addr[i],
-				       xe_sched_job_seqno(job));
+				       job->ptrs[i].batch_addr,
+				       xe_sched_job_lrc_seqno(job));
 }
 
 static void emit_job_gen12_render_compute(struct xe_sched_job *job)
@@ -448,8 +448,8 @@ static void emit_job_gen12_render_compute(struct xe_sched_job *job)
 
 	for (i = 0; i < job->q->width; ++i)
 		__emit_job_gen12_render_compute(job, job->q->lrc + i,
-						job->batch_addr[i],
-						xe_sched_job_seqno(job));
+						job->ptrs[i].batch_addr,
+						xe_sched_job_lrc_seqno(job));
 }
 
 static const struct xe_ring_ops ring_ops_gen12_gsc = {
