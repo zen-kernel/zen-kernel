@@ -5862,6 +5862,24 @@ static void set_rq_online(struct rq *rq)
 		rq->online = true;
 }
 
+static inline void sched_set_rq_online(struct rq *rq, int cpu)
+{
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&rq->lock, flags);
+	set_rq_online(rq);
+	raw_spin_unlock_irqrestore(&rq->lock, flags);
+}
+
+static inline void sched_set_rq_offline(struct rq *rq, int cpu)
+{
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&rq->lock, flags);
+	set_rq_offline(rq);
+	raw_spin_unlock_irqrestore(&rq->lock, flags);
+}
+
 /*
  * used to mark begin/end of suspend/resume:
  */
@@ -5934,7 +5952,6 @@ static inline void sched_smt_present_dec(int cpu)
 int sched_cpu_activate(unsigned int cpu)
 {
 	struct rq *rq = cpu_rq(cpu);
-	unsigned long flags;
 
 	/*
 	 * Clear the balance_push callback and prepare to schedule
@@ -5956,9 +5973,7 @@ int sched_cpu_activate(unsigned int cpu)
 	 * 2) At runtime, if cpuset_cpu_active() fails to rebuild the
 	 *    domains.
 	 */
-	raw_spin_lock_irqsave(&rq->lock, flags);
-	set_rq_online(rq);
-	raw_spin_unlock_irqrestore(&rq->lock, flags);
+	sched_set_rq_online(rq, cpu);
 
 	/*
 	 * When going up, increment the number of cores with SMT present.
@@ -5971,7 +5986,6 @@ int sched_cpu_activate(unsigned int cpu)
 int sched_cpu_deactivate(unsigned int cpu)
 {
 	struct rq *rq = cpu_rq(cpu);
-	unsigned long flags;
 	int ret;
 
 	set_cpu_active(cpu, false);
@@ -5996,9 +6010,7 @@ int sched_cpu_deactivate(unsigned int cpu)
 	 */
 	synchronize_rcu();
 
-	raw_spin_lock_irqsave(&rq->lock, flags);
-	set_rq_offline(rq);
-	raw_spin_unlock_irqrestore(&rq->lock, flags);
+	sched_set_rq_offline(rq, cpu);
 
 	/*
 	 * When going down, decrement the number of cores with SMT present.
