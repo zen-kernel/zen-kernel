@@ -19,6 +19,40 @@ static inline bool is_migration_disabled(struct task_struct *p)
 }
 
 /*
+ * Context API
+ */
+static inline struct rq *__task_access_lock(struct task_struct *p, raw_spinlock_t **plock)
+{
+	struct rq *rq;
+	for (;;) {
+		rq = task_rq(p);
+		if (p->on_cpu || task_on_rq_queued(p)) {
+			raw_spin_lock(&rq->lock);
+			if (likely((p->on_cpu || task_on_rq_queued(p)) && rq == task_rq(p))) {
+				*plock = &rq->lock;
+				return rq;
+			}
+			raw_spin_unlock(&rq->lock);
+		} else if (task_on_rq_migrating(p)) {
+			do {
+				cpu_relax();
+			} while (unlikely(task_on_rq_migrating(p)));
+		} else {
+			*plock = NULL;
+			return rq;
+		}
+	}
+}
+
+static inline void __task_access_unlock(struct task_struct *p, raw_spinlock_t *lock)
+{
+	if (NULL != lock)
+		raw_spin_unlock(lock);
+}
+
+void check_task_changed(struct task_struct *p, struct rq *rq);
+
+/*
  * RQ related inlined functions
  */
 
@@ -49,6 +83,12 @@ static inline struct task_struct * sched_rq_next_task(struct task_struct *p, str
 
 	return list_next_entry(p, sq_node);
 }
+
+extern void requeue_task(struct task_struct *p, struct rq *rq);
+
+extern void alt_sched_debug(void);
+
+extern int sched_yield_type;
 
 #ifdef CONFIG_SMP
 extern cpumask_t sched_rq_pending_mask ____cacheline_aligned_in_smp;
