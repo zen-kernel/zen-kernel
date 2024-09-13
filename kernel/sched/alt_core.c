@@ -5907,6 +5907,28 @@ static int cpuset_cpu_inactive(unsigned int cpu)
 	return 0;
 }
 
+static inline void sched_smt_present_inc(int cpu)
+{
+#ifdef CONFIG_SCHED_SMT
+	if (cpumask_weight(cpu_smt_mask(cpu)) == 2) {
+		static_branch_inc_cpuslocked(&sched_smt_present);
+		cpumask_or(&sched_smt_mask, &sched_smt_mask, cpu_smt_mask(cpu));
+	}
+#endif
+}
+
+static inline void sched_smt_present_dec(int cpu)
+{
+#ifdef CONFIG_SCHED_SMT
+	if (cpumask_weight(cpu_smt_mask(cpu)) == 2) {
+		static_branch_dec_cpuslocked(&sched_smt_present);
+		if (!static_branch_likely(&sched_smt_present))
+			cpumask_clear(sched_pcore_idle_mask);
+		cpumask_andnot(&sched_smt_mask, &sched_smt_mask, cpu_smt_mask(cpu));
+	}
+#endif
+}
+
 int sched_cpu_activate(unsigned int cpu)
 {
 	struct rq *rq = cpu_rq(cpu);
@@ -5936,15 +5958,10 @@ int sched_cpu_activate(unsigned int cpu)
 	set_rq_online(rq);
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
 
-#ifdef CONFIG_SCHED_SMT
 	/*
 	 * When going up, increment the number of cores with SMT present.
 	 */
-	if (cpumask_weight(cpu_smt_mask(cpu)) == 2) {
-		static_branch_inc_cpuslocked(&sched_smt_present);
-		cpumask_or(&sched_smt_mask, &sched_smt_mask, cpu_smt_mask(cpu));
-	}
-#endif
+	sched_smt_present_inc(cpu);
 
 	return 0;
 }
@@ -5981,17 +5998,10 @@ int sched_cpu_deactivate(unsigned int cpu)
 	set_rq_offline(rq);
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
 
-#ifdef CONFIG_SCHED_SMT
 	/*
 	 * When going down, decrement the number of cores with SMT present.
 	 */
-	if (cpumask_weight(cpu_smt_mask(cpu)) == 2) {
-		static_branch_dec_cpuslocked(&sched_smt_present);
-		if (!static_branch_likely(&sched_smt_present))
-			cpumask_clear(sched_pcore_idle_mask);
-		cpumask_andnot(&sched_smt_mask, &sched_smt_mask, cpu_smt_mask(cpu));
-	}
-#endif
+	sched_smt_present_dec(cpu);
 
 	if (!sched_smp_initialized)
 		return 0;
