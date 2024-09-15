@@ -1049,7 +1049,11 @@ static int vhba_probe (struct platform_device *pdev)
     return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
 static int vhba_remove (struct platform_device *pdev)
+#else
+static void vhba_remove (struct platform_device *pdev)
+#endif
 {
     struct vhba_host *vhost;
     struct Scsi_Host *shost;
@@ -1062,7 +1066,9 @@ static int vhba_remove (struct platform_device *pdev)
 
     kfree(vhost->commands);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
     return 0;
+#endif
 }
 
 static void vhba_release (struct device * dev)
