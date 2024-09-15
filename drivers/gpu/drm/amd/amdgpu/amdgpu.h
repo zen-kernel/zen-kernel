@@ -162,6 +162,7 @@ struct amdgpu_watchdog_timer {
  */
 extern int amdgpu_modeset;
 extern unsigned int amdgpu_vram_limit;
+extern int amdgpu_ignore_min_pcap;
 extern int amdgpu_vis_vram_limit;
 extern int amdgpu_gart_size;
 extern int amdgpu_gtt_size;
