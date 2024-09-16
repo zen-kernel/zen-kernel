@@ -155,9 +155,8 @@ config MPENTIUM4
 		-Paxville
 		-Dempsey
 
-
 config MK6
-	bool "K6/K6-II/K6-III"
+	bool "AMD K6/K6-II/K6-III"
 	depends on X86_32
 	help
 	  Select this for an AMD K6-family processor.  Enables use of
@@ -165,7 +164,7 @@ config MK6
 	  flags to GCC.
 
 config MK7
-	bool "Athlon/Duron/K7"
+	bool "AMD Athlon/Duron/K7"
 	depends on X86_32
 	help
 	  Select this for an AMD Athlon K7-family processor.  Enables use of
@@ -173,11 +172,113 @@ config MK7
 	  flags to GCC.
 
 config MK8
-	bool "Opteron/Athlon64/Hammer/K8"
+	bool "AMD Opteron/Athlon64/Hammer/K8"
 	help
 	  Select this for an AMD Opteron or Athlon64 Hammer-family processor.
 	  Enables use of some extended instructions, and passes appropriate
 	  optimization flags to GCC.
+
+config MK8SSE3
+	bool "AMD Opteron/Athlon64/Hammer/K8 with SSE3"
+	help
+	  Select this for improved AMD Opteron or Athlon64 Hammer-family processors.
+	  Enables use of some extended instructions, and passes appropriate
+	  optimization flags to GCC.
+
+config MK10
+	bool "AMD 61xx/7x50/PhenomX3/X4/II/K10"
+	help
+	  Select this for an AMD 61xx Eight-Core Magny-Cours, Athlon X2 7x50,
+	  Phenom X3/X4/II, Athlon II X2/X3/X4, or Turion II-family processor.
+	  Enables use of some extended instructions, and passes appropriate
+	  optimization flags to GCC.
+
+config MBARCELONA
+	bool "AMD Barcelona"
+	help
+	  Select this for AMD Family 10h Barcelona processors.
+
+	  Enables -march=barcelona
+
+config MBOBCAT
+	bool "AMD Bobcat"
+	help
+	  Select this for AMD Family 14h Bobcat processors.
+
+	  Enables -march=btver1
+
+config MJAGUAR
+	bool "AMD Jaguar"
+	help
+	  Select this for AMD Family 16h Jaguar processors.
+
+	  Enables -march=btver2
+
+config MBULLDOZER
+	bool "AMD Bulldozer"
+	help
+	  Select this for AMD Family 15h Bulldozer processors.
+
+	  Enables -march=bdver1
+
+config MPILEDRIVER
+	bool "AMD Piledriver"
+	help
+	  Select this for AMD Family 15h Piledriver processors.
+
+	  Enables -march=bdver2
+
+config MSTEAMROLLER
+	bool "AMD Steamroller"
+	help
+	  Select this for AMD Family 15h Steamroller processors.
+
+	  Enables -march=bdver3
+
+config MEXCAVATOR
+	bool "AMD Excavator"
+	help
+	  Select this for AMD Family 15h Excavator processors.
+
+	  Enables -march=bdver4
+
+config MZEN
+	bool "AMD Zen"
+	help
+	  Select this for AMD Family 17h Zen processors.
+
+	  Enables -march=znver1
+
+config MZEN2
+	bool "AMD Zen 2"
+	help
+	  Select this for AMD Family 17h Zen 2 processors.
+
+	  Enables -march=znver2
+
+config MZEN3
+	bool "AMD Zen 3"
+	depends on (CC_IS_GCC && GCC_VERSION >= 100300) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
+	help
+	  Select this for AMD Family 19h Zen 3 processors.
+
+	  Enables -march=znver3
+
+config MZEN4
+	bool "AMD Zen 4"
+	depends on (CC_IS_GCC && GCC_VERSION >= 130000) || (CC_IS_CLANG && CLANG_VERSION >= 160000)
+	help
+	  Select this for AMD Family 19h Zen 4 processors.
+
+	  Enables -march=znver4
+
+config MZEN5
+	bool "AMD Zen 5"
+	depends on (CC_IS_GCC && GCC_VERSION > 140000) || (CC_IS_CLANG && CLANG_VERSION >= 190100)
+	help
+	  Select this for AMD Family 19h Zen 5 processors.
+
+	  Enables -march=znver5
 
 config MCRUSOE
 	bool "Crusoe"
@@ -269,15 +370,6 @@ config MPSC
 	  using the cpu family field
 	  in /proc/cpuinfo. Family 15 is an older Xeon, Family 6 a newer one.
 
-config MCORE2
-	bool "Core 2/newer Xeon"
-	help
-
-	  Select this for Intel Core 2 and newer Core 2 Xeons (Xeon 51xx and
-	  53xx) CPUs. You can distinguish newer from older Xeons by the CPU
-	  family in /proc/cpuinfo. Newer ones have 6 and older ones 15
-	  (not a typo)
-
 config MATOM
 	bool "Intel Atom"
 	help
@@ -287,12 +379,235 @@ config MATOM
 	  accordingly optimized code. Use a recent GCC with specific Atom
 	  support in order to fully benefit from selecting this option.
 
+config MCORE2
+	bool "Intel Core 2"
+	help
+
+	  Select this for Intel Core 2 and newer Core 2 Xeons (Xeon 51xx and
+	  53xx) CPUs. You can distinguish newer from older Xeons by the CPU
+	  family in /proc/cpuinfo. Newer ones have 6 and older ones 15
+	  (not a typo)
+
+	  Enables -march=core2
+
+config MNEHALEM
+	bool "Intel Nehalem"
+	help
+
+	  Select this for 1st Gen Core processors in the Nehalem family.
+
+	  Enables -march=nehalem
+
+config MWESTMERE
+	bool "Intel Westmere"
+	help
+
+	  Select this for the Intel Westmere formerly Nehalem-C family.
+
+	  Enables -march=westmere
+
+config MSILVERMONT
+	bool "Intel Silvermont"
+	help
+
+	  Select this for the Intel Silvermont platform.
+
+	  Enables -march=silvermont
+
+config MGOLDMONT
+	bool "Intel Goldmont"
+	help
+
+	  Select this for the Intel Goldmont platform including Apollo Lake and Denverton.
+
+	  Enables -march=goldmont
+
+config MGOLDMONTPLUS
+	bool "Intel Goldmont Plus"
+	help
+
+	  Select this for the Intel Goldmont Plus platform including Gemini Lake.
+
+	  Enables -march=goldmont-plus
+
+config MSANDYBRIDGE
+	bool "Intel Sandy Bridge"
+	help
+
+	  Select this for 2nd Gen Core processors in the Sandy Bridge family.
+
+	  Enables -march=sandybridge
+
+config MIVYBRIDGE
+	bool "Intel Ivy Bridge"
+	help
+
+	  Select this for 3rd Gen Core processors in the Ivy Bridge family.
+
+	  Enables -march=ivybridge
+
+config MHASWELL
+	bool "Intel Haswell"
+	help
+
+	  Select this for 4th Gen Core processors in the Haswell family.
+
+	  Enables -march=haswell
+
+config MBROADWELL
+	bool "Intel Broadwell"
+	help
+
+	  Select this for 5th Gen Core processors in the Broadwell family.
+
+	  Enables -march=broadwell
+
+config MSKYLAKE
+	bool "Intel Skylake"
+	help
+
+	  Select this for 6th Gen Core processors in the Skylake family.
+
+	  Enables -march=skylake
+
+config MSKYLAKEX
+	bool "Intel Skylake X"
+	help
+
+	  Select this for 6th Gen Core processors in the Skylake X family.
+
+	  Enables -march=skylake-avx512
+
+config MCANNONLAKE
+	bool "Intel Cannon Lake"
+	help
+
+	  Select this for 8th Gen Core processors
+
+	  Enables -march=cannonlake
+
+config MICELAKE_CLIENT
+	bool "Intel Ice Lake"
+	help
+
+	  Select this for 10th Gen Core client processors in the Ice Lake family.
+
+	  Enables -march=icelake-client
+
+config MICELAKE_SERVER
+	bool "Intel Ice Lake Server"
+	help
+
+	  Select this for 10th Gen Core server processors in the Ice Lake family.
+
+	  Enables -march=icelake-server
+
+config MCASCADELAKE
+	bool "Intel Cascade Lake"
+	help
+
+	  Select this for Xeon processors in the Cascade Lake family.
+
+	  Enables -march=cascadelake
+
+config MCOOPERLAKE
+	bool "Intel Cooper Lake"
+	depends on (CC_IS_GCC && GCC_VERSION > 100100) || (CC_IS_CLANG && CLANG_VERSION >= 100000)
+	help
+
+	  Select this for Xeon processors in the Cooper Lake family.
+
+	  Enables -march=cooperlake
+
+config MTIGERLAKE
+	bool "Intel Tiger Lake"
+	depends on  (CC_IS_GCC && GCC_VERSION > 100100) || (CC_IS_CLANG && CLANG_VERSION >= 100000)
+	help
+
+	  Select this for third-generation 10 nm process processors in the Tiger Lake family.
+
+	  Enables -march=tigerlake
+
+config MSAPPHIRERAPIDS
+	bool "Intel Sapphire Rapids"
+	depends on (CC_IS_GCC && GCC_VERSION > 110000) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
+	help
+
+	  Select this for fourth-generation 10 nm process processors in the Sapphire Rapids family.
+
+	  Enables -march=sapphirerapids
+
+config MROCKETLAKE
+	bool "Intel Rocket Lake"
+	depends on (CC_IS_GCC && GCC_VERSION > 110000) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
+	help
+
+	  Select this for eleventh-generation processors in the Rocket Lake family.
+
+	  Enables -march=rocketlake
+
+config MALDERLAKE
+	bool "Intel Alder Lake"
+	depends on (CC_IS_GCC && GCC_VERSION > 110000) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
+	help
+
+	  Select this for twelfth-generation processors in the Alder Lake family.
+
+	  Enables -march=alderlake
+
+config MRAPTORLAKE
+	bool "Intel Raptor Lake"
+	depends on (CC_IS_GCC && GCC_VERSION >= 130000) || (CC_IS_CLANG && CLANG_VERSION >= 150500)
+	help
+
+	  Select this for thirteenth-generation processors in the Raptor Lake family.
+
+	  Enables -march=raptorlake
+
+config MMETEORLAKE
+	bool "Intel Meteor Lake"
+	depends on (CC_IS_GCC && GCC_VERSION >= 130000) || (CC_IS_CLANG && CLANG_VERSION >= 150500)
+	help
+
+	  Select this for fourteenth-generation processors in the Meteor Lake family.
+
+	  Enables -march=meteorlake
+
+config MEMERALDRAPIDS
+	bool "Intel Emerald Rapids"
+	depends on (CC_IS_GCC && GCC_VERSION > 130000) || (CC_IS_CLANG && CLANG_VERSION >= 150500)
+	help
+
+	  Select this for fifth-generation 10 nm process processors in the Emerald Rapids family.
+
+	  Enables -march=emeraldrapids
+
 config GENERIC_CPU
 	bool "Generic-x86-64"
 	depends on X86_64
 	help
 	  Generic x86-64 CPU.
 	  Run equally well on all x86-64 CPUs.
+
+config MNATIVE_INTEL
+	bool "Intel-Native optimizations autodetected by the compiler"
+	help
+
+	  Clang 3.8, GCC 4.2 and above support -march=native, which automatically detects
+	  the optimum settings to use based on your processor. Do NOT use this
+	  for AMD CPUs.  Intel Only!
+
+	  Enables -march=native
+
+config MNATIVE_AMD
+	bool "AMD-Native optimizations autodetected by the compiler"
+	help
+
+	  Clang 3.8, GCC 4.2 and above support -march=native, which automatically detects
+	  the optimum settings to use based on your processor. Do NOT use this
+	  for Intel CPUs.  AMD Only!
+
+	  Enables -march=native
 
 endchoice
 
@@ -308,6 +623,30 @@ config X86_GENERIC
 	  This is really intended for distributors who need more
 	  generic optimizations.
 
+config X86_64_VERSION
+	int "x86-64 compiler ISA level"
+	range 1 3
+	depends on (CC_IS_GCC && GCC_VERSION > 110000) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
+	depends on X86_64 && GENERIC_CPU
+	help
+	  Specify a specific x86-64 compiler ISA level.
+
+	  There are three x86-64 ISA levels that work on top of
+	  the x86-64 baseline, namely: x86-64-v2, x86-64-v3, and x86-64-v4.
+
+	  x86-64-v2 brings support for vector instructions up to Streaming SIMD
+	  Extensions 4.2 (SSE4.2) and Supplemental Streaming SIMD Extensions 3
+	  (SSSE3), the POPCNT instruction, and CMPXCHG16B.
+
+	  x86-64-v3 adds vector instructions up to AVX2, MOVBE, and additional
+	  bit-manipulation instructions.
+
+	  x86-64-v4 is not included since the kernel does not use AVX512 instructions
+
+	  You can find the best version for your CPU by running one of the following:
+	  /lib/ld-linux-x86-64.so.2 --help | grep supported
+	  /lib64/ld-linux-x86-64.so.2 --help | grep supported
+
 #
 # Define implied options from the CPU selection here
 config X86_INTERNODE_CACHE_SHIFT
@@ -318,7 +657,7 @@ config X86_INTERNODE_CACHE_SHIFT
 config X86_L1_CACHE_SHIFT
 	int
 	default "7" if MPENTIUM4 || MPSC
-	default "6" if MK7 || MK8 || MPENTIUMM || MCORE2 || MATOM || MVIAC7 || X86_GENERIC || GENERIC_CPU
+	default "6" if MK7 || MK8 || MPENTIUMM || MCORE2 || MATOM || MVIAC7 || X86_GENERIC || GENERIC_CPU || MK8SSE3 || MK10 || MBARCELONA || MBOBCAT || MJAGUAR || MBULLDOZER || MPILEDRIVER || MSTEAMROLLER || MEXCAVATOR || MZEN || MZEN2 || MZEN3 || MZEN4 || MZEN5 || MNEHALEM || MWESTMERE || MSILVERMONT || MGOLDMONT || MGOLDMONTPLUS || MSANDYBRIDGE || MIVYBRIDGE || MHASWELL || MBROADWELL || MSKYLAKE || MSKYLAKEX || MCANNONLAKE || MICELAKE_CLIENT || MICELAKE_SERVER || MCASCADELAKE || MCOOPERLAKE || MTIGERLAKE || MSAPPHIRERAPIDS || MROCKETLAKE || MALDERLAKE || MRAPTORLAKE || MMETEORLAKE || MEMERALDRAPIDS || MNATIVE_INTEL || MNATIVE_AMD
 	default "4" if MELAN || M486SX || M486 || MGEODEGX1
 	default "5" if MWINCHIP3D || MWINCHIPC6 || MCRUSOE || MEFFICEON || MCYRIXIII || MK6 || MPENTIUMIII || MPENTIUMII || M686 || M586MMX || M586TSC || M586 || MVIAC3_2 || MGEODE_LX
 
@@ -336,11 +675,11 @@ config X86_ALIGNMENT_16
 
 config X86_INTEL_USERCOPY
 	def_bool y
-	depends on MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M586MMX || X86_GENERIC || MK8 || MK7 || MEFFICEON || MCORE2
+	depends on MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M586MMX || X86_GENERIC || MK8 || MK7 || MEFFICEON || MCORE2 || MNEHALEM || MWESTMERE || MSILVERMONT || MGOLDMONT || MGOLDMONTPLUS || MSANDYBRIDGE || MIVYBRIDGE || MHASWELL || MBROADWELL || MSKYLAKE || MSKYLAKEX || MCANNONLAKE || MICELAKE_CLIENT || MICELAKE_SERVER || MCASCADELAKE || MCOOPERLAKE || MTIGERLAKE || MSAPPHIRERAPIDS || MROCKETLAKE || MALDERLAKE || MRAPTORLAKE || MMETEORLAKE || MEMERALDRAPIDS || MNATIVE_INTEL
 
 config X86_USE_PPRO_CHECKSUM
 	def_bool y
-	depends on MWINCHIP3D || MWINCHIPC6 || MCYRIXIII || MK7 || MK6 || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || MK8 || MVIAC3_2 || MVIAC7 || MEFFICEON || MGEODE_LX || MCORE2 || MATOM
+	depends on MWINCHIP3D || MWINCHIPC6 || MCYRIXIII || MK7 || MK6 || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || MK8 || MVIAC3_2 || MVIAC7 || MEFFICEON || MGEODE_LX || MCORE2 || MATOM || MK8SSE3 || MK10 || MBARCELONA || MBOBCAT || MJAGUAR || MBULLDOZER || MPILEDRIVER || MSTEAMROLLER || MEXCAVATOR || MZEN || MZEN2 || MZEN3 || MZEN4 || MZEN5 || MNEHALEM || MWESTMERE || MSILVERMONT || MGOLDMONT || MGOLDMONTPLUS || MSANDYBRIDGE || MIVYBRIDGE || MHASWELL || MBROADWELL || MSKYLAKE || MSKYLAKEX || MCANNONLAKE || MICELAKE_CLIENT || MICELAKE_SERVER || MCASCADELAKE || MCOOPERLAKE || MTIGERLAKE || MSAPPHIRERAPIDS || MROCKETLAKE || MALDERLAKE || MRAPTORLAKE || MMETEORLAKE || MEMERALDRAPIDS || MNATIVE_INTEL || MNATIVE_AMD
 
 #
 # P6_NOPs are a relatively minor optimization that require a family >=
