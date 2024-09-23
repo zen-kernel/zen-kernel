@@ -4312,8 +4312,6 @@ void alt_sched_debug(void)
 	       sched_pcore_idle_mask->bits[0],
 	       sched_ecore_idle_mask->bits[0]);
 }
-#else
-void alt_sched_debug(void) {}
 #endif
 
 #ifdef	CONFIG_SMP

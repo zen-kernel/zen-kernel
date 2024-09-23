@@ -88,11 +88,6 @@ static inline void resched_latency_warn(int cpu, u64 latency) {}
 # define scale_load_down(w)	(w)
 #endif
 
-/* rt_prio(prio) defined in include/linux/sched/rt.h */
-#define rt_task(p)		rt_prio((p)->prio)
-#define rt_policy(policy)	((policy) == SCHED_FIFO || (policy) == SCHED_RR)
-#define task_has_rt_policy(p)	(rt_policy((p)->policy))
-
 #ifdef CONFIG_FAIR_GROUP_SCHED
 #define ROOT_TASK_GROUP_LOAD	NICE_0_LOAD
 
@@ -416,46 +411,6 @@ static inline u64 rq_clock_task(struct rq *rq)
 
 #define ENQUEUE_WAKEUP		0x01
 
-
-struct affinity_context {
-	const struct cpumask	*new_mask;
-	struct cpumask		*user_mask;
-	unsigned int		flags;
-};
-
-#define SCA_CHECK		0x01
-#define SCA_MIGRATE_DISABLE	0x02
-#define SCA_MIGRATE_ENABLE	0x04
-#define SCA_USER		0x08
-
-#ifdef CONFIG_SMP
-
-extern int __set_cpus_allowed_ptr(struct task_struct *p, struct affinity_context *ctx);
-
-static inline cpumask_t *alloc_user_cpus_ptr(int node)
-{
-	/*
-	 * See do_set_cpus_allowed() above for the rcu_head usage.
-	 */
-	int size = max_t(int, cpumask_size(), sizeof(struct rcu_head));
-
-	return kmalloc_node(size, GFP_KERNEL, node);
-}
-
-#else /* !CONFIG_SMP: */
-
-static inline int __set_cpus_allowed_ptr(struct task_struct *p,
-					 struct affinity_context *ctx)
-{
-	return set_cpus_allowed_ptr(p, ctx->new_mask);
-}
-
-static inline cpumask_t *alloc_user_cpus_ptr(int node)
-{
-	return NULL;
-}
-
-#endif /* !CONFIG_SMP */
 
 /*
  * Below are scheduler API which using in other kernel code
@@ -998,52 +953,6 @@ static inline void sched_mm_cid_migrate_from(struct task_struct *t) { }
 static inline void sched_mm_cid_migrate_to(struct rq *dst_rq, struct task_struct *t, int src_cpu) { }
 static inline void task_tick_mm_cid(struct rq *rq, struct task_struct *curr) { }
 static inline void init_sched_mm_cid(struct task_struct *t) { }
-#endif
-
-#ifdef CONFIG_RT_MUTEXES
-
-static inline int __rt_effective_prio(struct task_struct *pi_task, int prio)
-{
-	if (pi_task)
-		prio = min(prio, pi_task->prio);
-
-	return prio;
-}
-
-static inline int rt_effective_prio(struct task_struct *p, int prio)
-{
-	struct task_struct *pi_task = rt_mutex_get_top_task(p);
-
-	return __rt_effective_prio(pi_task, prio);
-}
-
-#else /* !CONFIG_RT_MUTEXES: */
-
-static inline int rt_effective_prio(struct task_struct *p, int prio)
-{
-	return prio;
-}
-
-#endif /* !CONFIG_RT_MUTEXES */
-
-extern int __sched_setscheduler(struct task_struct *p, const struct sched_attr *attr, bool user, bool pi);
-extern int __sched_setaffinity(struct task_struct *p, struct affinity_context *ctx);
-extern void __setscheduler_prio(struct task_struct *p, int prio);
-
-#ifdef CONFIG_SMP
-extern struct balance_callback *splice_balance_callbacks(struct rq *rq);
-extern void balance_callbacks(struct rq *rq, struct balance_callback *head);
-#else
-
-static inline struct balance_callback *splice_balance_callbacks(struct rq *rq)
-{
-	return NULL;
-}
-
-static inline void balance_callbacks(struct rq *rq, struct balance_callback *head)
-{
-}
-
 #endif
 
 #ifdef CONFIG_SMP

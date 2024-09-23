@@ -23,7 +23,7 @@ static inline int __normal_prio(int policy, int rt_prio, int static_prio)
 {
 	return rt_policy(policy) ? (MAX_RT_PRIO - 1 - rt_prio) : static_prio;
 }
-#else
+#else /* !CONFIG_SCHED_ALT */
 static inline int __normal_prio(int policy, int rt_prio, int nice)
 {
 	int prio;
@@ -50,7 +50,7 @@ static inline int normal_prio(struct task_struct *p)
 {
 #ifdef CONFIG_SCHED_ALT
 	return __normal_prio(p->policy, p->rt_priority, p->static_prio);
-#else
+#else /* !CONFIG_SCHED_ALT */
 	return __normal_prio(p->policy, p->rt_priority, PRIO_TO_NICE(p->static_prio));
 #endif /* !CONFIG_SCHED_ALT */
 }
@@ -232,19 +232,22 @@ SYSCALL_DEFINE1(nice, int, increment)
  * normal, batch, idle     [0 ... 39]  [100 ... 139]          0/[-20 ... 19]
  * fifo, rr             [-2 ... -100]     [98 ... 0]  [1 ... 99]
  * deadline                     -101             -1           0
- * ---- Project C ----
- * (BMQ)normal, batch, idle[0 ... 53]  [100 ... 139]          0/[-20 ... 19]/[-7 ... 7]
- * (PDS)normal, batch, idle[0 ... 39]            100          0/[-20 ... 19]
- * fifo, rr             [-1 ... -100]     [99 ... 0]  [0 ... 99]
  */
 int task_prio(const struct task_struct *p)
 {
 #ifdef CONFIG_SCHED_ALT
+/*
+ * sched policy         return value   kernel prio    user prio/nice
+ *
+ * (BMQ)normal, batch, idle[0 ... 53]  [100 ... 139]          0/[-20 ... 19]/[-7 ... 7]
+ * (PDS)normal, batch, idle[0 ... 39]            100          0/[-20 ... 19]
+ * fifo, rr             [-1 ... -100]     [99 ... 0]  [0 ... 99]
+ */
 	return (p->prio < MAX_RT_PRIO) ? p->prio - MAX_RT_PRIO :
 		task_sched_prio_normal(p, task_rq(p));
 #else
 	return p->prio - MAX_RT_PRIO;
-#endif
+#endif /* !CONFIG_SCHED_ALT */
 }
 
 /**
@@ -461,9 +464,8 @@ static void __setscheduler_params(struct task_struct *p,
 	if (dl_policy(policy))
 		__setparam_dl(p, attr);
 	else if (fair_policy(policy))
-#else
-		p->static_prio = NICE_TO_PRIO(attr->sched_nice);
 #endif /* CONFIG_SCHED_ALT */
+		p->static_prio = NICE_TO_PRIO(attr->sched_nice);
 
 	/*
 	 * __sched_setscheduler() ensures attr->sched_priority == 0 when
@@ -474,7 +476,7 @@ static void __setscheduler_params(struct task_struct *p,
 	p->normal_prio = normal_prio(p);
 #ifndef CONFIG_SCHED_ALT
 	set_load_weight(p, true);
-#endif /* CONFIG_SCHED_ALT */
+#endif /* !CONFIG_SCHED_ALT */
 }
 
 /*
@@ -605,7 +607,7 @@ static inline int uclamp_validate(struct task_struct *p,
 static void __setscheduler_uclamp(struct task_struct *p,
 				  const struct sched_attr *attr) { }
 #endif
-#endif /* CONFIG_SCHED_ALT */
+#endif /* !CONFIG_SCHED_ALT */
 
 /*
  * Allow unprivileged RT tasks to decrease priority.
@@ -622,7 +624,7 @@ static int user_check_sched_setscheduler(struct task_struct *p,
 		    !is_nice_reduction(p, attr->sched_nice))
 			goto req_priv;
 	}
-#endif
+#endif /* !CONFIG_SCHED_ALT */
 
 	if (rt_policy(policy)) {
 		unsigned long rlim_rtprio = task_rlimit(p, RLIMIT_RTPRIO);
@@ -655,7 +657,7 @@ static int user_check_sched_setscheduler(struct task_struct *p,
 		if (!is_nice_reduction(p, task_nice(p)))
 			goto req_priv;
 	}
-#endif
+#endif /* !CONFIG_SCHED_ALT */
 
 	/* Can't change other user's priorities: */
 	if (!check_same_owner(p))
@@ -829,7 +831,7 @@ unlock:
 	__task_access_unlock(p, lock);
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 	return retval;
-#else
+#else /* !CONFIG_SCHED_ALT */
 	int oldpolicy = -1, policy = attr->sched_policy;
 	int retval, oldprio, newprio, queued, running;
 	const struct sched_class *prev_class;
@@ -1686,9 +1688,10 @@ SYSCALL_DEFINE3(sched_getaffinity, pid_t, pid, unsigned int, len,
 
 static void do_sched_yield(void)
 {
-#ifdef CONFIG_SCHED_ALT
 	struct rq *rq;
 	struct rq_flags rf;
+
+#ifdef CONFIG_SCHED_ALT
 	struct task_struct *p;
 
 	if (!sched_yield_type)
@@ -1707,27 +1710,18 @@ static void do_sched_yield(void)
 		if (task_on_rq_queued(p))
 			requeue_task(p, rq);
 	}
-
-	preempt_disable();
-	raw_spin_unlock_irq(&rq->lock);
-	sched_preempt_enable_no_resched();
-
-	schedule();
-#else
-	struct rq_flags rf;
-	struct rq *rq;
-
+#else /* !CONFIG_SCHED_ALT */
 	rq = this_rq_lock_irq(&rf);
 
 	schedstat_inc(rq->yld_count);
 	current->sched_class->yield_task(rq);
+#endif /* !CONFIG_SCHED_ALT */
 
 	preempt_disable();
 	rq_unlock_irq(rq, &rf);
 	sched_preempt_enable_no_resched();
 
 	schedule();
-#endif /* !CONFIG_SCHED_ALT */
 }
 
 /**
@@ -1792,7 +1786,7 @@ int __sched yield_to(struct task_struct *p, bool preempt)
 {
 #ifdef CONFIG_SCHED_ALT
 	return 0;
-#else
+#else /* !CONFIG_SCHED_ALT */
 	struct task_struct *curr = current;
 	struct rq *rq, *p_rq;
 	int yielded = 0;
@@ -1901,28 +1895,9 @@ SYSCALL_DEFINE1(sched_get_priority_min, int, policy)
 
 static int sched_rr_get_interval(pid_t pid, struct timespec64 *t)
 {
-#ifdef CONFIG_SCHED_ALT
-	struct task_struct *p;
-	int retval;
-
-	alt_sched_debug();
-
-	if (pid < 0)
-		return -EINVAL;
-
-	guard(rcu)();
-	p = find_process_by_pid(pid);
-	if (!p)
-		return -EINVAL;
-
-	retval = security_task_getscheduler(p);
-	if (retval)
-		return retval;
-
-	*t = ns_to_timespec64(sysctl_sched_base_slice);
-	return 0;
-#else
+#ifndef CONFIG_SCHED_ALT
 	unsigned int time_slice = 0;
+#endif
 	int retval;
 
 	if (pid < 0)
@@ -1937,6 +1912,7 @@ static int sched_rr_get_interval(pid_t pid, struct timespec64 *t)
 		if (retval)
 			return retval;
 
+#ifndef CONFIG_SCHED_ALT
 		scoped_guard (task_rq_lock, p) {
 			struct rq *rq = scope.rq;
 			if (p->sched_class->get_rr_interval)
@@ -1945,8 +1921,14 @@ static int sched_rr_get_interval(pid_t pid, struct timespec64 *t)
 	}
 
 	jiffies_to_timespec64(time_slice, t);
-	return 0;
+#else
+	}
+
+	alt_sched_debug();
+
+	*t = ns_to_timespec64(sysctl_sched_base_slice);
 #endif /* !CONFIG_SCHED_ALT */
+	return 0;
 }
 
 /**
