@@ -2799,21 +2799,14 @@ enum pkc_action {
 static long do_process_ksm_control(int pidfd, enum pkc_action action)
 {
 	long ret;
-	struct pid *pid;
 	struct task_struct *task;
 	struct mm_struct *mm;
 	unsigned int f_flags;
 
-	pid = pidfd_get_pid(pidfd, &f_flags);
-	if (IS_ERR(pid)) {
-		ret = PTR_ERR(pid);
+	task = pidfd_get_task(pidfd, &f_flags);
+	if (IS_ERR(task)) {
+		ret = PTR_ERR(task);
 		goto out;
-	}
-
-	task = get_pid_task(pid, PIDTYPE_PID);
-	if (!task) {
-		ret = -ESRCH;
-		goto put_pid;
 	}
 
 	/* Require PTRACE_MODE_READ to avoid leaking ASLR metadata. */
@@ -2852,8 +2845,6 @@ release_mm:
 	mmput(mm);
 release_task:
 	put_task_struct(task);
-put_pid:
-	put_pid(pid);
 out:
 	return ret;
 }
