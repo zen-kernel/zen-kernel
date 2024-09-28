@@ -42,14 +42,20 @@
 
 #include "idle.c"
 
+#ifndef CONFIG_SCHED_ALT
 #include "rt.c"
+#endif
 
 #ifdef CONFIG_SMP
+#ifndef CONFIG_SCHED_ALT
 # include "cpudeadline.c"
+#endif
 # include "pelt.c"
 #endif
 
 #include "cputime.c"
+#ifndef CONFIG_SCHED_ALT
 #include "deadline.c"
+#endif
 
 #include "syscalls.c"
