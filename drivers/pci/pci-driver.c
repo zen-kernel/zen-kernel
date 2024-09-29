@@ -572,7 +572,7 @@ static void pci_pm_bridge_power_up_actions(struct pci_dev *pci_dev)
 {
 	int ret;
 
-	ret = pci_bridge_wait_for_secondary_bus(pci_dev, "resume");
+	ret = pci_bridge_wait_for_secondary_bus(pci_dev, PCI_DEV_WAIT_RESUME);
 	if (ret) {
 		/*
 		 * The downstream link failed to come up, so mark the
