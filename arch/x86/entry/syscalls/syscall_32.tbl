@@ -472,3 +472,6 @@
 464	i386	getxattrat		sys_getxattrat
 465	i386	listxattrat		sys_listxattrat
 466	i386	removexattrat		sys_removexattrat
+467	i386	process_ksm_enable		sys_process_ksm_enable
+468	i386	process_ksm_disable		sys_process_ksm_disable
+469	i386	process_ksm_status		sys_process_ksm_status

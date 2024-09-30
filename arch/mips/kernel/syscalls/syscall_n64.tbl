@@ -381,3 +381,6 @@
 464	n64	getxattrat			sys_getxattrat
 465	n64	listxattrat			sys_listxattrat
 466	n64	removexattrat			sys_removexattrat
+467	n64	process_ksm_enable		sys_process_ksm_enable
+468	n64	process_ksm_disable		sys_process_ksm_disable
+469	n64	process_ksm_status		sys_process_ksm_status
