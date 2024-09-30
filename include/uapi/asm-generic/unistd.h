@@ -850,8 +850,15 @@ __SYSCALL(__NR_listxattrat, sys_listxattrat)
 #define __NR_removexattrat 466
 __SYSCALL(__NR_removexattrat, sys_removexattrat)
 
+#define __NR_process_ksm_enable 467
+__SYSCALL(__NR_process_ksm_enable, sys_process_ksm_enable)
+#define __NR_process_ksm_disable 468
+__SYSCALL(__NR_process_ksm_disable, sys_process_ksm_disable)
+#define __NR_process_ksm_status 469
+__SYSCALL(__NR_process_ksm_status, sys_process_ksm_status)
+
 #undef __NR_syscalls
-#define __NR_syscalls 467
+#define __NR_syscalls 470
 
 /*
  * 32 bit systems traditionally used different

@@ -454,3 +454,6 @@
 464	o32	getxattrat			sys_getxattrat
 465	o32	listxattrat			sys_listxattrat
 466	o32	removexattrat			sys_removexattrat
+467	o32	process_ksm_enable		sys_process_ksm_enable
+468	o32	process_ksm_disable		sys_process_ksm_disable
+469	o32	process_ksm_status		sys_process_ksm_status
