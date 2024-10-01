@@ -603,10 +603,6 @@ config MNATIVE_AMD
 
 endchoice
 
-config SUPPORT_MARCH_CODEVERS
-	bool
-	default y if (CC_IS_GCC && GCC_VERSION > 110000) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
-
 config X86_GENERIC
 	bool "Generic x86 support"
 	depends on X86_32

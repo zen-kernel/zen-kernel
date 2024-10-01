@@ -105,6 +105,12 @@
 #define MODULE_PROC_FAMILY "ZEN "
 #elif defined CONFIG_MZEN2
 #define MODULE_PROC_FAMILY "ZEN2 "
+#elif defined CONFIG_MZEN3
+#define MODULE_PROC_FAMILY "ZEN3 "
+#elif defined CONFIG_MZEN4
+#define MODULE_PROC_FAMILY "ZEN4 "
+#elif defined CONFIG_MZEN5
+#define MODULE_PROC_FAMILY "ZEN5 "
 #elif defined CONFIG_MELAN
 #define MODULE_PROC_FAMILY "ELAN "
 #elif defined CONFIG_MCRUSOE

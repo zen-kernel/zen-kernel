@@ -176,8 +176,6 @@ else
         # FIXME - should be integrated in Makefile.cpu (Makefile_32.cpu)
         cflags-$(CONFIG_MK8)		+= -march=k8
         cflags-$(CONFIG_MPSC)		+= -march=nocona
-        cflags-$(CONFIG_MCORE2)		+= -march=core2
-        cflags-$(CONFIG_MATOM)		+= -march=atom
         ifeq ($(CONFIG_X86_64_VERSION),1)
           cflags-$(CONFIG_GENERIC_CPU)		+= -mtune=generic
           rustflags-$(CONFIG_GENERIC_CPU)	+= -Ztune-cpu=generic
@@ -229,8 +227,6 @@ else
 
         rustflags-$(CONFIG_MK8)		+= -Ctarget-cpu=k8
         rustflags-$(CONFIG_MPSC)	+= -Ctarget-cpu=nocona
-        rustflags-$(CONFIG_MCORE2)	+= -Ctarget-cpu=core2
-        rustflags-$(CONFIG_MATOM)	+= -Ctarget-cpu=atom
         rustflags-$(CONFIG_MK8SSE3)	+= -Ctarget-cpu=k8-sse3
         rustflags-$(CONFIG_MK10) 		+= -Ctarget-cpu=amdfam10
         rustflags-$(CONFIG_MBARCELONA) 	+= -Ctarget-cpu=barcelona
