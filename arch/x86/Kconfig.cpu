@@ -274,7 +274,7 @@ config MZEN4
 
 config MZEN5
 	bool "AMD Zen 5"
-	depends on (CC_IS_GCC && GCC_VERSION >= 141000) || (CC_IS_CLANG && CLANG_VERSION >= 180000)
+	depends on (CC_IS_GCC && GCC_VERSION > 140000) || (CC_IS_CLANG && CLANG_VERSION >= 191000)
 	help
 	  Select this for AMD Family 19h Zen 5 processors.
 
@@ -370,6 +370,15 @@ config MPSC
 	  using the cpu family field
 	  in /proc/cpuinfo. Family 15 is an older Xeon, Family 6 a newer one.
 
+config MATOM
+	bool "Intel Atom"
+	help
+
+	  Select this for the Intel Atom platform. Intel Atom CPUs have an
+	  in-order pipelining architecture and thus can benefit from
+	  accordingly optimized code. Use a recent GCC with specific Atom
+	  support in order to fully benefit from selecting this option.
+
 config MCORE2
 	bool "Intel Core 2"
 	help
@@ -381,18 +390,8 @@ config MCORE2
 
 	  Enables -march=core2
 
-config MATOM
-	bool "Intel Atom"
-	help
-
-	  Select this for the Intel Atom platform. Intel Atom CPUs have an
-	  in-order pipelining architecture and thus can benefit from
-	  accordingly optimized code. Use a recent GCC with specific Atom
-	  support in order to fully benefit from selecting this option.
-
 config MNEHALEM
 	bool "Intel Nehalem"
-	select X86_P6_NOP
 	help
 
 	  Select this for 1st Gen Core processors in the Nehalem family.
@@ -401,7 +400,6 @@ config MNEHALEM
 
 config MWESTMERE
 	bool "Intel Westmere"
-	select X86_P6_NOP
 	help
 
 	  Select this for the Intel Westmere formerly Nehalem-C family.
@@ -410,7 +408,6 @@ config MWESTMERE
 
 config MSILVERMONT
 	bool "Intel Silvermont"
-	select X86_P6_NOP
 	help
 
 	  Select this for the Intel Silvermont platform.
@@ -419,7 +416,6 @@ config MSILVERMONT
 
 config MGOLDMONT
 	bool "Intel Goldmont"
-	select X86_P6_NOP
 	help
 
 	  Select this for the Intel Goldmont platform including Apollo Lake and Denverton.
@@ -428,7 +424,6 @@ config MGOLDMONT
 
 config MGOLDMONTPLUS
 	bool "Intel Goldmont Plus"
-	select X86_P6_NOP
 	help
 
 	  Select this for the Intel Goldmont Plus platform including Gemini Lake.
@@ -437,7 +432,6 @@ config MGOLDMONTPLUS
 
 config MSANDYBRIDGE
 	bool "Intel Sandy Bridge"
-	select X86_P6_NOP
 	help
 
 	  Select this for 2nd Gen Core processors in the Sandy Bridge family.
@@ -446,7 +440,6 @@ config MSANDYBRIDGE
 
 config MIVYBRIDGE
 	bool "Intel Ivy Bridge"
-	select X86_P6_NOP
 	help
 
 	  Select this for 3rd Gen Core processors in the Ivy Bridge family.
@@ -455,7 +448,6 @@ config MIVYBRIDGE
 
 config MHASWELL
 	bool "Intel Haswell"
-	select X86_P6_NOP
 	help
 
 	  Select this for 4th Gen Core processors in the Haswell family.
@@ -464,7 +456,6 @@ config MHASWELL
 
 config MBROADWELL
 	bool "Intel Broadwell"
-	select X86_P6_NOP
 	help
 
 	  Select this for 5th Gen Core processors in the Broadwell family.
@@ -473,7 +464,6 @@ config MBROADWELL
 
 config MSKYLAKE
 	bool "Intel Skylake"
-	select X86_P6_NOP
 	help
 
 	  Select this for 6th Gen Core processors in the Skylake family.
@@ -482,7 +472,6 @@ config MSKYLAKE
 
 config MSKYLAKEX
 	bool "Intel Skylake X"
-	select X86_P6_NOP
 	help
 
 	  Select this for 6th Gen Core processors in the Skylake X family.
@@ -491,7 +480,6 @@ config MSKYLAKEX
 
 config MCANNONLAKE
 	bool "Intel Cannon Lake"
-	select X86_P6_NOP
 	help
 
 	  Select this for 8th Gen Core processors
@@ -500,7 +488,6 @@ config MCANNONLAKE
 
 config MICELAKE
 	bool "Intel Ice Lake"
-	select X86_P6_NOP
 	help
 
 	  Select this for 10th Gen Core processors in the Ice Lake family.
@@ -509,7 +496,6 @@ config MICELAKE
 
 config MCASCADELAKE
 	bool "Intel Cascade Lake"
-	select X86_P6_NOP
 	help
 
 	  Select this for Xeon processors in the Cascade Lake family.
@@ -519,7 +505,6 @@ config MCASCADELAKE
 config MCOOPERLAKE
 	bool "Intel Cooper Lake"
 	depends on (CC_IS_GCC && GCC_VERSION > 100100) || (CC_IS_CLANG && CLANG_VERSION >= 100000)
-	select X86_P6_NOP
 	help
 
 	  Select this for Xeon processors in the Cooper Lake family.
@@ -529,7 +514,6 @@ config MCOOPERLAKE
 config MTIGERLAKE
 	bool "Intel Tiger Lake"
 	depends on  (CC_IS_GCC && GCC_VERSION > 100100) || (CC_IS_CLANG && CLANG_VERSION >= 100000)
-	select X86_P6_NOP
 	help
 
 	  Select this for third-generation 10 nm process processors in the Tiger Lake family.
@@ -539,7 +523,6 @@ config MTIGERLAKE
 config MSAPPHIRERAPIDS
 	bool "Intel Sapphire Rapids"
 	depends on (CC_IS_GCC && GCC_VERSION > 110000) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
-	select X86_P6_NOP
 	help
 
 	  Select this for fourth-generation 10 nm process processors in the Sapphire Rapids family.
@@ -549,7 +532,6 @@ config MSAPPHIRERAPIDS
 config MROCKETLAKE
 	bool "Intel Rocket Lake"
 	depends on (CC_IS_GCC && GCC_VERSION > 110000) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
-	select X86_P6_NOP
 	help
 
 	  Select this for eleventh-generation processors in the Rocket Lake family.
@@ -559,7 +541,6 @@ config MROCKETLAKE
 config MALDERLAKE
 	bool "Intel Alder Lake"
 	depends on (CC_IS_GCC && GCC_VERSION > 110000) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
-	select X86_P6_NOP
 	help
 
 	  Select this for twelfth-generation processors in the Alder Lake family.
@@ -569,7 +550,6 @@ config MALDERLAKE
 config MRAPTORLAKE
 	bool "Intel Raptor Lake"
 	depends on (CC_IS_GCC && GCC_VERSION >= 130000) || (CC_IS_CLANG && CLANG_VERSION >= 150500)
-	select X86_P6_NOP
 	help
 
 	  Select this for thirteenth-generation processors in the Raptor Lake family.
@@ -579,7 +559,6 @@ config MRAPTORLAKE
 config MMETEORLAKE
 	bool "Intel Meteor Lake"
 	depends on (CC_IS_GCC && GCC_VERSION >= 130000) || (CC_IS_CLANG && CLANG_VERSION >= 150500)
-	select X86_P6_NOP
 	help
 
 	  Select this for fourteenth-generation processors in the Meteor Lake family.
@@ -589,7 +568,6 @@ config MMETEORLAKE
 config MEMERALDRAPIDS
 	bool "Intel Emerald Rapids"
 	depends on (CC_IS_GCC && GCC_VERSION > 130000) || (CC_IS_CLANG && CLANG_VERSION >= 150500)
-	select X86_P6_NOP
 	help
 
 	  Select this for fifth-generation 10 nm process processors in the Emerald Rapids family.
@@ -602,54 +580,6 @@ config GENERIC_CPU
 	help
 	  Generic x86-64 CPU.
 	  Run equally well on all x86-64 CPUs.
-
-config MAMD_CPU_V2
-	bool "AMD x86-64-v2"
-	depends on (CC_IS_GCC && GCC_VERSION > 110000) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
-	depends on X86_64
-	help
-	  AMD x86-64 CPU with v2 instructions.
-	  Run equally well on all AMD x86-64 CPUs with min support of -march=x86-64-v2.
-
-config MAMD_CPU_V3
-	bool "AMD x86-64-v3"
-	depends on (CC_IS_GCC && GCC_VERSION > 110000) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
-	depends on X86_64
-	help
-	  AMD x86-64-v3 CPU with v3 instructions.
-	  Run equally well on all AMD x86-64 CPUs with min support of -march=x86-64-v3.
-
-config MAMD_CPU_V4
-	bool "AMD x86-64-v4"
-	depends on (CC_IS_GCC && GCC_VERSION > 110000) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
-	depends on X86_64
-	help
-	  AMD x86-64 CPU with v4 instructions.
-	  Run equally well on all AMD x86-64 CPUs with min support of -march=x86-64-v4.
-
-config MINTEL_CPU_V2
-	bool "Intel x86-64-v2"
-	depends on (CC_IS_GCC && GCC_VERSION > 110000) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
-	depends on X86_64
-	help
-	  Intel x86-64 CPU with v2 instructions.
-	  Run equally well on all Intel x86-64 CPUs with min support of -march=x86-64-v2.
-
-config MINTEL_CPU_V3
-	bool "Intel x86-64-v3"
-	depends on (CC_IS_GCC && GCC_VERSION > 110000) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
-	depends on X86_64
-	help
-	  Intel x86-64 CPU with v3 instructions.
-	  Run equally well on all Intel x86-64 CPUs with min support of -march=x86-64-v3.
-
-config MINTEL_CPU_V4
-	bool "Intel x86-64-v4"
-	depends on (CC_IS_GCC && GCC_VERSION > 110000) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
-	depends on X86_64
-	help
-	  Intel x86-64 CPU with v4 instructions.
-	  Run equally well on all Intel x86-64 CPUs with min support of -march=x86-64-v4.
 
 config MNATIVE_INTEL
 	bool "Intel-Native optimizations autodetected by the compiler"
@@ -685,6 +615,30 @@ config X86_GENERIC
 	  This is really intended for distributors who need more
 	  generic optimizations.
 
+config X86_64_VERSION
+	int "x86-64 compiler ISA level"
+	range 1 3
+	depends on (CC_IS_GCC && GCC_VERSION > 110000) || (CC_IS_CLANG && CLANG_VERSION >= 120000)
+	depends on X86_64 && GENERIC_CPU
+	help
+	  Specify a specific x86-64 compiler ISA level.
+
+	  There are three x86-64 ISA levels that work on top of
+	  the x86-64 baseline, namely: x86-64-v2, x86-64-v3, and x86-64-v4.
+
+	  x86-64-v2 brings support for vector instructions up to Streaming SIMD
+	  Extensions 4.2 (SSE4.2) and Supplemental Streaming SIMD Extensions 3
+	  (SSSE3), the POPCNT instruction, and CMPXCHG16B.
+
+	  x86-64-v3 adds vector instructions up to AVX2, MOVBE, and additional
+	  bit-manipulation instructions.
+
+	  x86-64-v4 is not included since the kernel does not use AVX512 instructions
+
+	  You can find the best version for your CPU by running one of the following:
+	  /lib/ld-linux-x86-64.so.2 --help | grep supported
+	  /lib64/ld-linux-x86-64.so.2 --help | grep supported
+
 #
 # Define implied options from the CPU selection here
 config X86_INTERNODE_CACHE_SHIFT
@@ -695,17 +649,9 @@ config X86_INTERNODE_CACHE_SHIFT
 config X86_L1_CACHE_SHIFT
 	int
 	default "7" if MPENTIUM4 || MPSC
-	default "6" if MK7 || MK8 || MPENTIUMM || MCORE2 || MATOM || MVIAC7 || MK8SSE3 || MK10 \
-	|| MBARCELONA || MBOBCAT || MJAGUAR || MBULLDOZER || MPILEDRIVER || MSTEAMROLLER \
-	|| MEXCAVATOR || MZEN || MZEN2 || MZEN3 || MZEN4 || MZEN5 || MNEHALEM || MWESTMERE || MSILVERMONT \
-	|| MGOLDMONT || MGOLDMONTPLUS || MSANDYBRIDGE || MIVYBRIDGE || MHASWELL || MBROADWELL \
-	|| MSKYLAKE || MSKYLAKEX || MCANNONLAKE || MICELAKE || MCASCADELAKE || MCOOPERLAKE \
-	|| MTIGERLAKE || MSAPPHIRERAPIDS || MROCKETLAKE || MALDERLAKE || MRAPTORLAKE || MMETEORLAKE \
-	|| MEMERALDRAPIDS || MNATIVE_INTEL || MNATIVE_AMD || X86_GENERIC || GENERIC_CPU || MAMD_CPU_V2 || MAMD_CPU_V3 \
-	|| MAMD_CPU_V4 || MINTEL_CPU_V2 || MINTEL_CPU_V3 || MINTEL_CPU_V4
+	default "6" if MK7 || MK8 || MPENTIUMM || MCORE2 || MATOM || MVIAC7 || X86_GENERIC || GENERIC_CPU || MK8SSE3 || MK10 || MBARCELONA || MBOBCAT || MJAGUAR || MBULLDOZER || MPILEDRIVER || MSTEAMROLLER || MEXCAVATOR || MZEN || MZEN2 || MZEN3 || MZEN4 || MZEN5 || MNEHALEM || MWESTMERE || MSILVERMONT || MGOLDMONT || MGOLDMONTPLUS || MSANDYBRIDGE || MIVYBRIDGE || MHASWELL || MBROADWELL || MSKYLAKE || MSKYLAKEX || MCANNONLAKE || MICELAKE || MCASCADELAKE || MCOOPERLAKE || MTIGERLAKE || MSAPPHIRERAPIDS || MROCKETLAKE || MALDERLAKE || MRAPTORLAKE || MMETEORLAKE || MEMERALDRAPIDS || MNATIVE_INTEL || MNATIVE_AMD
 	default "4" if MELAN || M486SX || M486 || MGEODEGX1
-	default "5" if MWINCHIP3D || MWINCHIPC6 || MCRUSOE || MEFFICEON || MCYRIXIII || MK6 || MPENTIUMIII \
-	|| MPENTIUMII || M686 || M586MMX || M586TSC || M586 || MVIAC3_2 || MGEODE_LX
+	default "5" if MWINCHIP3D || MWINCHIPC6 || MCRUSOE || MEFFICEON || MCYRIXIII || MK6 || MPENTIUMIII || MPENTIUMII || M686 || M586MMX || M586TSC || M586 || MVIAC3_2 || MGEODE_LX
 
 config X86_F00F_BUG
 	def_bool y
@@ -717,29 +663,15 @@ config X86_INVD_BUG
 
 config X86_ALIGNMENT_16
 	def_bool y
-	depends on MWINCHIP3D || MWINCHIPC6 || MCYRIXIII || MELAN || MK6 || M586MMX || M586TSC \
-	|| M586 || M486SX || M486 || MVIAC3_2 || MGEODEGX1
+	depends on MWINCHIP3D || MWINCHIPC6 || MCYRIXIII || MELAN || MK6 || M586MMX || M586TSC || M586 || M486SX || M486 || MVIAC3_2 || MGEODEGX1
 
 config X86_INTEL_USERCOPY
 	def_bool y
-	depends on MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M586MMX || X86_GENERIC \
-	|| MK8 || MK7 || MEFFICEON || MCORE2 || MNEHALEM || MWESTMERE || MSILVERMONT || MGOLDMONT \
-	|| MGOLDMONTPLUS || MSANDYBRIDGE || MIVYBRIDGE || MHASWELL || MBROADWELL || MSKYLAKE || MSKYLAKEX \
-	|| MCANNONLAKE || MICELAKE || MCASCADELAKE || MCOOPERLAKE || MTIGERLAKE || MSAPPHIRERAPIDS \
-	|| MROCKETLAKE || MALDERLAKE || MRAPTORLAKE || MMETEORLAKE || MEMERALDRAPIDS || MNATIVE_INTEL \
-	|| MINTEL_CPU_V2 || MINTEL_CPU_V3 || MINTEL_CPU_V4
+	depends on MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M586MMX || X86_GENERIC || MK8 || MK7 || MEFFICEON || MCORE2 || MNEHALEM || MWESTMERE || MSILVERMONT || MGOLDMONT || MGOLDMONTPLUS || MSANDYBRIDGE || MIVYBRIDGE || MHASWELL || MBROADWELL || MSKYLAKE || MSKYLAKEX || MCANNONLAKE || MICELAKE || MCASCADELAKE || MCOOPERLAKE || MTIGERLAKE || MSAPPHIRERAPIDS || MROCKETLAKE || MALDERLAKE || MRAPTORLAKE || MMETEORLAKE || MEMERALDRAPIDS || MNATIVE_INTEL
 
 config X86_USE_PPRO_CHECKSUM
 	def_bool y
-	depends on MWINCHIP3D || MWINCHIPC6 || MCYRIXIII || MK7 || MK6 || MPENTIUM4 || MPENTIUMM \
-	|| MPENTIUMIII || MPENTIUMII || M686 || MK8 || MVIAC3_2 || MVIAC7 || MEFFICEON || MGEODE_LX \
-	|| MCORE2 || MATOM || MK8SSE3 || MK10 || MBARCELONA || MBOBCAT || MJAGUAR || MBULLDOZER \
-	|| MPILEDRIVER || MSTEAMROLLER || MEXCAVATOR || MZEN || MZEN2 || MZEN3 || MZEN4 || MZEN5 || MNEHALEM \
-	|| MWESTMERE || MSILVERMONT || MGOLDMONT || MGOLDMONTPLUS || MSANDYBRIDGE || MIVYBRIDGE \
-	|| MHASWELL || MBROADWELL || MSKYLAKE || MSKYLAKEX || MCANNONLAKE || MICELAKE \
-	|| MCASCADELAKE || MCOOPERLAKE || MTIGERLAKE || MSAPPHIRERAPIDS || MROCKETLAKE \
-	|| MALDERLAKE || MRAPTORLAKE || MMETEORLAKE || MEMERALDRAPIDS || MNATIVE_INTEL || MNATIVE_AMD \
-	|| MAMD_CPU_V2 || MAMD_CPU_V3 || MAMD_CPU_V4 || MINTEL_CPU_V2 || MINTEL_CPU_V3 || MINTEL_CPU_V4
+	depends on MWINCHIP3D || MWINCHIPC6 || MCYRIXIII || MK7 || MK6 || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || MK8 || MVIAC3_2 || MVIAC7 || MEFFICEON || MGEODE_LX || MCORE2 || MATOM || MK8SSE3 || MK10 || MBARCELONA || MBOBCAT || MJAGUAR || MBULLDOZER || MPILEDRIVER || MSTEAMROLLER || MEXCAVATOR || MZEN || MZEN2 || MZEN3 || MZEN4 || MZEN5 || MNEHALEM || MWESTMERE || MSILVERMONT || MGOLDMONT || MGOLDMONTPLUS || MSANDYBRIDGE || MIVYBRIDGE || MHASWELL || MBROADWELL || MSKYLAKE || MSKYLAKEX || MCANNONLAKE || MICELAKE || MCASCADELAKE || MCOOPERLAKE || MTIGERLAKE || MSAPPHIRERAPIDS || MROCKETLAKE || MALDERLAKE || MRAPTORLAKE || MMETEORLAKE || MEMERALDRAPIDS || MNATIVE_INTEL || MNATIVE_AMD
 
 #
 # P6_NOPs are a relatively minor optimization that require a family >=
@@ -755,64 +687,30 @@ config X86_USE_PPRO_CHECKSUM
 config X86_P6_NOP
 	def_bool y
 	depends on X86_64
-	depends on (MCORE2 || MPENTIUM4 || MPSC || MNEHALEM || MWESTMERE || MSILVERMONT || MGOLDMONT \
-	|| MGOLDMONTPLUS || MSANDYBRIDGE || MIVYBRIDGE || MHASWELL || MBROADWELL || MSKYLAKE \
-	|| MSKYLAKEX || MCANNONLAKE || MICELAKE || MCASCADELAKE || MCOOPERLAKE || MTIGERLAKE \
-	|| MSAPPHIRERAPIDS || MROCKETLAKE || MALDERLAKE || MRAPTORLAKE || MMETEORLAKE || MEMERALDRAPIDS \
-	|| MNATIVE_INTEL || MINTEL_CPU_V2 || MINTEL_CPU_V3 || MINTEL_CPU_V4)
+	depends on (MCORE2 || MPENTIUM4 || MPSC)
 
 config X86_TSC
 	def_bool y
-	depends on (MWINCHIP3D || MCRUSOE || MEFFICEON || MCYRIXIII || MK7 || MK6 || MPENTIUM4 || MPENTIUMM \
-	|| MPENTIUMIII || MPENTIUMII || M686 || M586MMX || M586TSC || MK8 || MVIAC3_2 || MVIAC7 || MGEODEGX1 \
-	|| MGEODE_LX || MCORE2 || MATOM || MK8SSE3 || MK10 || MBARCELONA || MBOBCAT || MJAGUAR || MBULLDOZER \
-	|| MPILEDRIVER || MSTEAMROLLER || MEXCAVATOR || MZEN || MZEN2 || MZEN3 || MZEN4 || MZEN5 || MNEHALEM \
-	|| MWESTMERE || MSILVERMONT || MGOLDMONT || MGOLDMONTPLUS || MSANDYBRIDGE || MIVYBRIDGE || MHASWELL \
-	|| MBROADWELL || MSKYLAKE || MSKYLAKEX || MCANNONLAKE || MICELAKE || MCASCADELAKE || MCOOPERLAKE \
-	|| MTIGERLAKE || MSAPPHIRERAPIDS || MROCKETLAKE || MALDERLAKE || MRAPTORLAKE || MMETEORLAKE || MEMERALDRAPIDS \
-	|| MNATIVE_INTEL || MNATIVE_AMD) || X86_64
+	depends on (MWINCHIP3D || MCRUSOE || MEFFICEON || MCYRIXIII || MK7 || MK6 || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || M586MMX || M586TSC || MK8 || MVIAC3_2 || MVIAC7 || MGEODEGX1 || MGEODE_LX || MCORE2 || MATOM) || X86_64
 
 config X86_HAVE_PAE
 	def_bool y
-	depends on MCRUSOE || MEFFICEON || MCYRIXIII || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || MK8 \
-	|| MVIAC7 || MCORE2 || MATOM || X86_64 || MAMD_CPU_V2 || MAMD_CPU_V3 || MAMD_CPU_V4 || MINTEL_CPU_V2 || MINTEL_CPU_V3 \
-	|| MINTEL_CPU_V4
+	depends on MCRUSOE || MEFFICEON || MCYRIXIII || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || MK8 || MVIAC7 || MCORE2 || MATOM || X86_64
 
 config X86_CMPXCHG64
 	def_bool y
-	depends on X86_PAE || X86_64 || MCORE2 || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 \
-	|| M586TSC || M586MMX || MATOM || MGEODE_LX || MGEODEGX1 || MK6 || MK7 || MK8 || MK8SSE3 || MK10 \
-	|| MBARCELONA || MBOBCAT || MJAGUAR || MBULLDOZER || MPILEDRIVER || MSTEAMROLLER || MEXCAVATOR || MZEN \
-	|| MZEN2 || MZEN3 || MZEN4 || MZEN5 || MNEHALEM || MWESTMERE || MSILVERMONT || MGOLDMONT || MGOLDMONTPLUS \
-	|| MSANDYBRIDGE || MIVYBRIDGE || MHASWELL || MBROADWELL || MSKYLAKE || MSKYLAKEX || MCANNONLAKE \
-	|| MICELAKE || MCASCADELAKE || MCOOPERLAKE || MTIGERLAKE || MSAPPHIRERAPIDS || MROCKETLAKE \
-	|| MALDERLAKE || MRAPTORLAKE || MMETEORLAKE || MEMERALDRAPIDS || MNATIVE_INTEL || MNATIVE_AMD \
-	|| MAMD_CPU_V2 || MAMD_CPU_V3 || MAMD_CPU_V4 || MINTEL_CPU_V2 || MINTEL_CPU_V3 || MINTEL_CPU_V4
+	depends on X86_HAVE_PAE || M586TSC || M586MMX || MK6 || MK7
 
 # this should be set for all -march=.. options where the compiler
 # generates cmov.
 config X86_CMOV
 	def_bool y
-	depends on (MK8 || MK7 || MCORE2 || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 \
-	|| MVIAC3_2 || MVIAC7 || MCRUSOE || MEFFICEON || X86_64 || MATOM || MGEODE_LX || MK8SSE3 || MK10 \
-	|| MBARCELONA || MBOBCAT || MJAGUAR || MBULLDOZER || MPILEDRIVER || MSTEAMROLLER || MEXCAVATOR \
-	|| MZEN || MZEN2 || MZEN3 || MZEN4 || MZEN5 || MNEHALEM || MWESTMERE || MSILVERMONT || MGOLDMONT \
-	|| MGOLDMONTPLUS || MSANDYBRIDGE || MIVYBRIDGE || MHASWELL || MBROADWELL || MSKYLAKE || MSKYLAKEX \
-	|| MCANNONLAKE || MICELAKE || MCASCADELAKE || MCOOPERLAKE || MTIGERLAKE || MSAPPHIRERAPIDS \
-	|| MROCKETLAKE || MALDERLAKE || MRAPTORLAKE || MMETEORLAKE || MEMERALDRAPIDS || MNATIVE_INTEL || MNATIVE_AMD)
+	depends on (MK8 || MK7 || MCORE2 || MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || MVIAC3_2 || MVIAC7 || MCRUSOE || MEFFICEON || X86_64 || MATOM || MGEODE_LX)
 
 config X86_MINIMUM_CPU_FAMILY
 	int
 	default "64" if X86_64
-	default "6" if X86_32 && (MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 \
-	|| MVIAC3_2 || MVIAC7 || MEFFICEON || MATOM || MCORE2 || MK7 || MK8 ||  MK8SSE3 \
-	|| MK10 || MBARCELONA || MBOBCAT || MJAGUAR || MBULLDOZER || MPILEDRIVER || MSTEAMROLLER \
-	|| MEXCAVATOR || MZEN || MZEN2 || MZEN3 || MZEN4 || MZEN5 || MNEHALEM || MWESTMERE || MSILVERMONT \
-	|| MGOLDMONT || MGOLDMONTPLUS || MSANDYBRIDGE || MIVYBRIDGE || MHASWELL || MBROADWELL \
-	|| MSKYLAKE || MSKYLAKEX || MCANNONLAKE || MICELAKE || MCASCADELAKE || MCOOPERLAKE \
-	|| MTIGERLAKE || MSAPPHIRERAPIDS || MROCKETLAKE || MALDERLAKE || MRAPTORLAKE || MRAPTORLAKE \
-	|| MNATIVE_INTEL || MNATIVE_AMD || MAMD_CPU_V2 || MAMD_CPU_V3 || MAMD_CPU_V4 || MINTEL_CPU_V2 \
-	|| MINTEL_CPU_V3 || MINTEL_CPU_V4)
+	default "6" if X86_32 && (MPENTIUM4 || MPENTIUMM || MPENTIUMIII || MPENTIUMII || M686 || MVIAC3_2 || MVIAC7 || MEFFICEON || MATOM || MCORE2 || MK7 || MK8)
 	default "5" if X86_32 && X86_CMPXCHG64
 	default "4"
 

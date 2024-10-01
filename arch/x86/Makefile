@@ -176,6 +176,13 @@ else
         # FIXME - should be integrated in Makefile.cpu (Makefile_32.cpu)
         cflags-$(CONFIG_MK8)		+= -march=k8
         cflags-$(CONFIG_MPSC)		+= -march=nocona
+        ifeq ($(CONFIG_X86_64_VERSION),1)
+          cflags-$(CONFIG_GENERIC_CPU)		+= -mtune=generic
+          rustflags-$(CONFIG_GENERIC_CPU)	+= -Ztune-cpu=generic
+        else
+          cflags-$(CONFIG_GENERIC_CPU)		+= -march=x86-64-v$(CONFIG_X86_64_VERSION)
+          rustflags-$(CONFIG_GENERIC_CPU)	+= -Ctarget-cpu=x86-64-v$(CONFIG_X86_64_VERSION)
+        endif
         cflags-$(CONFIG_MK8SSE3)	+= -march=k8-sse3
         cflags-$(CONFIG_MK10) 		+= -march=amdfam10
         cflags-$(CONFIG_MBARCELONA) 	+= -march=barcelona
@@ -191,7 +198,7 @@ else
         cflags-$(CONFIG_MZEN4) 	+= -march=znver4
         cflags-$(CONFIG_MZEN5) 	+= -march=znver5
         cflags-$(CONFIG_MNATIVE_INTEL) += -march=native
-        cflags-$(CONFIG_MNATIVE_AMD) 	+= -march=native
+        cflags-$(CONFIG_MNATIVE_AMD) 	+= -march=native -mno-tbm
         cflags-$(CONFIG_MATOM) 	+= -march=bonnell
         cflags-$(CONFIG_MCORE2) 	+= -march=core2
         cflags-$(CONFIG_MNEHALEM) 	+= -march=nehalem
@@ -216,20 +223,50 @@ else
         cflags-$(CONFIG_MRAPTORLAKE) 	+= -march=raptorlake
         cflags-$(CONFIG_MMETEORLAKE) 	+= -march=meteorlake
         cflags-$(CONFIG_MEMERALDRAPIDS)	+= -march=emeraldrapids
-        cflags-$(CONFIG_GENERIC_CPU)	+= -mtune=generic
-        cflags-$(CONFIG_MAMD_CPU_V2)	+= -march=x86-64-v2
-        cflags-$(CONFIG_MAMD_CPU_V3)	+= -march=x86-64-v3
-        cflags-$(CONFIG_MAMD_CPU_V4)	+= -march=x86-64-v4
-        cflags-$(CONFIG_MINTEL_CPU_V2)	+= -march=x86-64-v2
-        cflags-$(CONFIG_MINTEL_CPU_V3)	+= -march=x86-64-v3
-        cflags-$(CONFIG_MINTEL_CPU_V4)	+= -march=x86-64-v4
         KBUILD_CFLAGS += $(cflags-y)
 
         rustflags-$(CONFIG_MK8)		+= -Ctarget-cpu=k8
         rustflags-$(CONFIG_MPSC)	+= -Ctarget-cpu=nocona
-        rustflags-$(CONFIG_MCORE2)	+= -Ctarget-cpu=core2
-        rustflags-$(CONFIG_MATOM)	+= -Ctarget-cpu=atom
-        rustflags-$(CONFIG_GENERIC_CPU)	+= -Ztune-cpu=generic
+        rustflags-$(CONFIG_MK8SSE3)	+= -Ctarget-cpu=k8-sse3
+        rustflags-$(CONFIG_MK10) 		+= -Ctarget-cpu=amdfam10
+        rustflags-$(CONFIG_MBARCELONA) 	+= -Ctarget-cpu=barcelona
+        rustflags-$(CONFIG_MBOBCAT) 	+= -Ctarget-cpu=btver1
+        rustflags-$(CONFIG_MJAGUAR) 	+= -Ctarget-cpu=btver2
+        rustflags-$(CONFIG_MBULLDOZER) 	+= -Ctarget-cpu=bdver1
+        rustflags-$(CONFIG_MPILEDRIVER)	+= -Ctarget-cpu=bdver2
+        rustflags-$(CONFIG_MSTEAMROLLER) 	+= -Ctarget-cpu=bdver3
+        rustflags-$(CONFIG_MEXCAVATOR) 	+= -Ctarget-cpu=bdver4
+        rustflags-$(CONFIG_MZEN) 		+= -Ctarget-cpu=znver1
+        rustflags-$(CONFIG_MZEN2) 	+= -Ctarget-cpu=znver2
+        rustflags-$(CONFIG_MZEN3) 	+= -Ctarget-cpu=znver3
+        rustflags-$(CONFIG_MZEN4) 	+= -Ctarget-cpu=znver4
+        rustflags-$(CONFIG_MZEN5) 	+= -Ctarget-cpu=znver5
+        rustflags-$(CONFIG_MNATIVE_INTEL) += -Ctarget-cpu=native
+        rustflags-$(CONFIG_MNATIVE_AMD) 	+= -Ctarget-cpu=native
+        rustflags-$(CONFIG_MATOM) 	+= -Ctarget-cpu=bonnell
+        rustflags-$(CONFIG_MCORE2) 	+= -Ctarget-cpu=core2
+        rustflags-$(CONFIG_MNEHALEM) 	+= -Ctarget-cpu=nehalem
+        rustflags-$(CONFIG_MWESTMERE) 	+= -Ctarget-cpu=westmere
+        rustflags-$(CONFIG_MSILVERMONT) 	+= -Ctarget-cpu=silvermont
+        rustflags-$(CONFIG_MGOLDMONT) 	+= -Ctarget-cpu=goldmont
+        rustflags-$(CONFIG_MGOLDMONTPLUS) += -Ctarget-cpu=goldmont-plus
+        rustflags-$(CONFIG_MSANDYBRIDGE) 	+= -Ctarget-cpu=sandybridge
+        rustflags-$(CONFIG_MIVYBRIDGE) 	+= -Ctarget-cpu=ivybridge
+        rustflags-$(CONFIG_MHASWELL) 	+= -Ctarget-cpu=haswell
+        rustflags-$(CONFIG_MBROADWELL) 	+= -Ctarget-cpu=broadwell
+        rustflags-$(CONFIG_MSKYLAKE) 	+= -Ctarget-cpu=skylake
+        rustflags-$(CONFIG_MSKYLAKEX) 	+= -Ctarget-cpu=skylake-avx512
+        rustflags-$(CONFIG_MCANNONLAKE) 	+= -Ctarget-cpu=cannonlake
+        rustflags-$(CONFIG_MICELAKE) 	+= -Ctarget-cpu=icelake-client
+        rustflags-$(CONFIG_MCASCADELAKE) 	+= -Ctarget-cpu=cascadelake
+        rustflags-$(CONFIG_MCOOPERLAKE) 	+= -Ctarget-cpu=cooperlake
+        rustflags-$(CONFIG_MTIGERLAKE) 	+= -Ctarget-cpu=tigerlake
+        rustflags-$(CONFIG_MSAPPHIRERAPIDS) += -Ctarget-cpu=sapphirerapids
+        rustflags-$(CONFIG_MROCKETLAKE) 	+= -Ctarget-cpu=rocketlake
+        rustflags-$(CONFIG_MALDERLAKE) 	+= -Ctarget-cpu=alderlake
+        rustflags-$(CONFIG_MRAPTORLAKE) 	+= -Ctarget-cpu=raptorlake
+        rustflags-$(CONFIG_MMETEORLAKE) 	+= -Ctarget-cpu=meteorlake
+        rustflags-$(CONFIG_MEMERALDRAPIDS)	+= -Ctarget-cpu=emeraldrapids
         KBUILD_RUSTFLAGS += $(rustflags-y)
 
         KBUILD_CFLAGS += -mno-red-zone
