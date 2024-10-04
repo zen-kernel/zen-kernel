@@ -2728,6 +2728,7 @@ bool rtw89_mac_is_qta_dbcc(struct rtw89_dev *rtwdev, enum rtw89_qta_mode mode)
 
 static int ptcl_init_ax(struct rtw89_dev *rtwdev, u8 mac_idx)
 {
+	enum rtw89_core_chip_id chip_id = rtwdev->chip->chip_id;
 	u32 val, reg;
 	int ret;
 
@@ -2764,6 +2765,12 @@ static int ptcl_init_ax(struct rtw89_dev *rtwdev, u8 mac_idx)
 	} else if (mac_idx == RTW89_MAC_1) {
 		rtw89_write8_mask(rtwdev, R_AX_PTCLRPT_FULL_HDL_C1,
 				  B_AX_SPE_RPT_PATH_MASK, FWD_TO_WLCPU);
+	}
+
+	if (chip_id == RTL8852A || rtw89_is_rtl885xb(rtwdev)) {
+		reg = rtw89_mac_reg_by_idx(rtwdev, R_AX_AGG_LEN_VHT_0, mac_idx);
+		rtw89_write32_mask(rtwdev, reg,
+				   B_AX_AMPDU_MAX_LEN_VHT_MASK, 0x3FF80);
 	}
 
 	return 0;
@@ -5144,11 +5151,10 @@ rtw89_mac_c2h_wow_aoac_rpt(struct rtw89_dev *rtwdev, struct sk_buff *skb, u32 le
 {
 	struct rtw89_wow_param *rtw_wow = &rtwdev->wow;
 	struct rtw89_wow_aoac_report *aoac_rpt = &rtw_wow->aoac_rpt;
-	struct rtw89_wait_info *wait = &rtwdev->mac.fw_ofld_wait;
+	struct rtw89_wait_info *wait = &rtw_wow->wait;
 	const struct rtw89_c2h_wow_aoac_report *c2h =
 		(const struct rtw89_c2h_wow_aoac_report *)skb->data;
 	struct rtw89_completion_data data = {};
-	unsigned int cond;
 
 	aoac_rpt->rpt_ver = c2h->rpt_ver;
 	aoac_rpt->sec_type = c2h->sec_type;
@@ -5166,8 +5172,7 @@ rtw89_mac_c2h_wow_aoac_rpt(struct rtw89_dev *rtwdev, struct sk_buff *skb, u32 le
 	aoac_rpt->igtk_ipn = le64_to_cpu(c2h->igtk_ipn);
 	memcpy(aoac_rpt->igtk, c2h->igtk, sizeof(aoac_rpt->igtk));
 
-	cond = RTW89_WOW_WAIT_COND(H2C_FUNC_AOAC_REPORT_REQ);
-	rtw89_complete_cond(wait, cond, &data);
+	rtw89_complete_cond(wait, RTW89_WOW_WAIT_COND_AOAC, &data);
 }
 
 static void
