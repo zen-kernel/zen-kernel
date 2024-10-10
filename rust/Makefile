@@ -8,16 +8,16 @@ always-$(CONFIG_RUST) += exports_core_generated.h
 
 # Missing prototypes are expected in the helpers since these are exported
 # for Rust only, thus there is no header nor prototypes.
-obj-$(CONFIG_RUST) += helpers.o
-CFLAGS_REMOVE_helpers.o = -Wmissing-prototypes -Wmissing-declarations
+obj-$(CONFIG_RUST) += helpers/helpers.o
+CFLAGS_REMOVE_helpers/helpers.o = -Wmissing-prototypes -Wmissing-declarations
 
 always-$(CONFIG_RUST) += libmacros.so
 no-clean-files += libmacros.so
 
 always-$(CONFIG_RUST) += bindings/bindings_generated.rs bindings/bindings_helpers_generated.rs
 obj-$(CONFIG_RUST) += alloc.o bindings.o kernel.o
-always-$(CONFIG_RUST) += exports_alloc_generated.h exports_bindings_generated.h \
-    exports_kernel_generated.h
+always-$(CONFIG_RUST) += exports_alloc_generated.h exports_helpers_generated.h \
+    exports_bindings_generated.h exports_kernel_generated.h
 
 always-$(CONFIG_RUST) += uapi/uapi_generated.rs
 obj-$(CONFIG_RUST) += uapi.o
@@ -299,7 +299,7 @@ $(obj)/bindings/bindings_helpers_generated.rs: private bindgen_target_cflags = \
     -I$(objtree)/$(obj) -Wno-missing-prototypes -Wno-missing-declarations
 $(obj)/bindings/bindings_helpers_generated.rs: private bindgen_target_extra = ; \
     sed -Ei 's/pub fn rust_helper_([a-zA-Z0-9_]*)/#[link_name="rust_helper_\1"]\n    pub fn \1/g' $@
-$(obj)/bindings/bindings_helpers_generated.rs: $(src)/helpers.c FORCE
+$(obj)/bindings/bindings_helpers_generated.rs: $(src)/helpers/helpers.c FORCE
 	$(call if_changed_dep,bindgen)
 
 quiet_cmd_exports = EXPORTS $@
@@ -311,6 +311,18 @@ $(obj)/exports_core_generated.h: $(obj)/core.o FORCE
 	$(call if_changed,exports)
 
 $(obj)/exports_alloc_generated.h: $(obj)/alloc.o FORCE
+	$(call if_changed,exports)
+
+# Even though Rust kernel modules should never use the bindings directly,
+# symbols from the `bindings` crate and the C helpers need to be exported
+# because Rust generics and inlined functions may not get their code generated
+# in the crate where they are defined. Other helpers, called from non-inline
+# functions, may not be exported, in principle. However, in general, the Rust
+# compiler does not guarantee codegen will be performed for a non-inline
+# function either. Therefore, we export all symbols from helpers and bindings.
+# In the future, this may be revisited to reduce the number of exports after
+# the compiler is informed about the places codegen is required.
+$(obj)/exports_helpers_generated.h: $(obj)/helpers/helpers.o FORCE
 	$(call if_changed,exports)
 
 $(obj)/exports_bindings_generated.h: $(obj)/bindings.o FORCE
