@@ -483,38 +483,17 @@ static const struct dmi_system_id irq1_level_low_skip_override[] = {
                 },
         },
 	{
-		/* Asus ExpertBook B2402CBA */
+		/* Asus ExpertBook B2402 (B2402CBA / B2402FBA / B2402CVA / B2402FVA) */
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_BOARD_NAME, "B2402CBA"),
+			DMI_MATCH(DMI_BOARD_NAME, "B2402"),
 		},
 	},
 	{
-		/* Asus ExpertBook B2402FBA */
+		/* Asus ExpertBook B2502 (B2502CBA / B2502FBA / B2502CVA / B2502FVA) */
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_BOARD_NAME, "B2402FBA"),
-		},
-	},
-	{
-		/* Asus ExpertBook B2502 */
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_BOARD_NAME, "B2502CBA"),
-		},
-	},
-	{
-		/* Asus ExpertBook B2502FBA */
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_BOARD_NAME, "B2502FBA"),
-		},
-	},
-	{
-		/* Asus ExpertBook B2502CVA */
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
-			DMI_MATCH(DMI_BOARD_NAME, "B2502CVA"),
+			DMI_MATCH(DMI_BOARD_NAME, "B2502"),
 		},
 	},
 	{
