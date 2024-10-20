@@ -470,6 +470,7 @@ int update_irq_load_avg(struct rq *rq, u64 running)
 }
 #endif
 
+#ifndef CONFIG_SCHED_ALT
 /*
  * Load avg and utiliztion metrics need to be updated periodically and before
  * consumption. This function updates the metrics for all subsystems except for
@@ -489,3 +490,4 @@ bool update_other_load_avgs(struct rq *rq)
 		update_hw_load_avg(rq_clock_task(rq), rq, hw_pressure) |
 		update_irq_load_avg(rq, 0);
 }
+#endif /* !CONFIG_SCHED_ALT */
