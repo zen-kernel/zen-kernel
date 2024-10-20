@@ -986,8 +986,10 @@ static int _sched_setscheduler(struct task_struct *p, int policy,
 		.sched_nice	= PRIO_TO_NICE(p->static_prio),
 	};
 
+#ifndef CONFIG_SCHED_ALT
 	if (p->se.custom_slice)
 		attr.sched_runtime = p->se.slice;
+#endif /* !CONFIG_SCHED_ALT */
 
 	/* Fixup the legacy SCHED_RESET_ON_FORK hack. */
 	if ((policy != SETPARAM_POLICY) && (policy & SCHED_RESET_ON_FORK)) {
@@ -1164,7 +1166,9 @@ static void get_params(struct task_struct *p, struct sched_attr *attr)
 		attr->sched_priority = p->rt_priority;
 	} else {
 		attr->sched_nice = task_nice(p);
+#ifndef CONFIG_SCHED_ALT
 		attr->sched_runtime = p->se.slice;
+#endif
 	}
 }
 
