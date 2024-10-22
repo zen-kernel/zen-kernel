@@ -6512,7 +6512,7 @@ void normalize_rt_tasks(void)
 		schedstat_set(p->stats.sleep_start, 0);
 		schedstat_set(p->stats.block_start, 0);
 
-		if (!realtime_task(p)) {
+		if (!rt_or_dl_task(p)) {
 			/*
 			 * Renice negative nice level userspace
 			 * tasks back to 0:
