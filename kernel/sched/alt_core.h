@@ -29,6 +29,9 @@ struct affinity_context {
 	unsigned int		flags;
 };
 
+/* CONFIG_SCHED_CLASS_EXT is not supported */
+#define scx_switched_all()	false
+
 #define SCA_CHECK		0x01
 #define SCA_MIGRATE_DISABLE	0x02
 #define SCA_MIGRATE_ENABLE	0x04
