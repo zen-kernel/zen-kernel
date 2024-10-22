@@ -2262,7 +2262,11 @@ static inline void set_task_cpu(struct task_struct *p, unsigned int cpu)
 
 static inline bool task_is_runnable(struct task_struct *p)
 {
+#ifdef CONFIG_SCHED_ALT
+	return p->on_rq;
+#else
 	return p->on_rq && !p->se.sched_delayed;
+#endif /* !CONFIG_SCHED_ALT */
 }
 
 extern bool sched_task_on_rq(struct task_struct *p);
