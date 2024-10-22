@@ -371,7 +371,6 @@ static const struct file_operations sched_debug_fops = {
 	.llseek		= seq_lseek,
 	.release	= seq_release,
 };
-#endif /* !CONFIG_SCHED_ALT */
 
 enum dl_param {
 	DL_RUNTIME = 0,
@@ -615,7 +614,11 @@ static const struct file_operations fair_server_period_fops = {
 	.llseek		= seq_lseek,
 	.release	= single_release,
 };
+#endif /* !CONFIG_SCHED_ALT */
 
+static struct dentry *debugfs_sched;
+
+#ifndef CONFIG_SCHED_ALT
 static void debugfs_fair_server_init(void)
 {
 	struct dentry *d_fair;
@@ -636,6 +639,7 @@ static void debugfs_fair_server_init(void)
 		debugfs_create_file("period", 0644, d_cpu, (void *) cpu, &fair_server_period_fops);
 	}
 }
+#endif /* !CONFIG_SCHED_ALT */
 
 static __init int sched_init_debug(void)
 {
@@ -694,10 +698,12 @@ static __init int sched_init_debug(void)
 	debugfs_create_file("debug", 0444, debugfs_sched, NULL, &sched_debug_fops);
 #endif /* !CONFIG_SCHED_ALT */
 
+#ifndef CONFIG_SCHED_ALT
 	debugfs_fair_server_init();
 #ifdef CONFIG_SCHED_CLASS_EXT
 	debugfs_ext_server_init();
 #endif
+#endif /* !CONFIG_SCHED_ALT */
 
 	return 0;
 }
