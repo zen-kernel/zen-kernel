@@ -1428,6 +1428,7 @@ void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 	if (task_cpu(p) != new_cpu)
 	{
 		rseq_migrate(p);
+		sched_mm_cid_migrate_from(p);
 		perf_event_task_migrate(p);
 	}
 
@@ -1583,11 +1584,8 @@ static inline bool is_cpu_allowed(struct task_struct *p, int cpu)
  */
 struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int new_cpu)
 {
-	int src_cpu;
-
 	lockdep_assert_held(&rq->lock);
 
-	src_cpu = cpu_of(rq);
 	WRITE_ONCE(p->on_rq, TASK_ON_RQ_MIGRATING);
 	dequeue_task(p, rq, 0);
 	set_task_cpu(p, new_cpu);
@@ -1598,7 +1596,7 @@ struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int new_cpu)
 	raw_spin_lock(&rq->lock);
 	WARN_ON_ONCE(task_cpu(p) != new_cpu);
 
-	sched_mm_cid_migrate_to(rq, p, src_cpu);
+	sched_mm_cid_migrate_to(rq, p);
 
 	sched_task_sanity_check(p, rq);
 	enqueue_task(p, rq, 0);
@@ -4360,7 +4358,7 @@ migrate_pending_tasks(struct rq *rq, struct rq *dest_rq, const int dest_cpu)
 			__SCHED_DEQUEUE_TASK(p, rq, 0, );
 			set_task_cpu(p, dest_cpu);
 			sched_task_sanity_check(p, dest_rq);
-			sched_mm_cid_migrate_to(dest_rq, p, cpu_of(rq));
+			sched_mm_cid_migrate_to(dest_rq, p);
 			__SCHED_ENQUEUE_TASK(p, dest_rq, 0, );
 			nr_migrated++;
 		}
@@ -7203,17 +7201,18 @@ int __sched_mm_cid_migrate_from_try_steal_cid(struct rq *src_rq,
  * Interrupts are disabled, which keeps the window of cid ownership without the
  * source rq lock held small.
  */
-void sched_mm_cid_migrate_to(struct rq *dst_rq, struct task_struct *t, int src_cpu)
+void sched_mm_cid_migrate_to(struct rq *dst_rq, struct task_struct *t)
 {
 	struct mm_cid *src_pcpu_cid, *dst_pcpu_cid;
 	struct mm_struct *mm = t->mm;
-	int src_cid, dst_cid;
+	int src_cid, dst_cid, src_cpu;
 	struct rq *src_rq;
 
 	lockdep_assert_rq_held(dst_rq);
 
 	if (!mm)
 		return;
+	src_cpu = t->migrate_from_cpu;
 	if (src_cpu == -1) {
 		t->last_mm_cid = -1;
 		return;
