@@ -1363,19 +1363,19 @@ static void activate_task(struct task_struct *p, struct rq *rq)
 	cpufreq_update_util(rq, SCHED_CPUFREQ_IOWAIT * p->in_iowait);
 }
 
-/*
- * deactivate_task - remove a task from the runqueue.
- *
- * Context: rq->lock
- */
-static inline void deactivate_task(struct task_struct *p, struct rq *rq)
+static void block_task(struct rq *rq, struct task_struct *p)
 {
-	WRITE_ONCE(p->on_rq, 0);
-	ASSERT_EXCLUSIVE_WRITER(p->on_rq);
-
 	dequeue_task(p, rq, DEQUEUE_SLEEP);
 
-	cpufreq_update_util(rq, 0);
+	WRITE_ONCE(p->on_rq, 0);
+	ASSERT_EXCLUSIVE_WRITER(p->on_rq);
+	if (p->sched_contributes_to_load)
+		rq->nr_uninterruptible++;
+
+	if (p->in_iowait) {
+		atomic_inc(&rq->nr_iowait);
+		delayacct_blkio_start();
+	}
 }
 
 static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
@@ -4589,9 +4589,6 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 				!(prev_state & TASK_NOLOAD) &&
 				!(prev_state & TASK_FROZEN);
 
-			if (prev->sched_contributes_to_load)
-				rq->nr_uninterruptible++;
-
 			/*
 			 * __schedule()			ttwu()
 			 *   prev_state = prev->state;    if (p->on_rq && ...)
@@ -4604,12 +4601,7 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 			 * After this, schedule() must not care about p->state any more.
 			 */
 			sched_task_deactivate(prev, rq);
-			deactivate_task(prev, rq);
-
-			if (prev->in_iowait) {
-				atomic_inc(&rq->nr_iowait);
-				delayacct_blkio_start();
-			}
+			block_task(rq, prev);
 		}
 		switch_count = &prev->nvcsw;
 	}
