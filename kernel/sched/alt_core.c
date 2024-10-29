@@ -121,8 +121,6 @@ cpumask_t sched_smt_mask ____cacheline_aligned_in_smp;
 DEFINE_PER_CPU(int, sd_llc_id);
 #endif /* CONFIG_SMP */
 
-static DEFINE_MUTEX(sched_hotcpu_mutex);
-
 DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 
 #ifndef prepare_arch_switch
