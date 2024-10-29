@@ -25,9 +25,6 @@ struct task_group {
 	struct task_group *parent;
 	struct list_head siblings;
 	struct list_head children;
-#ifdef CONFIG_FAIR_GROUP_SCHED
-	unsigned long		shares;
-#endif
 };
 
 extern struct task_group *sched_create_group(struct task_group *parent);
@@ -86,21 +83,6 @@ static inline void resched_latency_warn(int cpu, u64 latency) {}
 # define NICE_0_LOAD_SHIFT	(SCHED_FIXEDPOINT_SHIFT)
 # define scale_load(w)		(w)
 # define scale_load_down(w)	(w)
-#endif
-
-#ifdef CONFIG_FAIR_GROUP_SCHED
-#define ROOT_TASK_GROUP_LOAD	NICE_0_LOAD
-
-/*
- * A weight of 0 or 1 can cause arithmetics problems.
- * A weight of a cfs_rq is the sum of weights of which entities
- * are queued on this cfs_rq, so a weight of a entity should not be
- * too large, so as the shares value of a task group.
- * (The default weight is 1024 - so there's no practical
- *  limitation from this.)
- */
-#define MIN_SHARES		(1UL <<  1)
-#define MAX_SHARES		(1UL << 18)
 #endif
 
 /*
