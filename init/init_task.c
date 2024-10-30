@@ -73,6 +73,7 @@ struct task_struct init_task __aligned(L1_CACHE_BYTES) = {
 	.usage		= REFCOUNT_INIT(2),
 	.flags		= PF_KTHREAD,
 #ifdef CONFIG_SCHED_ALT
+	.on_cpu		= 1,
 	.prio		= DEFAULT_PRIO,
 	.static_prio	= DEFAULT_PRIO,
 	.normal_prio	= DEFAULT_PRIO,
