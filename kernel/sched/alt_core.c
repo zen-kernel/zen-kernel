@@ -1438,8 +1438,6 @@ void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 	__set_task_cpu(p, new_cpu);
 }
 
-#define MDF_FORCE_ENABLED	0x80
-
 static void
 __do_set_cpus_ptr(struct task_struct *p, const struct cpumask *new_mask)
 {
@@ -1480,8 +1478,6 @@ void migrate_disable(void)
 	if (cpumask_test_cpu(cpu, &p->cpus_mask)) {
 		cpu_rq(cpu)->nr_pinned++;
 		p->migration_disabled = 1;
-		p->migration_flags &= ~MDF_FORCE_ENABLED;
-
 		/*
 		 * Violates locking rules! see comment in __do_set_cpus_ptr().
 		 */
@@ -1514,10 +1510,6 @@ void migrate_enable(void)
 	 * __set_cpus_allowed_ptr(SCA_MIGRATE_ENABLE) doesn't schedule().
 	 */
 	guard(preempt)();
-	/*
-	 * Assumption: current should be running on allowed cpu
-	 */
-	WARN_ON_ONCE(!cpumask_test_cpu(smp_processor_id(), &p->cpus_mask));
 	if (p->cpus_ptr != &p->cpus_mask)
 		__do_set_cpus_ptr(p, &p->cpus_mask);
 	/*
@@ -2010,7 +2002,6 @@ static int affine_move_task(struct rq *rq, struct task_struct *p, int dest_cpu,
 			if (likely(p->cpus_ptr != &p->cpus_mask))
 				__do_set_cpus_ptr(p, &p->cpus_mask);
 			p->migration_disabled = 0;
-			p->migration_flags |= MDF_FORCE_ENABLED;
 			/* When p is migrate_disabled, rq->lock should be held */
 			rq->nr_pinned--;
 		}
@@ -6470,9 +6461,6 @@ void __cant_migrate(const char *file, int line)
 		return;
 
 	if (preempt_count() > 0)
-		return;
-
-	if (current->migration_flags & MDF_FORCE_ENABLED)
 		return;
 
 	if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)
