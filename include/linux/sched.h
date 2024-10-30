@@ -931,9 +931,13 @@ struct task_struct {
 	const cpumask_t			*cpus_ptr;
 	cpumask_t			*user_cpus_ptr;
 	cpumask_t			cpus_mask;
+#ifndef CONFIG_SCHED_ALT
 	void				*migration_pending;
+#endif
 	unsigned short			migration_disabled;
+#ifndef CONFIG_SCHED_ALT
 	unsigned short			migration_flags;
+#endif
 
 #ifdef CONFIG_PREEMPT_RCU
 	int				rcu_read_lock_nesting;
