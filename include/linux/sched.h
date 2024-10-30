@@ -968,8 +968,10 @@ struct task_struct {
 	struct sched_info		sched_info;
 
 	struct list_head		tasks;
+#ifndef CONFIG_SCHED_ALT
 	struct plist_node		pushable_tasks;
 	struct rb_node			pushable_dl_tasks;
+#endif
 
 	struct mm_struct		*mm;
 	struct mm_struct		*active_mm;
