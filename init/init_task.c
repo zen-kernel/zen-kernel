@@ -113,8 +113,10 @@ struct task_struct init_task __aligned(L1_CACHE_BYTES) = {
 	},
 #endif
 	.tasks		= LIST_HEAD_INIT(init_task.tasks),
+#ifndef CONFIG_SCHED_ALT
 #ifdef CONFIG_SMP
 	.pushable_tasks	= PLIST_NODE_INIT(init_task.pushable_tasks, MAX_PRIO),
+#endif
 #endif
 #ifdef CONFIG_CGROUP_SCHED
 	.sched_task_group = &root_task_group,
