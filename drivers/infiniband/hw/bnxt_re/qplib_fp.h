@@ -105,6 +105,7 @@ struct bnxt_qplib_srq {
 	struct bnxt_qplib_sg_info	sg_info;
 	u16				eventq_hw_ring_id;
 	spinlock_t			lock; /* protect SRQE link list */
+	u8				toggle;
 };
 
 struct bnxt_qplib_sge {
@@ -169,7 +170,7 @@ struct bnxt_qplib_swqe {
 			};
 			u32		q_key;
 			u32		dst_qp;
-			u16		avid;
+			u32		avid;
 		} send;
 
 		/* Send Raw Ethernet and QP1 */
