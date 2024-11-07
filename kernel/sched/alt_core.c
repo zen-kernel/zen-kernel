@@ -1510,6 +1510,10 @@ void migrate_enable(void)
 	 * __set_cpus_allowed_ptr(SCA_MIGRATE_ENABLE) doesn't schedule().
 	 */
 	guard(preempt)();
+	/*
+	 * Assumption: current should be running on allowed cpu
+	 */
+	WARN_ON_ONCE(!cpumask_test_cpu(smp_processor_id(), &p->cpus_mask));
 	if (p->cpus_ptr != &p->cpus_mask)
 		__do_set_cpus_ptr(p, &p->cpus_mask);
 	/*
@@ -1522,6 +1526,15 @@ void migrate_enable(void)
 	this_rq()->nr_pinned--;
 }
 EXPORT_SYMBOL_GPL(migrate_enable);
+
+static void __migrate_force_enable(struct task_struct *p, struct rq *rq)
+{
+	if (likely(p->cpus_ptr != &p->cpus_mask))
+		__do_set_cpus_ptr(p, &p->cpus_mask);
+	p->migration_disabled = 0;
+	/* When p is migrate_disabled, rq->lock should be held */
+	rq->nr_pinned--;
+}
 
 static inline bool rq_has_pinned_tasks(struct rq *rq)
 {
@@ -1702,6 +1715,9 @@ void do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask)
 	};
 
 	__do_set_cpus_allowed(p, &ac);
+
+	if (is_migration_disabled(p) && !cpumask_test_cpu(task_cpu(p), &p->cpus_mask))
+		__migrate_force_enable(p, task_rq(p));
 
 	/*
 	 * Because this is called with p->pi_lock held, it is not possible
@@ -1998,13 +2014,8 @@ static int affine_move_task(struct rq *rq, struct task_struct *p, int dest_cpu,
 {
 	/* Can the task run on the task's current CPU? If so, we're done */
 	if (!cpumask_test_cpu(task_cpu(p), &p->cpus_mask)) {
-		if (p->migration_disabled) {
-			if (likely(p->cpus_ptr != &p->cpus_mask))
-				__do_set_cpus_ptr(p, &p->cpus_mask);
-			p->migration_disabled = 0;
-			/* When p is migrate_disabled, rq->lock should be held */
-			rq->nr_pinned--;
-		}
+		if (is_migration_disabled(p))
+			__migrate_force_enable(p, rq);
 
 		if (task_on_cpu(p) || READ_ONCE(p->__state) == TASK_WAKING) {
 			struct migration_arg arg = { p, dest_cpu };
