@@ -686,6 +686,7 @@ extern void post_alloc_hook(struct page *page, unsigned int order,
 extern bool free_pages_prepare(struct page *page, unsigned int order);
 
 extern int user_min_free_kbytes;
+extern atomic_long_t kswapd_waiters;
 
 void free_unref_page(struct page *page, unsigned int order);
 void free_unref_folios(struct folio_batch *fbatch);
