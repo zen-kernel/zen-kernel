@@ -3272,6 +3272,9 @@ static ssize_t amdgpu_hwmon_show_power_cap_min(struct device *dev,
 					 struct device_attribute *attr,
 					 char *buf)
 {
+	if (amdgpu_ignore_min_pcap)
+		return sysfs_emit(buf, "%i\n", 0);
+
 	return amdgpu_hwmon_show_power_cap_generic(dev, attr, buf, PP_PWR_LIMIT_MIN);
 }
 
