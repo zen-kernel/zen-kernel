@@ -6667,6 +6667,43 @@ static void cpu_cgroup_attach(struct cgroup_taskset *tset)
 {
 }
 
+#ifdef CONFIG_GROUP_SCHED_WEIGHT
+static int sched_group_set_shares(struct task_group *tg, unsigned long shares)
+{
+	return 0;
+}
+
+static int sched_group_set_idle(struct task_group *tg, long idle)
+{
+	return 0;
+}
+
+static int cpu_shares_write_u64(struct cgroup_subsys_state *css,
+				struct cftype *cftype, u64 shareval)
+{
+	return sched_group_set_shares(css_tg(css), shareval);
+}
+
+static u64 cpu_shares_read_u64(struct cgroup_subsys_state *css,
+			       struct cftype *cft)
+{
+	return 0;
+}
+
+static s64 cpu_idle_read_s64(struct cgroup_subsys_state *css,
+			       struct cftype *cft)
+{
+	return 0;
+}
+
+static int cpu_idle_write_s64(struct cgroup_subsys_state *css,
+				struct cftype *cft, s64 idle)
+{
+	return sched_group_set_idle(css_tg(css), idle);
+}
+#endif
+
+#ifdef CONFIG_CFS_BANDWIDTH
 static s64 cpu_cfs_quota_read_s64(struct cgroup_subsys_state *css,
 				  struct cftype *cft)
 {
@@ -6712,7 +6749,9 @@ static int cpu_cfs_local_stat_show(struct seq_file *sf, void *v)
 {
 	return 0;
 }
+#endif
 
+#ifdef CONFIG_RT_GROUP_SCHED
 static int cpu_rt_runtime_write(struct cgroup_subsys_state *css,
 				struct cftype *cft, s64 val)
 {
@@ -6736,7 +6775,9 @@ static u64 cpu_rt_period_read_uint(struct cgroup_subsys_state *css,
 {
 	return 0;
 }
+#endif
 
+#ifdef CONFIG_UCLAMP_TASK_GROUP
 static int cpu_uclamp_min_show(struct seq_file *sf, void *v)
 {
 	return 0;
@@ -6760,8 +6801,22 @@ static ssize_t cpu_uclamp_max_write(struct kernfs_open_file *of,
 {
 	return nbytes;
 }
+#endif
 
 static struct cftype cpu_legacy_files[] = {
+#ifdef CONFIG_GROUP_SCHED_WEIGHT
+	{
+		.name = "shares",
+		.read_u64 = cpu_shares_read_u64,
+		.write_u64 = cpu_shares_write_u64,
+	},
+	{
+		.name = "idle",
+		.read_s64 = cpu_idle_read_s64,
+		.write_s64 = cpu_idle_write_s64,
+	},
+#endif
+#ifdef CONFIG_CFS_BANDWIDTH
 	{
 		.name = "cfs_quota_us",
 		.read_s64 = cpu_cfs_quota_read_s64,
@@ -6785,6 +6840,8 @@ static struct cftype cpu_legacy_files[] = {
 		.name = "stat.local",
 		.seq_show = cpu_cfs_local_stat_show,
 	},
+#endif
+#ifdef CONFIG_RT_GROUP_SCHED
 	{
 		.name = "rt_runtime_us",
 		.read_s64 = cpu_rt_runtime_read,
@@ -6795,6 +6852,8 @@ static struct cftype cpu_legacy_files[] = {
 		.read_u64 = cpu_rt_period_read_uint,
 		.write_u64 = cpu_rt_period_write_uint,
 	},
+#endif
+#ifdef CONFIG_UCLAMP_TASK_GROUP
 	{
 		.name = "uclamp.min",
 		.flags = CFTYPE_NOT_ON_ROOT,
@@ -6807,9 +6866,11 @@ static struct cftype cpu_legacy_files[] = {
 		.seq_show = cpu_uclamp_max_show,
 		.write = cpu_uclamp_max_write,
 	},
+#endif
 	{ }	/* Terminate */
 };
 
+#ifdef CONFIG_GROUP_SCHED_WEIGHT
 static u64 cpu_weight_read_u64(struct cgroup_subsys_state *css,
 			       struct cftype *cft)
 {
@@ -6833,19 +6894,9 @@ static int cpu_weight_nice_write_s64(struct cgroup_subsys_state *css,
 {
 	return 0;
 }
+#endif
 
-static s64 cpu_idle_read_s64(struct cgroup_subsys_state *css,
-			       struct cftype *cft)
-{
-	return 0;
-}
-
-static int cpu_idle_write_s64(struct cgroup_subsys_state *css,
-				struct cftype *cft, s64 idle)
-{
-	return 0;
-}
-
+#ifdef CONFIG_CFS_BANDWIDTH
 static int cpu_max_show(struct seq_file *sf, void *v)
 {
 	return 0;
@@ -6856,8 +6907,10 @@ static ssize_t cpu_max_write(struct kernfs_open_file *of,
 {
 	return nbytes;
 }
+#endif
 
 static struct cftype cpu_files[] = {
+#ifdef CONFIG_GROUP_SCHED_WEIGHT
 	{
 		.name = "weight",
 		.flags = CFTYPE_NOT_ON_ROOT,
@@ -6876,6 +6929,8 @@ static struct cftype cpu_files[] = {
 		.read_s64 = cpu_idle_read_s64,
 		.write_s64 = cpu_idle_write_s64,
 	},
+#endif
+#ifdef CONFIG_CFS_BANDWIDTH
 	{
 		.name = "max",
 		.flags = CFTYPE_NOT_ON_ROOT,
@@ -6888,6 +6943,8 @@ static struct cftype cpu_files[] = {
 		.read_u64 = cpu_cfs_burst_read_u64,
 		.write_u64 = cpu_cfs_burst_write_u64,
 	},
+#endif
+#ifdef CONFIG_UCLAMP_TASK_GROUP
 	{
 		.name = "uclamp.min",
 		.flags = CFTYPE_NOT_ON_ROOT,
@@ -6900,6 +6957,7 @@ static struct cftype cpu_files[] = {
 		.seq_show = cpu_uclamp_max_show,
 		.write = cpu_uclamp_max_write,
 	},
+#endif
 	{ }	/* terminate */
 };
 
