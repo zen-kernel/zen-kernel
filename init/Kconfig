@@ -1121,7 +1121,6 @@ menuconfig CGROUP_SCHED
 	  tasks.
 
 if CGROUP_SCHED
-if !SCHED_ALT
 config GROUP_SCHED_WEIGHT
 	def_bool n
 
@@ -1175,7 +1174,6 @@ config EXT_GROUP_SCHED
 	select GROUP_SCHED_BANDWIDTH
 	default y
 
-endif #!SCHED_ALT
 endif #CGROUP_SCHED
 
 config SCHED_MM_CID
