@@ -693,14 +693,40 @@ extern void sched_dynamic_update(int mode);
 
 static inline void nohz_run_idle_balance(int cpu) { }
 
-static inline
-unsigned long uclamp_rq_util_with(struct rq *rq, unsigned long util,
-				  struct task_struct *p)
+static inline unsigned long
+uclamp_eff_value(struct task_struct *p, enum uclamp_id clamp_id)
 {
-	return util;
+	if (clamp_id == UCLAMP_MIN)
+		return 0;
+
+	return SCHED_CAPACITY_SCALE;
 }
 
 static inline bool uclamp_rq_is_capped(struct rq *rq) { return false; }
+
+static inline bool uclamp_is_used(void)
+{
+	return false;
+}
+
+static inline unsigned long
+uclamp_rq_get(struct rq *rq, enum uclamp_id clamp_id)
+{
+	if (clamp_id == UCLAMP_MIN)
+		return 0;
+
+	return SCHED_CAPACITY_SCALE;
+}
+
+static inline void
+uclamp_rq_set(struct rq *rq, enum uclamp_id clamp_id, unsigned int value)
+{
+}
+
+static inline bool uclamp_rq_is_idle(struct rq *rq)
+{
+	return false;
+}
 
 #ifdef CONFIG_SCHED_MM_CID
 
