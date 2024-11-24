@@ -844,7 +844,6 @@ menu "Scheduler features"
 config UCLAMP_TASK
 	bool "Enable utilization clamping for RT/FAIR tasks"
 	depends on CPU_FREQ_GOV_SCHEDUTIL
-	depends on !SCHED_ALT
 	help
 	  This feature enables the scheduler to track the clamped utilization
 	  of each CPU based on RUNNABLE tasks scheduled on that CPU.
