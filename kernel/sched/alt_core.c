@@ -76,7 +76,7 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 #define sched_feat(x)	(0)
 #endif /* CONFIG_SCHED_DEBUG */
 
-#define ALT_SCHED_VERSION "v6.12-r0"
+#define ALT_SCHED_VERSION "v6.12-r1"
 
 #define STOP_PRIO		(MAX_RT_PRIO - 1)
 
@@ -1442,8 +1442,6 @@ void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 	__set_task_cpu(p, new_cpu);
 }
 
-#define MDF_FORCE_ENABLED	0x80
-
 static void
 __do_set_cpus_ptr(struct task_struct *p, const struct cpumask *new_mask)
 {
@@ -1484,8 +1482,6 @@ void migrate_disable(void)
 	if (cpumask_test_cpu(cpu, &p->cpus_mask)) {
 		cpu_rq(cpu)->nr_pinned++;
 		p->migration_disabled = 1;
-		p->migration_flags &= ~MDF_FORCE_ENABLED;
-
 		/*
 		 * Violates locking rules! see comment in __do_set_cpus_ptr().
 		 */
@@ -1534,6 +1530,15 @@ void migrate_enable(void)
 	this_rq()->nr_pinned--;
 }
 EXPORT_SYMBOL_GPL(migrate_enable);
+
+static void __migrate_force_enable(struct task_struct *p, struct rq *rq)
+{
+	if (likely(p->cpus_ptr != &p->cpus_mask))
+		__do_set_cpus_ptr(p, &p->cpus_mask);
+	p->migration_disabled = 0;
+	/* When p is migrate_disabled, rq->lock should be held */
+	rq->nr_pinned--;
+}
 
 static inline bool rq_has_pinned_tasks(struct rq *rq)
 {
@@ -1714,6 +1719,9 @@ void do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask)
 	};
 
 	__do_set_cpus_allowed(p, &ac);
+
+	if (is_migration_disabled(p) && !cpumask_test_cpu(task_cpu(p), &p->cpus_mask))
+		__migrate_force_enable(p, task_rq(p));
 
 	/*
 	 * Because this is called with p->pi_lock held, it is not possible
@@ -2010,14 +2018,8 @@ static int affine_move_task(struct rq *rq, struct task_struct *p, int dest_cpu,
 {
 	/* Can the task run on the task's current CPU? If so, we're done */
 	if (!cpumask_test_cpu(task_cpu(p), &p->cpus_mask)) {
-		if (p->migration_disabled) {
-			if (likely(p->cpus_ptr != &p->cpus_mask))
-				__do_set_cpus_ptr(p, &p->cpus_mask);
-			p->migration_disabled = 0;
-			p->migration_flags |= MDF_FORCE_ENABLED;
-			/* When p is migrate_disabled, rq->lock should be held */
-			rq->nr_pinned--;
-		}
+		if (is_migration_disabled(p))
+			__migrate_force_enable(p, rq);
 
 		if (task_on_cpu(p) || READ_ONCE(p->__state) == TASK_WAKING) {
 			struct migration_arg arg = { p, dest_cpu };
@@ -6474,9 +6476,6 @@ void __cant_migrate(const char *file, int line)
 		return;
 
 	if (preempt_count() > 0)
-		return;
-
-	if (current->migration_flags & MDF_FORCE_ENABLED)
 		return;
 
 	if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)

@@ -897,11 +897,15 @@ struct task_struct {
 	const cpumask_t			*cpus_ptr;
 	cpumask_t			*user_cpus_ptr;
 	cpumask_t			cpus_mask;
+#ifndef CONFIG_SCHED_ALT
 	void				*migration_pending;
+#endif
 #ifdef CONFIG_SMP
 	unsigned short			migration_disabled;
 #endif
+#ifndef CONFIG_SCHED_ALT
 	unsigned short			migration_flags;
+#endif
 
 #ifdef CONFIG_PREEMPT_RCU
 	int				rcu_read_lock_nesting;
@@ -933,8 +937,10 @@ struct task_struct {
 
 	struct list_head		tasks;
 #ifdef CONFIG_SMP
+#ifndef CONFIG_SCHED_ALT
 	struct plist_node		pushable_tasks;
 	struct rb_node			pushable_dl_tasks;
+#endif
 #endif
 
 	struct mm_struct		*mm;
