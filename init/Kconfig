@@ -169,7 +169,6 @@ config ZEN_INTERACTIVE
 	  --- Virtual Memory Subsystem ---------------------------
 
 	    Background-reclaim hugepages...:   no   ->   yes
-	    MG-LRU minimum cache TTL.......:   0    ->   1000 ms
 	    Compact unevictable............:   yes  ->   no
 	    Watermark boost factor.........:   1.5  ->   0
 	    Pageblock order................:  10    ->   3
