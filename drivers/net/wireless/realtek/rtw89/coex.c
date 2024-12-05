@@ -2492,6 +2492,8 @@ static void btc_fw_set_monreg(struct rtw89_dev *rtwdev)
 	if (ver->fcxmreg == 7) {
 		sz = struct_size(v7, regs, n);
 		v7 = kmalloc(sz, GFP_KERNEL);
+		if (!v7)
+			return;
 		v7->type = RPT_EN_MREG;
 		v7->fver = ver->fcxmreg;
 		v7->len = n;
@@ -2506,6 +2508,8 @@ static void btc_fw_set_monreg(struct rtw89_dev *rtwdev)
 	} else {
 		sz = struct_size(v1, regs, n);
 		v1 = kmalloc(sz, GFP_KERNEL);
+		if (!v1)
+			return;
 		v1->fver = ver->fcxmreg;
 		v1->reg_num = n;
 		memcpy(v1->regs, chip->mon_reg, flex_array_size(v1, regs, n));
@@ -4989,18 +4993,16 @@ struct rtw89_txtime_data {
 	bool reenable;
 };
 
-static void rtw89_tx_time_iter(void *data, struct ieee80211_sta *sta)
+static void __rtw89_tx_time_iter(struct rtw89_vif_link *rtwvif_link,
+				 struct rtw89_sta_link *rtwsta_link,
+				 struct rtw89_txtime_data *iter_data)
 {
-	struct rtw89_sta *rtwsta = (struct rtw89_sta *)sta->drv_priv;
-	struct rtw89_txtime_data *iter_data =
-				(struct rtw89_txtime_data *)data;
 	struct rtw89_dev *rtwdev = iter_data->rtwdev;
-	struct rtw89_vif *rtwvif = rtwsta->rtwvif;
 	struct rtw89_btc *btc = &rtwdev->btc;
 	struct rtw89_btc_cx *cx = &btc->cx;
 	struct rtw89_btc_wl_info *wl = &cx->wl;
 	struct rtw89_btc_wl_link_info *plink = NULL;
-	u8 port = rtwvif->port;
+	u8 port = rtwvif_link->port;
 	u32 tx_time = iter_data->tx_time;
 	u8 tx_retry = iter_data->tx_retry;
 	u16 enable = iter_data->enable;
@@ -5023,8 +5025,8 @@ static void rtw89_tx_time_iter(void *data, struct ieee80211_sta *sta)
 
 	/* backup the original tx time before tx-limit on */
 	if (reenable) {
-		rtw89_mac_get_tx_time(rtwdev, rtwsta, &plink->tx_time);
-		rtw89_mac_get_tx_retry_limit(rtwdev, rtwsta, &plink->tx_retry);
+		rtw89_mac_get_tx_time(rtwdev, rtwsta_link, &plink->tx_time);
+		rtw89_mac_get_tx_retry_limit(rtwdev, rtwsta_link, &plink->tx_retry);
 		rtw89_debug(rtwdev, RTW89_DBG_BTC,
 			    "[BTC], %s(): reenable, tx_time=%d tx_retry= %d\n",
 			    __func__, plink->tx_time, plink->tx_retry);
@@ -5032,19 +5034,34 @@ static void rtw89_tx_time_iter(void *data, struct ieee80211_sta *sta)
 
 	/* restore the original tx time if no tx-limit */
 	if (!enable) {
-		rtw89_mac_set_tx_time(rtwdev, rtwsta, true, plink->tx_time);
-		rtw89_mac_set_tx_retry_limit(rtwdev, rtwsta, true,
+		rtw89_mac_set_tx_time(rtwdev, rtwsta_link, true, plink->tx_time);
+		rtw89_mac_set_tx_retry_limit(rtwdev, rtwsta_link, true,
 					     plink->tx_retry);
 		rtw89_debug(rtwdev, RTW89_DBG_BTC,
 			    "[BTC], %s(): restore, tx_time=%d tx_retry= %d\n",
 			    __func__, plink->tx_time, plink->tx_retry);
 
 	} else {
-		rtw89_mac_set_tx_time(rtwdev, rtwsta, false, tx_time);
-		rtw89_mac_set_tx_retry_limit(rtwdev, rtwsta, false, tx_retry);
+		rtw89_mac_set_tx_time(rtwdev, rtwsta_link, false, tx_time);
+		rtw89_mac_set_tx_retry_limit(rtwdev, rtwsta_link, false, tx_retry);
 		rtw89_debug(rtwdev, RTW89_DBG_BTC,
 			    "[BTC], %s(): set, tx_time=%d tx_retry= %d\n",
 			    __func__, tx_time, tx_retry);
+	}
+}
+
+static void rtw89_tx_time_iter(void *data, struct ieee80211_sta *sta)
+{
+	struct rtw89_sta *rtwsta = sta_to_rtwsta(sta);
+	struct rtw89_txtime_data *iter_data =
+				(struct rtw89_txtime_data *)data;
+	struct rtw89_vif_link *rtwvif_link;
+	struct rtw89_sta_link *rtwsta_link;
+	unsigned int link_id;
+
+	rtw89_sta_for_each_link(rtwsta, rtwsta_link, link_id) {
+		rtwvif_link = rtwsta_link->rtwvif_link;
+		__rtw89_tx_time_iter(rtwvif_link, rtwsta_link, iter_data);
 	}
 }
 
@@ -7481,13 +7498,16 @@ static void _update_bt_info(struct rtw89_dev *rtwdev, u8 *buf, u32 len)
 	_run_coex(rtwdev, BTC_RSN_UPDATE_BT_INFO);
 }
 
-void rtw89_btc_ntfy_role_info(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif,
-			      struct rtw89_sta *rtwsta, enum btc_role_state state)
+void rtw89_btc_ntfy_role_info(struct rtw89_dev *rtwdev,
+			      struct rtw89_vif_link *rtwvif_link,
+			      struct rtw89_sta_link *rtwsta_link,
+			      enum btc_role_state state)
 {
 	const struct rtw89_chan *chan = rtw89_chan_get(rtwdev,
-						       rtwvif->chanctx_idx);
-	struct ieee80211_vif *vif = rtwvif_to_vif(rtwvif);
-	struct ieee80211_sta *sta = rtwsta_to_sta(rtwsta);
+						       rtwvif_link->chanctx_idx);
+	struct ieee80211_vif *vif = rtwvif_link_to_vif(rtwvif_link);
+	struct ieee80211_bss_conf *bss_conf;
+	struct ieee80211_link_sta *link_sta;
 	struct rtw89_btc *btc = &rtwdev->btc;
 	const struct rtw89_btc_ver *ver = btc->ver;
 	struct rtw89_btc_wl_info *wl = &btc->cx.wl;
@@ -7495,51 +7515,59 @@ void rtw89_btc_ntfy_role_info(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif
 	struct rtw89_btc_wl_link_info *wlinfo = NULL;
 	u8 mode = 0, rlink_id, link_mode_ori, pta_req_mac_ori, wa_type;
 
+	rcu_read_lock();
+
+	bss_conf = rtw89_vif_rcu_dereference_link(rtwvif_link, false);
+
 	rtw89_debug(rtwdev, RTW89_DBG_BTC, "[BTC], state=%d\n", state);
 	rtw89_debug(rtwdev, RTW89_DBG_BTC,
 		    "[BTC], role is STA=%d\n",
 		    vif->type == NL80211_IFTYPE_STATION);
-	rtw89_debug(rtwdev, RTW89_DBG_BTC, "[BTC], port=%d\n", rtwvif->port);
+	rtw89_debug(rtwdev, RTW89_DBG_BTC, "[BTC], port=%d\n", rtwvif_link->port);
 	rtw89_debug(rtwdev, RTW89_DBG_BTC, "[BTC], band=%d ch=%d bw=%d\n",
 		    chan->band_type, chan->channel, chan->band_width);
 	rtw89_debug(rtwdev, RTW89_DBG_BTC, "[BTC], associated=%d\n",
 		    state == BTC_ROLE_MSTS_STA_CONN_END);
 	rtw89_debug(rtwdev, RTW89_DBG_BTC,
 		    "[BTC], bcn_period=%d dtim_period=%d\n",
-		    vif->bss_conf.beacon_int, vif->bss_conf.dtim_period);
+		    bss_conf->beacon_int, bss_conf->dtim_period);
 
-	if (rtwsta) {
+	if (rtwsta_link) {
+		link_sta = rtw89_sta_rcu_dereference_link(rtwsta_link, false);
+
 		rtw89_debug(rtwdev, RTW89_DBG_BTC, "[BTC], STA mac_id=%d\n",
-			    rtwsta->mac_id);
+			    rtwsta_link->mac_id);
 
 		rtw89_debug(rtwdev, RTW89_DBG_BTC,
 			    "[BTC], STA support HE=%d VHT=%d HT=%d\n",
-			    sta->deflink.he_cap.has_he,
-			    sta->deflink.vht_cap.vht_supported,
-			    sta->deflink.ht_cap.ht_supported);
-		if (sta->deflink.he_cap.has_he)
+			    link_sta->he_cap.has_he,
+			    link_sta->vht_cap.vht_supported,
+			    link_sta->ht_cap.ht_supported);
+		if (link_sta->he_cap.has_he)
 			mode |= BIT(BTC_WL_MODE_HE);
-		if (sta->deflink.vht_cap.vht_supported)
+		if (link_sta->vht_cap.vht_supported)
 			mode |= BIT(BTC_WL_MODE_VHT);
-		if (sta->deflink.ht_cap.ht_supported)
+		if (link_sta->ht_cap.ht_supported)
 			mode |= BIT(BTC_WL_MODE_HT);
 
 		r.mode = mode;
 	}
 
-	if (rtwvif->wifi_role >= RTW89_WIFI_ROLE_MLME_MAX)
+	if (rtwvif_link->wifi_role >= RTW89_WIFI_ROLE_MLME_MAX) {
+		rcu_read_unlock();
 		return;
+	}
 
 	rtw89_debug(rtwdev, RTW89_DBG_BTC,
-		    "[BTC], wifi_role=%d\n", rtwvif->wifi_role);
+		    "[BTC], wifi_role=%d\n", rtwvif_link->wifi_role);
 
-	r.role = rtwvif->wifi_role;
-	r.phy = rtwvif->phy_idx;
-	r.pid = rtwvif->port;
+	r.role = rtwvif_link->wifi_role;
+	r.phy = rtwvif_link->phy_idx;
+	r.pid = rtwvif_link->port;
 	r.active = true;
 	r.connected = MLME_LINKED;
-	r.bcn_period = vif->bss_conf.beacon_int;
-	r.dtim_period = vif->bss_conf.dtim_period;
+	r.bcn_period = bss_conf->beacon_int;
+	r.dtim_period = bss_conf->dtim_period;
 	r.band = chan->band_type;
 	r.ch = chan->channel;
 	r.bw = chan->band_width;
@@ -7547,10 +7575,12 @@ void rtw89_btc_ntfy_role_info(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif
 	r.chdef.center_ch = chan->channel;
 	r.chdef.bw = chan->band_width;
 	r.chdef.chan = chan->primary_channel;
-	ether_addr_copy(r.mac_addr, rtwvif->mac_addr);
+	ether_addr_copy(r.mac_addr, rtwvif_link->mac_addr);
 
-	if (rtwsta && vif->type == NL80211_IFTYPE_STATION)
-		r.mac_id = rtwsta->mac_id;
+	rcu_read_unlock();
+
+	if (rtwsta_link && vif->type == NL80211_IFTYPE_STATION)
+		r.mac_id = rtwsta_link->mac_id;
 
 	btc->dm.cnt_notify[BTC_NCNT_ROLE_INFO]++;
 
@@ -7781,26 +7811,26 @@ struct rtw89_btc_wl_sta_iter_data {
 	bool is_traffic_change;
 };
 
-static void rtw89_btc_ntfy_wl_sta_iter(void *data, struct ieee80211_sta *sta)
+static
+void __rtw89_btc_ntfy_wl_sta_iter(struct rtw89_vif_link *rtwvif_link,
+				  struct rtw89_sta_link *rtwsta_link,
+				  struct rtw89_btc_wl_sta_iter_data *iter_data)
 {
-	struct rtw89_btc_wl_sta_iter_data *iter_data =
-				(struct rtw89_btc_wl_sta_iter_data *)data;
+	struct rtw89_vif *rtwvif = rtwvif_link->rtwvif;
 	struct rtw89_dev *rtwdev = iter_data->rtwdev;
 	struct rtw89_btc *btc = &rtwdev->btc;
 	struct rtw89_btc_dm *dm = &btc->dm;
 	const struct rtw89_btc_ver *ver = btc->ver;
 	struct rtw89_btc_wl_info *wl = &btc->cx.wl;
 	struct rtw89_btc_wl_link_info *link_info = NULL;
-	struct rtw89_sta *rtwsta = (struct rtw89_sta *)sta->drv_priv;
 	struct rtw89_traffic_stats *link_info_t = NULL;
-	struct rtw89_vif *rtwvif = rtwsta->rtwvif;
 	struct rtw89_traffic_stats *stats = &rtwvif->stats;
 	const struct rtw89_chip_info *chip = rtwdev->chip;
 	struct rtw89_btc_wl_role_info *r;
 	struct rtw89_btc_wl_role_info_v1 *r1;
 	u32 last_tx_rate, last_rx_rate;
 	u16 last_tx_lvl, last_rx_lvl;
-	u8 port = rtwvif->port;
+	u8 port = rtwvif_link->port;
 	u8 rssi;
 	u8 busy = 0;
 	u8 dir = 0;
@@ -7808,11 +7838,11 @@ static void rtw89_btc_ntfy_wl_sta_iter(void *data, struct ieee80211_sta *sta)
 	u8 i = 0;
 	bool is_sta_change = false, is_traffic_change = false;
 
-	rssi = ewma_rssi_read(&rtwsta->avg_rssi) >> RSSI_FACTOR;
+	rssi = ewma_rssi_read(&rtwsta_link->avg_rssi) >> RSSI_FACTOR;
 	rtw89_debug(rtwdev, RTW89_DBG_BTC, "[BTC], rssi=%d\n", rssi);
 
 	link_info = &wl->link_info[port];
-	link_info->stat.traffic = rtwvif->stats;
+	link_info->stat.traffic = *stats;
 	link_info_t = &link_info->stat.traffic;
 
 	if (link_info->connected == MLME_NO_LINK) {
@@ -7860,19 +7890,19 @@ static void rtw89_btc_ntfy_wl_sta_iter(void *data, struct ieee80211_sta *sta)
 	iter_data->busy_all |= busy;
 	iter_data->dir_all |= BIT(dir);
 
-	if (rtwsta->rx_hw_rate <= RTW89_HW_RATE_CCK2 &&
+	if (rtwsta_link->rx_hw_rate <= RTW89_HW_RATE_CCK2 &&
 	    last_rx_rate > RTW89_HW_RATE_CCK2 &&
 	    link_info_t->rx_tfc_lv > RTW89_TFC_IDLE)
 		link_info->rx_rate_drop_cnt++;
 
-	if (last_tx_rate != rtwsta->ra_report.hw_rate ||
-	    last_rx_rate != rtwsta->rx_hw_rate ||
+	if (last_tx_rate != rtwsta_link->ra_report.hw_rate ||
+	    last_rx_rate != rtwsta_link->rx_hw_rate ||
 	    last_tx_lvl != link_info_t->tx_tfc_lv ||
 	    last_rx_lvl != link_info_t->rx_tfc_lv)
 		is_traffic_change = true;
 
-	link_info_t->tx_rate = rtwsta->ra_report.hw_rate;
-	link_info_t->rx_rate = rtwsta->rx_hw_rate;
+	link_info_t->tx_rate = rtwsta_link->ra_report.hw_rate;
+	link_info_t->rx_rate = rtwsta_link->rx_hw_rate;
 
 	if (link_info->role == RTW89_WIFI_ROLE_STATION ||
 	    link_info->role == RTW89_WIFI_ROLE_P2P_CLIENT) {
@@ -7884,19 +7914,19 @@ static void rtw89_btc_ntfy_wl_sta_iter(void *data, struct ieee80211_sta *sta)
 		r = &wl->role_info;
 		r->active_role[port].tx_lvl = stats->tx_tfc_lv;
 		r->active_role[port].rx_lvl = stats->rx_tfc_lv;
-		r->active_role[port].tx_rate = rtwsta->ra_report.hw_rate;
-		r->active_role[port].rx_rate = rtwsta->rx_hw_rate;
+		r->active_role[port].tx_rate = rtwsta_link->ra_report.hw_rate;
+		r->active_role[port].rx_rate = rtwsta_link->rx_hw_rate;
 	} else if (ver->fwlrole == 1) {
 		r1 = &wl->role_info_v1;
 		r1->active_role_v1[port].tx_lvl = stats->tx_tfc_lv;
 		r1->active_role_v1[port].rx_lvl = stats->rx_tfc_lv;
-		r1->active_role_v1[port].tx_rate = rtwsta->ra_report.hw_rate;
-		r1->active_role_v1[port].rx_rate = rtwsta->rx_hw_rate;
+		r1->active_role_v1[port].tx_rate = rtwsta_link->ra_report.hw_rate;
+		r1->active_role_v1[port].rx_rate = rtwsta_link->rx_hw_rate;
 	} else if (ver->fwlrole == 2) {
 		dm->trx_info.tx_lvl = stats->tx_tfc_lv;
 		dm->trx_info.rx_lvl = stats->rx_tfc_lv;
-		dm->trx_info.tx_rate = rtwsta->ra_report.hw_rate;
-		dm->trx_info.rx_rate = rtwsta->rx_hw_rate;
+		dm->trx_info.tx_rate = rtwsta_link->ra_report.hw_rate;
+		dm->trx_info.rx_rate = rtwsta_link->rx_hw_rate;
 	}
 
 	dm->trx_info.tx_tp = link_info_t->tx_throughput;
@@ -7914,6 +7944,21 @@ static void rtw89_btc_ntfy_wl_sta_iter(void *data, struct ieee80211_sta *sta)
 
 	if (is_traffic_change)
 		iter_data->is_traffic_change = true;
+}
+
+static void rtw89_btc_ntfy_wl_sta_iter(void *data, struct ieee80211_sta *sta)
+{
+	struct rtw89_sta *rtwsta = sta_to_rtwsta(sta);
+	struct rtw89_btc_wl_sta_iter_data *iter_data =
+				(struct rtw89_btc_wl_sta_iter_data *)data;
+	struct rtw89_vif_link *rtwvif_link;
+	struct rtw89_sta_link *rtwsta_link;
+	unsigned int link_id;
+
+	rtw89_sta_for_each_link(rtwsta, rtwsta_link, link_id) {
+		rtwvif_link = rtwsta_link->rtwvif_link;
+		__rtw89_btc_ntfy_wl_sta_iter(rtwvif_link, rtwsta_link, iter_data);
+	}
 }
 
 #define BTC_NHM_CHK_INTVL 20

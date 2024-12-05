@@ -24,6 +24,7 @@
 
 #include "ipu6.h"
 #include "ipu6-bus.h"
+#include "ipu6-dma.h"
 #include "ipu6-buttress.h"
 #include "ipu6-platform-buttress-regs.h"
 
@@ -345,12 +346,16 @@ irqreturn_t ipu6_buttress_isr(int irq, void *isp_ptr)
 	u32 disable_irqs = 0;
 	u32 irq_status;
 	u32 i, count = 0;
+	int active;
 
-	pm_runtime_get_noresume(&isp->pdev->dev);
+	active = pm_runtime_get_if_active(&isp->pdev->dev);
+	if (!active)
+		return IRQ_NONE;
 
 	irq_status = readl(isp->base + reg_irq_sts);
-	if (!irq_status) {
-		pm_runtime_put_noidle(&isp->pdev->dev);
+	if (irq_status == 0 || WARN_ON_ONCE(irq_status == 0xffffffffu)) {
+		if (active > 0)
+			pm_runtime_put_noidle(&isp->pdev->dev);
 		return IRQ_NONE;
 	}
 
@@ -426,7 +431,8 @@ irqreturn_t ipu6_buttress_isr(int irq, void *isp_ptr)
 		writel(BUTTRESS_IRQS & ~disable_irqs,
 		       isp->base + BUTTRESS_REG_ISR_ENABLE);
 
-	pm_runtime_put(&isp->pdev->dev);
+	if (active > 0)
+		pm_runtime_put(&isp->pdev->dev);
 
 	return ret;
 }
@@ -553,6 +559,7 @@ int ipu6_buttress_map_fw_image(struct ipu6_bus_device *sys,
 			       const struct firmware *fw, struct sg_table *sgt)
 {
 	bool is_vmalloc = is_vmalloc_addr(fw->data);
+	struct pci_dev *pdev = sys->isp->pdev;
 	struct page **pages;
 	const void *addr;
 	unsigned long n_pages;
@@ -588,14 +595,20 @@ int ipu6_buttress_map_fw_image(struct ipu6_bus_device *sys,
 		goto out;
 	}
 
-	ret = dma_map_sgtable(&sys->auxdev.dev, sgt, DMA_TO_DEVICE, 0);
-	if (ret < 0) {
-		ret = -ENOMEM;
+	ret = dma_map_sgtable(&pdev->dev, sgt, DMA_TO_DEVICE, 0);
+	if (ret) {
 		sg_free_table(sgt);
 		goto out;
 	}
 
-	dma_sync_sgtable_for_device(&sys->auxdev.dev, sgt, DMA_TO_DEVICE);
+	ret = ipu6_dma_map_sgtable(sys, sgt, DMA_TO_DEVICE, 0);
+	if (ret) {
+		dma_unmap_sgtable(&pdev->dev, sgt, DMA_TO_DEVICE, 0);
+		sg_free_table(sgt);
+		goto out;
+	}
+
+	ipu6_dma_sync_sgtable(sys, sgt);
 
 out:
 	kfree(pages);
@@ -607,7 +620,10 @@ EXPORT_SYMBOL_NS_GPL(ipu6_buttress_map_fw_image, INTEL_IPU6);
 void ipu6_buttress_unmap_fw_image(struct ipu6_bus_device *sys,
 				  struct sg_table *sgt)
 {
-	dma_unmap_sgtable(&sys->auxdev.dev, sgt, DMA_TO_DEVICE, 0);
+	struct pci_dev *pdev = sys->isp->pdev;
+
+	ipu6_dma_unmap_sgtable(sys, sgt, DMA_TO_DEVICE, 0);
+	dma_unmap_sgtable(&pdev->dev, sgt, DMA_TO_DEVICE, 0);
 	sg_free_table(sgt);
 }
 EXPORT_SYMBOL_NS_GPL(ipu6_buttress_unmap_fw_image, INTEL_IPU6);

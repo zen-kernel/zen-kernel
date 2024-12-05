@@ -25,6 +25,7 @@
 #include <linux/uuid.h>
 #include <linux/xarray.h>
 #include <linux/file.h>
+#include <linux/lockdep.h>
 
 struct module;
 struct request_queue;
@@ -471,6 +472,11 @@ struct request_queue {
 	struct xarray		hctx_table;
 
 	struct percpu_ref	q_usage_counter;
+	struct lock_class_key	io_lock_cls_key;
+	struct lockdep_map	io_lockdep_map;
+
+	struct lock_class_key	q_lock_cls_key;
+	struct lockdep_map	q_lockdep_map;
 
 	struct request		*last_merge;
 
@@ -566,6 +572,10 @@ struct request_queue {
 	struct throtl_data *td;
 #endif
 	struct rcu_head		rcu_head;
+#ifdef CONFIG_LOCKDEP
+	struct task_struct	*mq_freeze_owner;
+	int			mq_freeze_owner_depth;
+#endif
 	wait_queue_head_t	mq_freeze_wq;
 	/*
 	 * Protect concurrent access to q_usage_counter by
@@ -1247,7 +1257,7 @@ static inline unsigned int queue_io_min(const struct request_queue *q)
 	return q->limits.io_min;
 }
 
-static inline int bdev_io_min(struct block_device *bdev)
+static inline unsigned int bdev_io_min(struct block_device *bdev)
 {
 	return queue_io_min(bdev_get_queue(bdev));
 }

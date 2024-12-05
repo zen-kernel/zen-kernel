@@ -160,6 +160,7 @@ int zpci_fmb_enable_device(struct zpci_dev *zdev)
 	u64 req = ZPCI_CREATE_REQ(zdev->fh, 0, ZPCI_MOD_FC_SET_MEASURE);
 	struct zpci_iommu_ctrs *ctrs;
 	struct zpci_fib fib = {0};
+	unsigned long flags;
 	u8 cc, status;
 
 	if (zdev->fmb || sizeof(*zdev->fmb) < zdev->fmb_length)
@@ -171,6 +172,7 @@ int zpci_fmb_enable_device(struct zpci_dev *zdev)
 	WARN_ON((u64) zdev->fmb & 0xf);
 
 	/* reset software counters */
+	spin_lock_irqsave(&zdev->dom_lock, flags);
 	ctrs = zpci_get_iommu_ctrs(zdev);
 	if (ctrs) {
 		atomic64_set(&ctrs->mapped_pages, 0);
@@ -179,6 +181,7 @@ int zpci_fmb_enable_device(struct zpci_dev *zdev)
 		atomic64_set(&ctrs->sync_map_rpcits, 0);
 		atomic64_set(&ctrs->sync_rpcits, 0);
 	}
+	spin_unlock_irqrestore(&zdev->dom_lock, flags);
 
 
 	fib.fmb_addr = virt_to_phys(zdev->fmb);
@@ -914,10 +917,8 @@ void zpci_device_reserved(struct zpci_dev *zdev)
 void zpci_release_device(struct kref *kref)
 {
 	struct zpci_dev *zdev = container_of(kref, struct zpci_dev, kref);
-	int ret;
 
-	if (zdev->has_hp_slot)
-		zpci_exit_slot(zdev);
+	WARN_ON(zdev->state != ZPCI_FN_STATE_RESERVED);
 
 	if (zdev->zbus->bus)
 		zpci_bus_remove_device(zdev, false);
@@ -925,28 +926,14 @@ void zpci_release_device(struct kref *kref)
 	if (zdev_enabled(zdev))
 		zpci_disable_device(zdev);
 
-	switch (zdev->state) {
-	case ZPCI_FN_STATE_CONFIGURED:
-		ret = sclp_pci_deconfigure(zdev->fid);
-		zpci_dbg(3, "deconf fid:%x, rc:%d\n", zdev->fid, ret);
-		fallthrough;
-	case ZPCI_FN_STATE_STANDBY:
-		if (zdev->has_hp_slot)
-			zpci_exit_slot(zdev);
-		spin_lock(&zpci_list_lock);
-		list_del(&zdev->entry);
-		spin_unlock(&zpci_list_lock);
-		zpci_dbg(3, "rsv fid:%x\n", zdev->fid);
-		fallthrough;
-	case ZPCI_FN_STATE_RESERVED:
-		if (zdev->has_resources)
-			zpci_cleanup_bus_resources(zdev);
-		zpci_bus_device_unregister(zdev);
-		zpci_destroy_iommu(zdev);
-		fallthrough;
-	default:
-		break;
-	}
+	if (zdev->has_hp_slot)
+		zpci_exit_slot(zdev);
+
+	if (zdev->has_resources)
+		zpci_cleanup_bus_resources(zdev);
+
+	zpci_bus_device_unregister(zdev);
+	zpci_destroy_iommu(zdev);
 	zpci_dbg(3, "rem fid:%x\n", zdev->fid);
 	kfree_rcu(zdev, rcu);
 }

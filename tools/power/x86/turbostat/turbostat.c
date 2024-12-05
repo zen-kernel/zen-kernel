@@ -5385,6 +5385,9 @@ static int parse_cpu_str(char *cpu_str, cpu_set_t *cpu_set, int cpu_set_size)
 		if (*next == '-')	/* no negative cpu numbers */
 			return 1;
 
+		if (*next == '\0' || *next == '\n')
+			break;
+
 		start = strtoul(next, &next, 10);
 
 		if (start >= CPU_SUBSET_MAXCPUS)
@@ -9781,7 +9784,7 @@ void cmdline(int argc, char **argv)
 	 * Parse some options early, because they may make other options invalid,
 	 * like adding the MSR counter with --add and at the same time using --no-msr.
 	 */
-	while ((opt = getopt_long_only(argc, argv, "MPn:", long_options, &option_index)) != -1) {
+	while ((opt = getopt_long_only(argc, argv, "+MPn:", long_options, &option_index)) != -1) {
 		switch (opt) {
 		case 'M':
 			no_msr = 1;

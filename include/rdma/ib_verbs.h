@@ -2948,6 +2948,14 @@ int rdma_user_mmap_entry_insert_range(struct ib_ucontext *ucontext,
 				      size_t length, u32 min_pgoff,
 				      u32 max_pgoff);
 
+#if IS_ENABLED(CONFIG_INFINIBAND_USER_ACCESS)
+void rdma_user_mmap_disassociate(struct ib_device *device);
+#else
+static inline void rdma_user_mmap_disassociate(struct ib_device *device)
+{
+}
+#endif
+
 static inline int
 rdma_user_mmap_entry_insert_exact(struct ib_ucontext *ucontext,
 				  struct rdma_user_mmap_entry *entry,
@@ -4726,6 +4734,9 @@ ib_get_vector_affinity(struct ib_device *device, int comp_vector)
  * @device:         the rdma device
  */
 void rdma_roce_rescan_device(struct ib_device *ibdev);
+void rdma_roce_rescan_port(struct ib_device *ib_dev, u32 port);
+void roce_del_all_netdev_gids(struct ib_device *ib_dev,
+			      u32 port, struct net_device *ndev);
 
 struct ib_ucontext *ib_uverbs_get_ucontext_file(struct ib_uverbs_file *ufile);
 

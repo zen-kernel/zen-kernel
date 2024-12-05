@@ -154,7 +154,7 @@ static int create_sdw_dailink(struct snd_soc_card *card,
 		int num_cpus = hweight32(sof_dai->link_mask[stream]);
 		int num_codecs = sof_dai->num_devs[stream];
 		int playback, capture;
-		int i = 0, j = 0;
+		int j = 0;
 		char *name;
 
 		if (!sof_dai->num_devs[stream])
@@ -213,14 +213,14 @@ static int create_sdw_dailink(struct snd_soc_card *card,
 
 			int link_num = ffs(sof_end->link_mask) - 1;
 
-			cpus[i].dai_name = devm_kasprintf(dev, GFP_KERNEL,
-							  "SDW%d Pin%d",
-							  link_num, cpu_pin_id);
-			dev_dbg(dev, "cpu[%d].dai_name:%s\n", i, cpus[i].dai_name);
-			if (!cpus[i].dai_name)
+			cpus->dai_name = devm_kasprintf(dev, GFP_KERNEL,
+							"SDW%d Pin%d",
+							link_num, cpu_pin_id);
+			dev_dbg(dev, "cpu->dai_name:%s\n", cpus->dai_name);
+			if (!cpus->dai_name)
 				return -ENOMEM;
 
-			codec_maps[j].cpu = i;
+			codec_maps[j].cpu = 0;
 			codec_maps[j].codec = j;
 
 			codecs[j].name = sof_end->codec_name;
@@ -362,7 +362,7 @@ static int sof_card_dai_links_create(struct snd_soc_card *card)
 	dai_links = devm_kcalloc(dev, num_links, sizeof(*dai_links), GFP_KERNEL);
 	if (!dai_links) {
 		ret = -ENOMEM;
-	goto err_end;
+		goto err_end;
 	}
 
 	card->codec_conf = codec_conf;

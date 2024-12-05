@@ -1,7 +1,7 @@
 /*
    BlueZ - Bluetooth protocol stack for Linux
    Copyright (C) 2000-2001 Qualcomm Incorporated
-   Copyright 2023 NXP
+   Copyright 2023-2024 NXP
 
    Written 2000,2001 by Maxim Krasnyansky <maxk@qualcomm.com>
 
@@ -29,6 +29,7 @@
 #define HCI_MAX_ACL_SIZE	1024
 #define HCI_MAX_SCO_SIZE	255
 #define HCI_MAX_ISO_SIZE	251
+#define HCI_MAX_ISO_BIS		31
 #define HCI_MAX_EVENT_SIZE	260
 #define HCI_MAX_FRAME_SIZE	(HCI_MAX_ACL_SIZE + 4)
 
@@ -683,6 +684,7 @@ enum {
 #define HCI_RSSI_INVALID	127
 
 #define HCI_SYNC_HANDLE_INVALID	0xffff
+#define HCI_SID_INVALID		0xff
 
 #define HCI_ROLE_MASTER		0x00
 #define HCI_ROLE_SLAVE		0x01

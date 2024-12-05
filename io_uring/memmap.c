@@ -72,6 +72,8 @@ void *io_pages_map(struct page ***out_pages, unsigned short *npages,
 	ret = io_mem_alloc_compound(pages, nr_pages, size, gfp);
 	if (!IS_ERR(ret))
 		goto done;
+	if (nr_pages == 1)
+		goto fail;
 
 	ret = io_mem_alloc_single(pages, nr_pages, size, gfp);
 	if (!IS_ERR(ret)) {
@@ -80,7 +82,7 @@ done:
 		*npages = nr_pages;
 		return ret;
 	}
-
+fail:
 	kvfree(pages);
 	*out_pages = NULL;
 	*npages = 0;
@@ -135,7 +137,12 @@ struct page **io_pin_pages(unsigned long uaddr, unsigned long len, int *npages)
 	struct page **pages;
 	int ret;
 
-	end = (uaddr + len + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	if (check_add_overflow(uaddr, len, &end))
+		return ERR_PTR(-EOVERFLOW);
+	if (check_add_overflow(end, PAGE_SIZE - 1, &end))
+		return ERR_PTR(-EOVERFLOW);
+
+	end = end >> PAGE_SHIFT;
 	start = uaddr >> PAGE_SHIFT;
 	nr_pages = end - start;
 	if (WARN_ON_ONCE(!nr_pages))
