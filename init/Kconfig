@@ -162,7 +162,6 @@ config ZEN_INTERACTIVE
 	    Background-reclaim hugepages...:   no   ->   yes
 	    MG-LRU minimum cache TTL.......:   0    ->   1000 ms
 	    Compact unevictable............:   yes  ->   no
-	    Compaction proactiveness.......:  20    ->   0
 	    Watermark boost factor.........:   1.5  ->   0
 	    Pageblock order................:  10    ->   3
 	    Swap-in readahead..............:   3    ->   0
