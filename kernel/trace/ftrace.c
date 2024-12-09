@@ -883,6 +883,10 @@ static void profile_graph_return(struct ftrace_graph_ret *trace,
 }
 
 static struct fgraph_ops fprofiler_ops = {
+	.ops = {
+		.flags = FTRACE_OPS_FL_INITIALIZED,
+		INIT_OPS_HASH(fprofiler_ops.ops)
+	},
 	.entryfunc = &profile_graph_entry,
 	.retfunc = &profile_graph_return,
 };
@@ -5075,6 +5079,9 @@ ftrace_mod_callback(struct trace_array *tr, struct ftrace_hash *hash,
 {
 	char *func;
 	int ret;
+
+	if (!tr)
+		return -ENODEV;
 
 	/* match_records() modifies func, and we need the original */
 	func = kstrdup(func_orig, GFP_KERNEL);
