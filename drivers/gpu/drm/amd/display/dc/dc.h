@@ -285,6 +285,7 @@ struct dc_caps {
 	uint16_t subvp_vertical_int_margin_us;
 	bool seamless_odm;
 	uint32_t max_v_total;
+	bool vtotal_limited_by_fp2;
 	uint32_t max_disp_clock_khz_at_vmin;
 	uint8_t subvp_drr_vblank_start_margin_us;
 	bool cursor_not_scaled;
@@ -2542,6 +2543,8 @@ struct dc_power_profile {
 };
 
 struct dc_power_profile dc_get_power_profile_for_dc_state(const struct dc_state *context);
+
+unsigned int dc_get_det_buffer_size_from_state(const struct dc_state *context);
 
 /* DSC Interfaces */
 #include "dc_dsc.h"
