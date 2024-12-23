@@ -1045,6 +1045,12 @@ static void do_flush_tlb_all(void *info)
 void flush_tlb_all(void)
 {
 	count_vm_tlb_event(NR_TLB_REMOTE_FLUSH);
+	if (cpu_feature_enabled(X86_FEATURE_INVLPGB)) {
+		guard(preempt)();
+		invlpgb_flush_all();
+		tlbsync();
+		return;
+	}
 	on_each_cpu(do_flush_tlb_all, NULL, 1);
 }
 
