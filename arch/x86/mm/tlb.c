@@ -1576,16 +1576,7 @@ EXPORT_SYMBOL_GPL(__flush_tlb_all);
 void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
 {
 	struct flush_tlb_info *info;
-	int cpu;
-
-	if (cpu_feature_enabled(X86_FEATURE_INVLPGB)) {
-		guard(preempt)();
-		invlpgb_flush_all_nonglobals();
-		tlbsync();
-		return;
-	}
-
-	cpu = get_cpu();
+	int cpu = get_cpu();
 
 	info = get_flush_tlb_info(NULL, 0, TLB_FLUSH_ALL, 0, false,
 				  TLB_GENERATION_INVALID);
@@ -1603,10 +1594,47 @@ void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
 		local_irq_enable();
 	}
 
+	/*
+	 * If we issued (asynchronous) INVLPGB flushes, wait for them here.
+	 * The cpumask above contains only CPUs that were running tasks
+	 * not using broadcast TLB flushing.
+	 */
+	if (cpu_feature_enabled(X86_FEATURE_INVLPGB) && batch->used_invlpgb) {
+		tlbsync();
+		migrate_enable();
+		batch->used_invlpgb = false;
+	}
+
 	cpumask_clear(&batch->cpumask);
 
 	put_flush_tlb_info();
 	put_cpu();
+}
+
+void arch_tlbbatch_add_pending(struct arch_tlbflush_unmap_batch *batch,
+					     struct mm_struct *mm,
+					     unsigned long uaddr)
+{
+	if (static_cpu_has(X86_FEATURE_INVLPGB) && mm->context.broadcast_asid) {
+		u16 asid = mm->context.broadcast_asid;
+		/*
+		 * Queue up an asynchronous invalidation. The corresponding
+		 * TLBSYNC is done in arch_tlbbatch_flush(), and must be done
+		 * on the same CPU.
+		 */
+		if (!batch->used_invlpgb) {
+			batch->used_invlpgb = true;
+			migrate_disable();
+		}
+		invlpgb_flush_user_nr(kern_pcid(asid), uaddr, 1, 0);
+		/* Do any CPUs supporting INVLPGB need PTI? */
+		if (static_cpu_has(X86_FEATURE_PTI))
+			invlpgb_flush_user_nr(user_pcid(asid), uaddr, 1, 0);
+	} else {
+		inc_mm_tlb_gen(mm);
+		cpumask_or(&batch->cpumask, &batch->cpumask, mm_cpumask(mm));
+	}
+	mmu_notifier_arch_invalidate_secondary_tlbs(mm, 0, -1UL);
 }
 
 /*
