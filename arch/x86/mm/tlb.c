@@ -1281,8 +1281,16 @@ EXPORT_SYMBOL_GPL(__flush_tlb_all);
 void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
 {
 	struct flush_tlb_info *info;
+	int cpu;
 
-	int cpu = get_cpu();
+	if (cpu_feature_enabled(X86_FEATURE_INVLPGB)) {
+		guard(preempt)();
+		invlpgb_flush_all_nonglobals();
+		tlbsync();
+		return;
+	}
+
+	cpu = get_cpu();
 
 	info = get_flush_tlb_info(NULL, 0, TLB_FLUSH_ALL, 0, false,
 				  TLB_GENERATION_INVALID);
