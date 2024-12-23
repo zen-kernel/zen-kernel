@@ -480,7 +480,7 @@ static void broadcast_tlb_flush(struct flush_tlb_info *info)
 	if (info->stride_shift > PMD_SHIFT)
 		maxnr = 1;
 
-	if (info->end == TLB_FLUSH_ALL) {
+	if (info->end == TLB_FLUSH_ALL || info->freed_tables) {
 		invlpgb_flush_single_pcid(kern_pcid(asid));
 		/* Do any CPUs supporting INVLPGB need PTI? */
 		if (static_cpu_has(X86_FEATURE_PTI))
@@ -1113,7 +1113,7 @@ static void flush_tlb_func(void *info)
 	 *
 	 * The only question is whether to do a full or partial flush.
 	 *
-	 * We do a partial flush if requested and two extra conditions
+	 * We do a partial flush if requested and three extra conditions
 	 * are met:
 	 *
 	 * 1. f->new_tlb_gen == local_tlb_gen + 1.  We have an invariant that
@@ -1140,10 +1140,14 @@ static void flush_tlb_func(void *info)
 	 *    date.  By doing a full flush instead, we can increase
 	 *    local_tlb_gen all the way to mm_tlb_gen and we can probably
 	 *    avoid another flush in the very near future.
+	 *
+	 * 3. No page tables were freed. If page tables were freed, a full
+	 *    flush ensures intermediate translations in the TLB get flushed.
 	 */
 	if (f->end != TLB_FLUSH_ALL &&
 	    f->new_tlb_gen == local_tlb_gen + 1 &&
-	    f->new_tlb_gen == mm_tlb_gen) {
+	    f->new_tlb_gen == mm_tlb_gen &&
+	    !f->freed_tables) {
 		/* Partial flush */
 		unsigned long addr = f->start;
 
