@@ -1135,6 +1135,14 @@ static void cpu_detect_tlb_amd(struct cpuinfo_x86 *c)
 		tlb_lli_2m[ENTRIES] = eax & mask;
 
 	tlb_lli_4m[ENTRIES] = tlb_lli_2m[ENTRIES] >> 1;
+
+	if (c->extended_cpuid_level < 0x80000008)
+		return;
+
+	cpuid(0x80000008, &eax, &ebx, &ecx, &edx);
+
+	/* Max number of pages INVLPGB can invalidate in one shot */
+	invlpgb_count_max = (edx & 0xffff) + 1;
 }
 
 static const struct cpu_dev amd_cpu_dev = {
