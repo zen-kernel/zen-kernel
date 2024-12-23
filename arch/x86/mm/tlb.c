@@ -1048,6 +1048,32 @@ void flush_tlb_all(void)
 	on_each_cpu(do_flush_tlb_all, NULL, 1);
 }
 
+static void broadcast_kernel_range_flush(unsigned long start, unsigned long end)
+{
+	unsigned long addr;
+	unsigned long maxnr = invlpgb_count_max;
+	unsigned long threshold = tlb_single_page_flush_ceiling * maxnr;
+
+	/*
+	 * TLBSYNC only waits for flushes originating on the same CPU.
+	 * Disabling migration allows us to wait on all flushes.
+	 */
+	guard(preempt)();
+
+	if (end == TLB_FLUSH_ALL ||
+	    (end - start) > threshold << PAGE_SHIFT) {
+		invlpgb_flush_all();
+	} else {
+		unsigned long nr;
+		for (addr = start; addr < end; addr += nr << PAGE_SHIFT) {
+			nr = min((end - addr) >> PAGE_SHIFT, maxnr);
+			invlpgb_flush_addr(addr, nr);
+		}
+	}
+
+	tlbsync();
+}
+
 static void do_kernel_range_flush(void *info)
 {
 	struct flush_tlb_info *f = info;
@@ -1060,6 +1086,11 @@ static void do_kernel_range_flush(void *info)
 
 void flush_tlb_kernel_range(unsigned long start, unsigned long end)
 {
+	if (cpu_feature_enabled(X86_FEATURE_INVLPGB)) {
+		broadcast_kernel_range_flush(start, end);
+		return;
+	}
+
 	/* Balance as user space task's flush, a bit conservative */
 	if (end == TLB_FLUSH_ALL ||
 	    (end - start) > tlb_single_page_flush_ceiling << PAGE_SHIFT) {
