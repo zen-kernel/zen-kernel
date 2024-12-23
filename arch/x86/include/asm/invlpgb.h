@@ -51,7 +51,7 @@ static inline void invlpgb_flush_user(unsigned long pcid,
 static inline void invlpgb_flush_user_nr(unsigned long pcid, unsigned long addr,
 					 int nr, bool pmd_stride)
 {
-	__invlpgb(0, pcid, addr, nr - 1, pmd_stride, INVLPGB_PCID | INVLPGB_VA);
+	__invlpgb(0, pcid, addr, nr - 1, pmd_stride, INVLPGB_PCID | INVLPGB_VA | INVLPGB_FINAL_ONLY);
 }
 
 /* Flush all mappings for a given ASID, not including globals. */
