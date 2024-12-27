@@ -3723,6 +3723,7 @@ static int amdgpu_device_ip_resume_phase3(struct amdgpu_device *adev)
 			r = adev->ip_blocks[i].version->funcs->resume(adev);
 			if (r)
 				return r;
+			adev->ip_blocks[i].status.hw = true;
 		}
 	}
 
