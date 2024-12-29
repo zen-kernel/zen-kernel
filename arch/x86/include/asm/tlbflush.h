@@ -10,6 +10,7 @@
 #include <asm/cpufeature.h>
 #include <asm/special_insns.h>
 #include <asm/smp.h>
+#include <asm/invlpgb.h>
 #include <asm/invpcid.h>
 #include <asm/pti.h>
 #include <asm/processor-flags.h>
@@ -63,6 +64,21 @@ static inline void cr4_clear_bits(unsigned long mask)
  * lines.
  */
 #define TLB_NR_DYN_ASIDS	6
+
+#ifdef CONFIG_CPU_SUP_AMD
+#define is_dyn_asid(asid) (asid) < TLB_NR_DYN_ASIDS
+#define is_broadcast_asid(asid) (asid) >= TLB_NR_DYN_ASIDS
+#define in_asid_transition(info) (info->mm && info->mm->context.asid_transition)
+#else
+#define is_dyn_asid(asid) true
+#define is_broadcast_asid(asid) false
+#define in_asid_transition(info) false
+
+inline bool needs_broadcast_asid_reload(struct mm_struct *next, u16 prev_asid)
+{
+	return false;
+}
+#endif
 
 struct tlb_context {
 	u64 ctx_id;
@@ -182,6 +198,7 @@ static inline void cr4_init_shadow(void)
 
 extern unsigned long mmu_cr4_features;
 extern u32 *trampoline_cr4_features;
+extern u16 invlpgb_count_max;
 
 extern void initialize_tlbstate_and_flush(void);
 
@@ -277,21 +294,15 @@ static inline u64 inc_mm_tlb_gen(struct mm_struct *mm)
 	return atomic64_inc_return(&mm->context.tlb_gen);
 }
 
-static inline void arch_tlbbatch_add_pending(struct arch_tlbflush_unmap_batch *batch,
-					     struct mm_struct *mm,
-					     unsigned long uaddr)
-{
-	inc_mm_tlb_gen(mm);
-	cpumask_or(&batch->cpumask, &batch->cpumask, mm_cpumask(mm));
-	mmu_notifier_arch_invalidate_secondary_tlbs(mm, 0, -1UL);
-}
-
 static inline void arch_flush_tlb_batched_pending(struct mm_struct *mm)
 {
 	flush_tlb_mm(mm);
 }
 
 extern void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch);
+extern void arch_tlbbatch_add_pending(struct arch_tlbflush_unmap_batch *batch,
+					     struct mm_struct *mm,
+					     unsigned long uaddr);
 
 static inline bool pte_flags_need_flush(unsigned long oldflags,
 					unsigned long newflags,
