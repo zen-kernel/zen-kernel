@@ -56,10 +56,6 @@
 
 #include "clock.c"
 
-#ifdef CONFIG_SCHED_ALT
-# include "alt_topology.c"
-#endif
-
 #ifdef CONFIG_CGROUP_CPUACCT
 # include "cpuacct.c"
 #endif

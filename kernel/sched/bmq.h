@@ -1,6 +1,3 @@
-#ifndef _KERNEL_SCHED_BMQ_H
-#define _KERNEL_SCHED_BMQ_H
-
 #define ALT_SCHED_NAME "BMQ"
 
 /*
@@ -67,7 +64,7 @@ static inline int sched_rq_prio_idx(struct rq *rq)
 	return rq->prio;
 }
 
-static inline int task_running_nice(struct task_struct *p)
+inline int task_running_nice(struct task_struct *p)
 {
 	return (p->prio + p->boost_prio > DEFAULT_PRIO);
 }
@@ -80,7 +77,7 @@ static inline void sched_task_renew(struct task_struct *p, const struct rq *rq)
 }
 
 static inline void sched_task_sanity_check(struct task_struct *p, struct rq *rq) {}
-static inline void sched_task_fork(struct task_struct *p, struct rq *rq) {}
+static void sched_task_fork(struct task_struct *p, struct rq *rq) {}
 
 static inline void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
 {
@@ -99,5 +96,3 @@ static inline void sched_task_deactivate(struct task_struct *p, struct rq *rq)
 {
 	boost_task(p, 1);
 }
-
-#endif /* _KERNEL_SCHED_BMQ_H */
