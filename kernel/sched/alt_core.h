@@ -2,11 +2,6 @@
 #define _KERNEL_SCHED_ALT_CORE_H
 
 /*
- * Compile time debug macro
- * #define ALT_SCHED_DEBUG
- */
-
-/*
  * Task related inlined functions
  */
 static inline bool is_migration_disabled(struct task_struct *p)
@@ -181,7 +176,6 @@ DECLARE_PER_CPU_ALIGNED(cpumask_t *, sched_cpu_llc_mask);
 extern cpumask_t sched_smt_mask ____cacheline_aligned_in_smp;
 
 extern cpumask_t *const sched_idle_mask;
-extern cpumask_t *const sched_sg_idle_mask;
 extern cpumask_t *const sched_pcore_idle_mask;
 extern cpumask_t *const sched_ecore_idle_mask;
 
