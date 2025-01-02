@@ -59,14 +59,12 @@ static void clear_idle_mask_ecore(int cpu, struct cpumask *dstp)
 /*
  * Idle cpu/rq selection functions
  */
-#ifdef CONFIG_SCHED_SMT
 static bool p1_idle_select_func(struct cpumask *dstp, const struct cpumask *src1p,
 				 const struct cpumask *src2p)
 {
 	return cpumask_and(dstp, src1p, src2p + 1)	||
 	       cpumask_and(dstp, src1p, src2p);
 }
-#endif
 
 static bool p1p2_idle_select_func(struct cpumask *dstp, const struct cpumask *src1p,
 					const struct cpumask *src2p)
@@ -300,13 +298,10 @@ void sched_init_topology(void)
 		ecore_present = !cpumask_empty(&sched_ecore_mask);
 	}
 
-#ifdef CONFIG_SCHED_SMT
 	/* idle select function */
 	if (cpumask_equal(&sched_smt_mask, cpu_online_mask)) {
 		SET_IDLE_SELECT_FUNC(p1_idle_select_func);
-	} else
-#endif
-	if (!cpumask_empty(&sched_pcore_mask)) {
+	} else {
 		SET_IDLE_SELECT_FUNC(p1p2_idle_select_func);
 	}
 
