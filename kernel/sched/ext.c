@@ -4367,7 +4367,7 @@ static void scx_ops_bypass(bool bypass)
 		 * sees scx_rq_bypassing() before moving tasks to SCX.
 		 */
 		if (!scx_enabled()) {
-			rq_unlock_irqrestore(rq, &rf);
+			rq_unlock(rq, &rf);
 			continue;
 		}
 
@@ -6637,7 +6637,7 @@ __bpf_kfunc int bpf_iter_scx_dsq_new(struct bpf_iter_scx_dsq *it, u64 dsq_id,
 		return -ENOENT;
 
 	INIT_LIST_HEAD(&kit->cursor.node);
-	kit->cursor.flags |= SCX_DSQ_LNODE_ITER_CURSOR | flags;
+	kit->cursor.flags = SCX_DSQ_LNODE_ITER_CURSOR | flags;
 	kit->cursor.priv = READ_ONCE(kit->dsq->seq);
 
 	return 0;
