@@ -164,8 +164,6 @@ netdev_nl_napi_fill_one(struct sk_buff *rsp, struct napi_struct *napi,
 	void *hdr;
 	pid_t pid;
 
-	if (WARN_ON_ONCE(!napi->dev))
-		return -EINVAL;
 	if (!(napi->dev->flags & IFF_UP))
 		return 0;
 
@@ -173,8 +171,7 @@ netdev_nl_napi_fill_one(struct sk_buff *rsp, struct napi_struct *napi,
 	if (!hdr)
 		return -EMSGSIZE;
 
-	if (napi->napi_id >= MIN_NAPI_ID &&
-	    nla_put_u32(rsp, NETDEV_A_NAPI_ID, napi->napi_id))
+	if (nla_put_u32(rsp, NETDEV_A_NAPI_ID, napi->napi_id))
 		goto nla_put_failure;
 
 	if (nla_put_u32(rsp, NETDEV_A_NAPI_IFINDEX, napi->dev->ifindex))
@@ -217,7 +214,7 @@ int netdev_nl_napi_get_doit(struct sk_buff *skb, struct genl_info *info)
 	rtnl_lock();
 	rcu_read_lock();
 
-	napi = napi_by_id(napi_id);
+	napi = netdev_napi_by_id(genl_info_net(info), napi_id);
 	if (napi) {
 		err = netdev_nl_napi_fill_one(rsp, napi, info);
 	} else {
@@ -254,6 +251,8 @@ netdev_nl_napi_dump_one(struct net_device *netdev, struct sk_buff *rsp,
 		return err;
 
 	list_for_each_entry(napi, &netdev->napi_list, dev_list) {
+		if (napi->napi_id < MIN_NAPI_ID)
+			continue;
 		if (ctx->napi_id && napi->napi_id >= ctx->napi_id)
 			continue;
 

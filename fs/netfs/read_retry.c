@@ -49,7 +49,7 @@ static void netfs_retry_read_subrequests(struct netfs_io_request *rreq)
 	 * up to the first permanently failed one.
 	 */
 	if (!rreq->netfs_ops->prepare_read &&
-	    !test_bit(NETFS_RREQ_COPY_TO_CACHE, &rreq->flags)) {
+	    !rreq->cache_resources.ops) {
 		struct netfs_io_subrequest *subreq;
 
 		list_for_each_entry(subreq, &rreq->subrequests, rreq_link) {
@@ -149,7 +149,8 @@ static void netfs_retry_read_subrequests(struct netfs_io_request *rreq)
 			BUG_ON(!len);
 
 			/* Renegotiate max_len (rsize) */
-			if (rreq->netfs_ops->prepare_read(subreq) < 0) {
+			if (rreq->netfs_ops->prepare_read &&
+			    rreq->netfs_ops->prepare_read(subreq) < 0) {
 				trace_netfs_sreq(subreq, netfs_sreq_trace_reprep_failed);
 				__set_bit(NETFS_SREQ_FAILED, &subreq->flags);
 			}
