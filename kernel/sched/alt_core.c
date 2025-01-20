@@ -76,7 +76,7 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 #define sched_feat(x)	(0)
 #endif /* CONFIG_SCHED_DEBUG */
 
-#define ALT_SCHED_VERSION "v6.12-r1"
+#define ALT_SCHED_VERSION "v6.13-r0"
 
 #define STOP_PRIO		(MAX_RT_PRIO - 1)
 
