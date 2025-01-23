@@ -183,6 +183,13 @@ static inline void cr4_init_shadow(void)
 extern unsigned long mmu_cr4_features;
 extern u32 *trampoline_cr4_features;
 
+/* How many pages can we invalidate with one INVLPGB. */
+#ifdef CONFIG_X86_BROADCAST_TLB_FLUSH
+extern u16 invlpgb_count_max;
+#else
+#define invlpgb_count_max 1
+#endif
+
 extern void initialize_tlbstate_and_flush(void);
 
 /*
