@@ -2,8 +2,8 @@
 VERSION = 6
 PATCHLEVEL = 13
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Baby Opossum Posse
+EXTRAVERSION = -zen
+NAME = Channeling Inner Peace for Peak Performance
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
@@ -860,6 +860,9 @@ KBUILD_CFLAGS	+= -fno-delete-null-pointer-checks
 ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE
 KBUILD_CFLAGS += -O2
 KBUILD_RUSTFLAGS += -Copt-level=2
+else ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3
+KBUILD_CFLAGS += -O3
+KBUILD_RUSTFLAGS += -Copt-level=3
 else ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
 KBUILD_CFLAGS += -Os
 KBUILD_RUSTFLAGS += -Copt-level=s
@@ -1058,11 +1061,6 @@ KBUILD_CFLAGS	+= -fno-strict-overflow
 
 # Make sure -fstack-check isn't enabled (like gentoo apparently did)
 KBUILD_CFLAGS  += -fno-stack-check
-
-# conserve stack if available
-ifdef CONFIG_CC_IS_GCC
-KBUILD_CFLAGS   += -fconserve-stack
-endif
 
 # change __FILE__ to the relative path to the source directory
 ifdef building_out_of_srctree

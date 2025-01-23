@@ -566,9 +566,19 @@ static struct elevator_type *elevator_get_default(struct request_queue *q)
 
 	if (q->nr_hw_queues != 1 &&
 	    !blk_mq_is_shared_tags(q->tag_set->flags))
+#if defined(CONFIG_ZEN_INTERACTIVE) && defined(CONFIG_MQ_IOSCHED_KYBER)
+		return elevator_find_get("kyber");
+#elif defined(CONFIG_ZEN_INTERACTIVE)
+		return elevator_find_get("mq-deadline");
+#else
 		return NULL;
+#endif
 
+#if defined(CONFIG_ZEN_INTERACTIVE) && defined(CONFIG_IOSCHED_BFQ)
+	return elevator_find_get("bfq");
+#else
 	return elevator_find_get("mq-deadline");
+#endif
 }
 
 /*
