@@ -506,3 +506,6 @@
 574	common	getxattrat			sys_getxattrat
 575	common	listxattrat			sys_listxattrat
 576	common	removexattrat			sys_removexattrat
+577	common	process_ksm_enable		sys_process_ksm_enable
+578	common	process_ksm_disable		sys_process_ksm_disable
+579	common	process_ksm_status		sys_process_ksm_status
