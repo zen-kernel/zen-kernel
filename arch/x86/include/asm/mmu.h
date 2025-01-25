@@ -46,12 +46,6 @@ typedef struct {
 	unsigned long flags;
 #endif
 
-#ifdef CONFIG_CPU_SUP_AMD
-	struct list_head broadcast_asid_list;
-	u16 broadcast_asid;
-	bool asid_transition;
-#endif
-
 #ifdef CONFIG_ADDRESS_MASKING
 	/* Active LAM mode:  X86_CR3_LAM_U48 or X86_CR3_LAM_U57 or 0 (disabled) */
 	unsigned long lam_cr3_mask;
