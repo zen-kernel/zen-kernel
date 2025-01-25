@@ -138,10 +138,6 @@ __visible unsigned long mmu_cr4_features __ro_after_init;
 __visible unsigned long mmu_cr4_features __ro_after_init = X86_CR4_PAE;
 #endif
 
-#ifdef CONFIG_CPU_SUP_AMD
-u16 invlpgb_count_max;
-#endif
-
 #ifdef CONFIG_IMA
 static phys_addr_t ima_kexec_buffer_phys;
 static size_t ima_kexec_buffer_size;
