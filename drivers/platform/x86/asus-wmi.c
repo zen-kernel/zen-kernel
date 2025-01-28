@@ -3853,7 +3853,7 @@ static int asus_wmi_platform_profile_get(struct device *dev,
 		*profile = PLATFORM_PROFILE_PERFORMANCE;
 		break;
 	case ASUS_THROTTLE_THERMAL_POLICY_SILENT:
-		*profile = PLATFORM_PROFILE_QUIET;
+		*profile = PLATFORM_PROFILE_LOW_POWER;
 		break;
 	default:
 		return -EINVAL;
@@ -3877,7 +3877,7 @@ static int asus_wmi_platform_profile_set(struct device *dev,
 	case PLATFORM_PROFILE_BALANCED:
 		tp = ASUS_THROTTLE_THERMAL_POLICY_DEFAULT;
 		break;
-	case PLATFORM_PROFILE_QUIET:
+	case PLATFORM_PROFILE_LOW_POWER:
 		tp = ASUS_THROTTLE_THERMAL_POLICY_SILENT;
 		break;
 	default:
@@ -3890,7 +3890,7 @@ static int asus_wmi_platform_profile_set(struct device *dev,
 
 static int asus_wmi_platform_profile_probe(void *drvdata, unsigned long *choices)
 {
-	set_bit(PLATFORM_PROFILE_QUIET, choices);
+	set_bit(PLATFORM_PROFILE_LOW_POWER, choices);
 	set_bit(PLATFORM_PROFILE_BALANCED, choices);
 	set_bit(PLATFORM_PROFILE_PERFORMANCE, choices);
 
