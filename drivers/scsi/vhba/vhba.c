@@ -537,7 +537,9 @@ static struct scsi_host_template vhba_template = {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 19, 0)
     .slave_alloc = vhba_slave_alloc,
 #endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 0, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 14, 0)
+    .tag_alloc_policy_rr = true,
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 0, 0)
     .tag_alloc_policy = BLK_TAG_ALLOC_RR,
 #endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0) && LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
