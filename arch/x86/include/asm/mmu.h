@@ -67,6 +67,12 @@ typedef struct {
 	u16 pkey_allocation_map;
 	s16 execute_only_pkey;
 #endif
+
+#ifdef CONFIG_X86_BROADCAST_TLB_FLUSH
+	u16 global_asid;
+	bool asid_transition;
+#endif
+
 } mm_context_t;
 
 #define INIT_MM_CONTEXT(mm)						\
