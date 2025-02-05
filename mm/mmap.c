@@ -1664,7 +1664,6 @@ void exit_mmap(struct mm_struct *mm)
 		goto destroy;
 	}
 
-	lru_add_drain();
 	flush_cache_mm(mm);
 	tlb_gather_mmu_fullmm(&tlb, mm);
 	/* update_hiwater_rss(mm) here? but nobody should be looking */
@@ -2107,7 +2106,6 @@ int relocate_vma_down(struct vm_area_struct *vma, unsigned long shift)
 				       vma, new_start, length, false, true))
 		return -ENOMEM;
 
-	lru_add_drain();
 	tlb_gather_mmu(&tlb, mm);
 	next = vma_next(&vmi);
 	if (new_end > old_start) {
