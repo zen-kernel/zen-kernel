@@ -1290,8 +1290,13 @@ static struct flush_tlb_info *get_flush_tlb_info(struct mm_struct *mm,
 	BUG_ON(this_cpu_inc_return(flush_tlb_info_idx) != 1);
 #endif
 
-	info->start		= start;
-	info->end		= end;
+	/*
+	 * Round the start and end addresses to the page size specified
+	 * by the stride shift. This ensures partial pages at the end of
+	 * a range get fully invalidated.
+	 */
+	info->start		= round_down(start, 1 << stride_shift);
+	info->end		= round_up(end, 1 << stride_shift);
 	info->mm		= mm;
 	info->stride_shift	= stride_shift;
 	info->freed_tables	= freed_tables;
