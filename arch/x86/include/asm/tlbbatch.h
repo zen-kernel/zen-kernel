@@ -10,6 +10,7 @@ struct arch_tlbflush_unmap_batch {
 	 * the PFNs being flushed..
 	 */
 	struct cpumask cpumask;
+	bool used_invlpgb;
 };
 
 #endif /* _ARCH_X86_TLBBATCH_H */
