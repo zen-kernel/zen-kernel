@@ -29,8 +29,6 @@
 
 #include "cpu.h"
 
-u16 invlpgb_count_max __ro_after_init;
-
 static inline int rdmsrl_amd_safe(unsigned msr, unsigned long long *p)
 {
 	u32 gprs[8] = { 0 };
@@ -1071,10 +1069,6 @@ static void init_amd(struct cpuinfo_x86 *c)
 
 	/* AMD CPUs don't need fencing after x2APIC/TSC_DEADLINE MSR writes. */
 	clear_cpu_cap(c, X86_FEATURE_APIC_MSRS_FENCE);
-
-	/* Enable Translation Cache Extension */
-	if (cpu_feature_enabled(X86_FEATURE_TCE))
-		msr_set_bit(MSR_EFER, _EFER_TCE);
 }
 
 #ifdef CONFIG_X86_32
@@ -1141,12 +1135,6 @@ static void cpu_detect_tlb_amd(struct cpuinfo_x86 *c)
 		tlb_lli_2m[ENTRIES] = eax & mask;
 
 	tlb_lli_4m[ENTRIES] = tlb_lli_2m[ENTRIES] >> 1;
-
-	/* Max number of pages INVLPGB can invalidate in one shot */
-	if (boot_cpu_has(X86_FEATURE_INVLPGB)) {
-		cpuid(0x80000008, &eax, &ebx, &ecx, &edx);
-		invlpgb_count_max = (edx & 0xffff) + 1;
-	}
 }
 
 static const struct cpu_dev amd_cpu_dev = {

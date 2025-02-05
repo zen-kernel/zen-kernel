@@ -11,7 +11,9 @@
 
 #include <linux/const.h>
 
-#include <vdso/page.h>
+#define PAGE_SHIFT   CONFIG_PAGE_SHIFT
+#define PAGE_SIZE    (_AC(1, UL) << PAGE_SHIFT)
+#define PAGE_MASK    (~(PAGE_SIZE-1))
 
 #ifndef __ASSEMBLY__
 
