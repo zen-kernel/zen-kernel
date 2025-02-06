@@ -31,9 +31,8 @@ static inline void __invlpgb(unsigned long asid, unsigned long pcid,
 }
 
 /* Wait for INVLPGB originated by this CPU to complete. */
-static inline void tlbsync(void)
+static inline void __tlbsync(void)
 {
-	cant_migrate();
 	/* TLBSYNC: supported in binutils >= 0.36. */
 	asm volatile(".byte 0x0f, 0x01, 0xff" ::: "memory");
 }
@@ -61,19 +60,19 @@ static inline void invlpgb_flush_user(unsigned long pcid,
 				      unsigned long addr)
 {
 	__invlpgb(0, pcid, addr, 0, 0, INVLPGB_PCID | INVLPGB_VA);
-	tlbsync();
+	__tlbsync();
 }
 
-static inline void invlpgb_flush_user_nr_nosync(unsigned long pcid,
-						unsigned long addr,
-						u16 nr,
-						bool pmd_stride)
+static inline void __invlpgb_flush_user_nr_nosync(unsigned long pcid,
+						  unsigned long addr,
+						  u16 nr,
+						  bool pmd_stride)
 {
 	__invlpgb(0, pcid, addr, nr - 1, pmd_stride, INVLPGB_PCID | INVLPGB_VA);
 }
 
 /* Flush all mappings for a given PCID, not including globals. */
-static inline void invlpgb_flush_single_pcid_nosync(unsigned long pcid)
+static inline void __invlpgb_flush_single_pcid_nosync(unsigned long pcid)
 {
 	__invlpgb(0, pcid, 0, 0, 0, INVLPGB_PCID);
 }
@@ -82,11 +81,11 @@ static inline void invlpgb_flush_single_pcid_nosync(unsigned long pcid)
 static inline void invlpgb_flush_all(void)
 {
 	__invlpgb(0, 0, 0, 0, 0, INVLPGB_INCLUDE_GLOBAL);
-	tlbsync();
+	__tlbsync();
 }
 
 /* Flush addr, including globals, for all PCIDs. */
-static inline void invlpgb_flush_addr_nosync(unsigned long addr, u16 nr)
+static inline void __invlpgb_flush_addr_nosync(unsigned long addr, u16 nr)
 {
 	__invlpgb(0, 0, addr, nr - 1, 0, INVLPGB_INCLUDE_GLOBAL);
 }
@@ -95,7 +94,7 @@ static inline void invlpgb_flush_addr_nosync(unsigned long addr, u16 nr)
 static inline void invlpgb_flush_all_nonglobals(void)
 {
 	__invlpgb(0, 0, 0, 0, 0, 0);
-	tlbsync();
+	__tlbsync();
 }
 
 #endif /* _ASM_X86_INVLPGB */
