@@ -1057,6 +1057,30 @@ void flush_tlb_all(void)
 	on_each_cpu(do_flush_tlb_all, NULL, 1);
 }
 
+static bool broadcast_kernel_range_flush(struct flush_tlb_info *info)
+{
+	unsigned long addr;
+	unsigned long nr;
+
+	if (!IS_ENABLED(CONFIG_X86_BROADCAST_TLB_FLUSH))
+		return false;
+
+	if (!cpu_feature_enabled(X86_FEATURE_INVLPGB))
+		return false;
+
+	if (info->end == TLB_FLUSH_ALL) {
+		invlpgb_flush_all();
+		return true;
+	}
+
+	for (addr = info->start; addr < info->end; addr += nr << PAGE_SHIFT) {
+		nr = min((info->end - addr) >> PAGE_SHIFT, invlpgb_count_max);
+		invlpgb_flush_addr_nosync(addr, nr);
+	}
+	tlbsync();
+	return true;
+}
+
 static void do_kernel_range_flush(void *info)
 {
 	struct flush_tlb_info *f = info;
@@ -1076,7 +1100,9 @@ void flush_tlb_kernel_range(unsigned long start, unsigned long end)
 	info = get_flush_tlb_info(NULL, start, end, PAGE_SHIFT, false,
 				  TLB_GENERATION_INVALID);
 
-	if (info->end == TLB_FLUSH_ALL)
+	if (broadcast_kernel_range_flush(info))
+		; /* Fall through. */
+	else if (info->end == TLB_FLUSH_ALL)
 		on_each_cpu(do_flush_tlb_all, NULL, 1);
 	else
 		on_each_cpu(do_kernel_range_flush, info, 1);
