@@ -139,8 +139,6 @@ static inline void mm_reset_untag_mask(struct mm_struct *mm)
 #define enter_lazy_tlb enter_lazy_tlb
 extern void enter_lazy_tlb(struct mm_struct *mm, struct task_struct *tsk);
 
-extern void destroy_context_free_global_asid(struct mm_struct *mm);
-
 /*
  * Init a new mm.  Used on mm copies, like at fork()
  * and on mm's that are brand-new, like at execve().
@@ -162,14 +160,6 @@ static inline int init_new_context(struct task_struct *tsk,
 		mm->context.execute_only_pkey = -1;
 	}
 #endif
-
-#ifdef CONFIG_X86_BROADCAST_TLB_FLUSH
-	if (cpu_feature_enabled(X86_FEATURE_INVLPGB)) {
-		mm->context.global_asid = 0;
-		mm->context.asid_transition = false;
-	}
-#endif
-
 	mm_reset_untag_mask(mm);
 	init_new_context_ldt(mm);
 	return 0;
@@ -179,10 +169,6 @@ static inline int init_new_context(struct task_struct *tsk,
 static inline void destroy_context(struct mm_struct *mm)
 {
 	destroy_context_ldt(mm);
-#ifdef CONFIG_X86_BROADCAST_TLB_FLUSH
-	if (cpu_feature_enabled(X86_FEATURE_INVLPGB))
-		destroy_context_free_global_asid(mm);
-#endif
 }
 
 extern void switch_mm(struct mm_struct *prev, struct mm_struct *next,

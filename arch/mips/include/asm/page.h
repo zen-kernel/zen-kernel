@@ -14,7 +14,12 @@
 #include <linux/kernel.h>
 #include <asm/mipsregs.h>
 
-#include <vdso/page.h>
+/*
+ * PAGE_SHIFT determines the page size
+ */
+#define PAGE_SHIFT	CONFIG_PAGE_SHIFT
+#define PAGE_SIZE	(_AC(1,UL) << PAGE_SHIFT)
+#define PAGE_MASK	(~((1 << PAGE_SHIFT) - 1))
 
 /*
  * This is used for calculating the real page sizes

@@ -240,4 +240,5 @@ void hyperv_setup_mmu_ops(void)
 
 	pr_info("Using hypercall for remote TLB flush\n");
 	pv_ops.mmu.flush_tlb_multi = hyperv_flush_tlb_multi;
+	pv_ops.mmu.tlb_remove_table = tlb_remove_table;
 }
