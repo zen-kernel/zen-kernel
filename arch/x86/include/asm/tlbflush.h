@@ -106,6 +106,7 @@ struct tlb_state {
 	 * need to be invalidated.
 	 */
 	bool invalidate_other;
+	bool need_tlbsync;
 
 #ifdef CONFIG_ADDRESS_MASKING
 	/*
@@ -309,6 +310,10 @@ static inline void broadcast_tlb_flush(struct flush_tlb_info *info)
 static inline void consider_global_asid(struct mm_struct *mm)
 {
 }
+
+static inline void tlbsync(void)
+{
+}
 #endif
 
 #ifdef CONFIG_PARAVIRT
@@ -358,21 +363,15 @@ static inline u64 inc_mm_tlb_gen(struct mm_struct *mm)
 	return atomic64_inc_return(&mm->context.tlb_gen);
 }
 
-static inline void arch_tlbbatch_add_pending(struct arch_tlbflush_unmap_batch *batch,
-					     struct mm_struct *mm,
-					     unsigned long uaddr)
-{
-	inc_mm_tlb_gen(mm);
-	cpumask_or(&batch->cpumask, &batch->cpumask, mm_cpumask(mm));
-	mmu_notifier_arch_invalidate_secondary_tlbs(mm, 0, -1UL);
-}
-
 static inline void arch_flush_tlb_batched_pending(struct mm_struct *mm)
 {
 	flush_tlb_mm(mm);
 }
 
 extern void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch);
+extern void arch_tlbbatch_add_pending(struct arch_tlbflush_unmap_batch *batch,
+					     struct mm_struct *mm,
+					     unsigned long uaddr);
 
 static inline bool pte_flags_need_flush(unsigned long oldflags,
 					unsigned long newflags,
