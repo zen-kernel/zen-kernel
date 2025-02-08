@@ -931,6 +931,11 @@ rtw89_core_tx_update_desc_info(struct rtw89_dev *rtwdev,
 	bool is_bmc;
 	u16 seq;
 
+	if (tx_req->sta)
+		desc_info->mlo = tx_req->sta->mlo;
+	else if (tx_req->vif)
+		desc_info->mlo = ieee80211_vif_is_mld(tx_req->vif);
+
 	seq = (le16_to_cpu(hdr->seq_ctrl) & IEEE80211_SCTL_SEQ) >> 4;
 	if (tx_req->tx_type != RTW89_CORE_TX_TYPE_FWCMD) {
 		tx_type = rtw89_core_get_tx_type(rtwdev, skb);
@@ -938,7 +943,7 @@ rtw89_core_tx_update_desc_info(struct rtw89_dev *rtwdev,
 
 		addr_cam = rtw89_get_addr_cam_of(tx_req->rtwvif_link,
 						 tx_req->rtwsta_link);
-		if (addr_cam->valid)
+		if (addr_cam->valid && desc_info->mlo)
 			upd_wlan_hdr = true;
 	}
 	is_bmc = (is_broadcast_ether_addr(hdr->addr1) ||
@@ -1078,6 +1083,8 @@ int rtw89_core_tx_write(struct rtw89_dev *rtwdev, struct ieee80211_vif *vif,
 	}
 
 	tx_req.skb = skb;
+	tx_req.vif = vif;
+	tx_req.sta = sta;
 	tx_req.rtwvif_link = rtwvif_link;
 	tx_req.rtwsta_link = rtwsta_link;
 
@@ -3257,7 +3264,7 @@ void rtw89_roc_end(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif)
 
 	roc->state = RTW89_ROC_IDLE;
 	rtw89_config_roc_chandef(rtwdev, rtwvif_link->chanctx_idx, NULL);
-	rtw89_chanctx_proceed(rtwdev);
+	rtw89_chanctx_proceed(rtwdev, NULL);
 	ret = rtw89_core_send_nullfunc(rtwdev, rtwvif_link, true, false);
 	if (ret)
 		rtw89_debug(rtwdev, RTW89_DBG_TXRX,
