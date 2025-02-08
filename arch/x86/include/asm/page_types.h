@@ -6,7 +6,10 @@
 #include <linux/types.h>
 #include <linux/mem_encrypt.h>
 
-#include <vdso/page.h>
+/* PAGE_SHIFT determines the page size */
+#define PAGE_SHIFT		CONFIG_PAGE_SHIFT
+#define PAGE_SIZE		(_AC(1,UL) << PAGE_SHIFT)
+#define PAGE_MASK		(~(PAGE_SIZE-1))
 
 #define __VIRTUAL_MASK		((1UL << __VIRTUAL_MASK_SHIFT) - 1)
 

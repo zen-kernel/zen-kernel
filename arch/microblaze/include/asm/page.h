@@ -19,7 +19,10 @@
 
 #ifdef __KERNEL__
 
-#include <vdso/page.h>
+/* PAGE_SHIFT determines the page size */
+#define PAGE_SHIFT	CONFIG_PAGE_SHIFT
+#define PAGE_SIZE	(ASM_CONST(1) << PAGE_SHIFT)
+#define PAGE_MASK	(~(PAGE_SIZE-1))
 
 #define LOAD_OFFSET	ASM_CONST((CONFIG_KERNEL_START-CONFIG_KERNEL_BASE_ADDR))
 
