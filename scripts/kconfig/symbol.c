@@ -376,6 +376,7 @@ static void sym_warn_unmet_dep(const struct symbol *sym)
 			       "  Selected by [m]:\n");
 
 	fputs(str_get(&gs), stderr);
+	str_free(&gs);
 	sym_warnings++;
 }
 

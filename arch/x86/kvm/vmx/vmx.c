@@ -6847,7 +6847,7 @@ out:
 	kvm_release_pfn_clean(pfn);
 }
 
-void vmx_hwapic_isr_update(int max_isr)
+void vmx_hwapic_isr_update(struct kvm_vcpu *vcpu, int max_isr)
 {
 	u16 status;
 	u8 old;
