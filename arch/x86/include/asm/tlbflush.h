@@ -106,7 +106,6 @@ struct tlb_state {
 	 * need to be invalidated.
 	 */
 	bool invalidate_other;
-	bool need_tlbsync;
 
 #ifdef CONFIG_ADDRESS_MASKING
 	/*
@@ -254,12 +253,12 @@ static inline bool is_global_asid(u16 asid)
 	return !is_dyn_asid(asid);
 }
 
-static inline bool in_asid_transition(struct mm_struct *mm)
+static inline bool in_asid_transition(const struct flush_tlb_info *info)
 {
 	if (!cpu_feature_enabled(X86_FEATURE_INVLPGB))
 		return false;
 
-	return mm && READ_ONCE(mm->context.asid_transition);
+	return info->mm && READ_ONCE(info->mm->context.asid_transition);
 }
 
 static inline u16 mm_global_asid(struct mm_struct *mm)
@@ -287,7 +286,7 @@ static inline bool is_global_asid(u16 asid)
 	return false;
 }
 
-static inline bool in_asid_transition(struct mm_struct *mm)
+static inline bool in_asid_transition(const struct flush_tlb_info *info)
 {
 	return false;
 }
@@ -308,10 +307,6 @@ static inline void broadcast_tlb_flush(struct flush_tlb_info *info)
 }
 
 static inline void consider_global_asid(struct mm_struct *mm)
-{
-}
-
-static inline void tlbsync(void)
 {
 }
 #endif

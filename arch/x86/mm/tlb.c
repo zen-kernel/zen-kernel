@@ -488,38 +488,6 @@ static void finish_asid_transition(struct flush_tlb_info *info)
 	WRITE_ONCE(mm->context.asid_transition, false);
 }
 
-static inline void tlbsync(void)
-{
-	if (!this_cpu_read(cpu_tlbstate.need_tlbsync))
-		return;
-	__tlbsync();
-	this_cpu_write(cpu_tlbstate.need_tlbsync, false);
-}
-
-static inline void invlpgb_flush_user_nr_nosync(unsigned long pcid,
-						unsigned long addr,
-						u16 nr, bool pmd_stride,
-						bool freed_tables)
-{
-	__invlpgb_flush_user_nr_nosync(pcid, addr, nr, pmd_stride, freed_tables);
-	if (!this_cpu_read(cpu_tlbstate.need_tlbsync))
-		this_cpu_write(cpu_tlbstate.need_tlbsync, true);
-}
-
-static inline void invlpgb_flush_single_pcid_nosync(unsigned long pcid)
-{
-	__invlpgb_flush_single_pcid_nosync(pcid);
-	if (!this_cpu_read(cpu_tlbstate.need_tlbsync))
-		this_cpu_write(cpu_tlbstate.need_tlbsync, true);
-}
-
-static inline void invlpgb_flush_addr_nosync(unsigned long addr, u16 nr)
-{
-	__invlpgb_flush_addr_nosync(addr, nr);
-	if (!this_cpu_read(cpu_tlbstate.need_tlbsync))
-		this_cpu_write(cpu_tlbstate.need_tlbsync, true);
-}
-
 static void broadcast_tlb_flush(struct flush_tlb_info *info)
 {
 	bool pmd = info->stride_shift == PMD_SHIFT;
@@ -826,8 +794,6 @@ void switch_mm_irqs_off(struct mm_struct *unused, struct mm_struct *next,
 	if (IS_ENABLED(CONFIG_PROVE_LOCKING))
 		WARN_ON_ONCE(!irqs_disabled());
 
-	tlbsync();
-
 	/*
 	 * Verify that CR3 is what we think it is.  This will catch
 	 * hypothetical buggy code that directly switches to swapper_pg_dir
@@ -1010,8 +976,6 @@ reload_tlb:
  */
 void enter_lazy_tlb(struct mm_struct *mm, struct task_struct *tsk)
 {
-	tlbsync();
-
 	if (this_cpu_read(cpu_tlbstate.loaded_mm) == &init_mm)
 		return;
 
@@ -1279,7 +1243,7 @@ STATIC_NOPV void native_flush_tlb_multi(const struct cpumask *cpumask,
 	 * up on the new contents of what used to be page tables, while
 	 * doing a speculative memory access.
 	 */
-	if (info->freed_tables || in_asid_transition(info->mm))
+	if (info->freed_tables || in_asid_transition(info))
 		on_each_cpu_mask(cpumask, flush_tlb_func, (void *)info, true);
 	else
 		on_each_cpu_cond_mask(tlb_is_not_lazy, flush_tlb_func,
@@ -1338,10 +1302,6 @@ static struct flush_tlb_info *get_flush_tlb_info(struct mm_struct *mm,
 	info->freed_tables	= freed_tables;
 	info->new_tlb_gen	= new_tlb_gen;
 	info->initiating_cpu	= smp_processor_id();
-
-	WARN_ONCE(start != info->start || end != info->end,
-		  "TLB flush not stride %x aligned. Start %lx, end %lx\n",
-		  1 << stride_shift, start, end);
 
 	/*
 	 * If the number of flushes is so large that a full flush
@@ -1671,8 +1631,11 @@ void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
 	 * The cpumask above contains only CPUs that were running tasks
 	 * not using broadcast TLB flushing.
 	 */
-	if (cpu_feature_enabled(X86_FEATURE_INVLPGB))
+	if (cpu_feature_enabled(X86_FEATURE_INVLPGB) && batch->used_invlpgb) {
 		tlbsync();
+		migrate_enable();
+		batch->used_invlpgb = false;
+	}
 
 	cpumask_clear(&batch->cpumask);
 
@@ -1687,6 +1650,15 @@ void arch_tlbbatch_add_pending(struct arch_tlbflush_unmap_batch *batch,
 	u16 asid = mm_global_asid(mm);
 
 	if (asid) {
+		/*
+		 * Queue up an asynchronous invalidation. The corresponding
+		 * TLBSYNC is done in arch_tlbbatch_flush(), and must be done
+		 * on the same CPU.
+		 */
+		if (!batch->used_invlpgb) {
+			batch->used_invlpgb = true;
+			migrate_disable();
+		}
 		invlpgb_flush_user_nr_nosync(kern_pcid(asid), uaddr, 1, false, false);
 		/* Do any CPUs supporting INVLPGB need PTI? */
 		if (static_cpu_has(X86_FEATURE_PTI))
@@ -1701,7 +1673,7 @@ void arch_tlbbatch_add_pending(struct arch_tlbflush_unmap_batch *batch,
 		 * TLB invalidation, and send IPIs. The IPIs will help
 		 * stragglers transition to the broadcast ASID.
 		 */
-		if (in_asid_transition(mm))
+		if (READ_ONCE(mm->context.asid_transition))
 			asid = 0;
 	}
 
