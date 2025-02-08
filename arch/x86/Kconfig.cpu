@@ -726,10 +726,6 @@ config X86_VMX_FEATURE_NAMES
 	def_bool y
 	depends on IA32_FEAT_CTL
 
-config X86_BROADCAST_TLB_FLUSH
-	def_bool y
-	depends on CPU_SUP_AMD && 64BIT
-
 menuconfig PROCESSOR_SELECT
 	bool "Supported processor vendors" if EXPERT
 	help
@@ -766,7 +762,6 @@ config CPU_SUP_CYRIX_32
 config CPU_SUP_AMD
 	default y
 	bool "Support AMD processors" if PROCESSOR_SELECT
-	select X86_BROADCAST_TLB_FLUSH
 	help
 	  This enables detection, tunings and quirks for AMD processors
 

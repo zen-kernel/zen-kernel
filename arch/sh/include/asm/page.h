@@ -8,8 +8,10 @@
 
 #include <linux/const.h>
 
-#include <vdso/page.h>
-
+/* PAGE_SHIFT determines the page size */
+#define PAGE_SHIFT	CONFIG_PAGE_SHIFT
+#define PAGE_SIZE	(_AC(1, UL) << PAGE_SHIFT)
+#define PAGE_MASK	(~(PAGE_SIZE-1))
 #define PTE_MASK	PAGE_MASK
 
 #if defined(CONFIG_HUGETLB_PAGE_SIZE_64K)
