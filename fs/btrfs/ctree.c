@@ -1563,6 +1563,7 @@ read_block_for_search(struct btrfs_root *root, struct btrfs_path *p,
 
 		if (!p->skip_locking) {
 			btrfs_unlock_up_safe(p, parent_level + 1);
+			btrfs_maybe_reset_lockdep_class(root, tmp);
 			tmp_locked = true;
 			btrfs_tree_read_lock(tmp);
 			btrfs_release_path(p);
@@ -1606,6 +1607,7 @@ read_block_for_search(struct btrfs_root *root, struct btrfs_path *p,
 
 	if (!p->skip_locking) {
 		ASSERT(ret == -EAGAIN);
+		btrfs_maybe_reset_lockdep_class(root, tmp);
 		tmp_locked = true;
 		btrfs_tree_read_lock(tmp);
 		btrfs_release_path(p);
