@@ -1050,6 +1050,13 @@ static void fuse_readahead(struct readahead_control *rac)
 		ap = &ia->ap;
 
 		while (ap->num_folios < cur_pages) {
+			/*
+			 * This returns a folio with a ref held on it.
+			 * The ref needs to be held until the request is
+			 * completed, since the splice case (see
+			 * fuse_try_move_page()) drops the ref after it's
+			 * replaced in the page cache.
+			 */
 			folio = __readahead_folio(rac);
 			ap->folios[ap->num_folios] = folio;
 			ap->descs[ap->num_folios].length = folio_size(folio);
