@@ -78,7 +78,7 @@ void xe_guc_log_print(struct xe_guc_log *log, struct drm_printer *p)
 
 	xe_map_memcpy_from(xe, copy, &log->bo->vmap, 0, size);
 
-	xe_print_blob_ascii85(p, "Log data", copy, 0, size);
+	xe_print_blob_ascii85(p, "Log data", '\n', copy, 0, size);
 
 	vfree(copy);
 }
