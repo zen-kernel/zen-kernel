@@ -74,9 +74,6 @@ bool io_uring_try_cancel_uring_cmd(struct io_ring_ctx *ctx,
 			continue;
 
 		if (cmd->flags & IORING_URING_CMD_CANCELABLE) {
-			/* ->sqe isn't available if no async data */
-			if (!req_has_async_data(req))
-				cmd->sqe = NULL;
 			file->f_op->uring_cmd(cmd, IO_URING_F_CANCEL |
 						   IO_URING_F_COMPLETE_DEFER);
 			ret = true;
@@ -198,14 +195,15 @@ static int io_uring_cmd_prep_setup(struct io_kiocb *req,
 	if (unlikely(!cache))
 		return -ENOMEM;
 
-	if (!(req->flags & REQ_F_FORCE_ASYNC)) {
-		/* defer memcpy until we need it */
-		ioucmd->sqe = sqe;
-		return 0;
-	}
-
-	memcpy(req->async_data, sqe, uring_sqe_size(req->ctx));
-	ioucmd->sqe = req->async_data;
+	/*
+	 * Unconditionally cache the SQE for now - this is only needed for
+	 * requests that go async, but prep handlers must ensure that any
+	 * sqe data is stable beyond prep. Since uring_cmd is special in
+	 * that it doesn't read in per-op data, play it safe and ensure that
+	 * any SQE data is stable beyond prep. This can later get relaxed.
+	 */
+	memcpy(cache->sqes, sqe, uring_sqe_size(req->ctx));
+	ioucmd->sqe = cache->sqes;
 	return 0;
 }
 
@@ -268,16 +266,8 @@ int io_uring_cmd(struct io_kiocb *req, unsigned int issue_flags)
 	}
 
 	ret = file->f_op->uring_cmd(ioucmd, issue_flags);
-	if (ret == -EAGAIN) {
-		struct io_uring_cmd_data *cache = req->async_data;
-
-		if (ioucmd->sqe != (void *) cache)
-			memcpy(cache, ioucmd->sqe, uring_sqe_size(req->ctx));
-		return -EAGAIN;
-	} else if (ret == -EIOCBQUEUED) {
-		return -EIOCBQUEUED;
-	}
-
+	if (ret == -EAGAIN || ret == -EIOCBQUEUED)
+		return ret;
 	if (ret < 0)
 		req_set_fail(req);
 	io_req_uring_cleanup(req, issue_flags);

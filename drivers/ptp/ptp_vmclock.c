@@ -414,6 +414,7 @@ static ssize_t vmclock_miscdev_read(struct file *fp, char __user *buf,
 }
 
 static const struct file_operations vmclock_miscdev_fops = {
+	.owner = THIS_MODULE,
 	.mmap = vmclock_miscdev_mmap,
 	.read = vmclock_miscdev_read,
 };
@@ -524,6 +525,8 @@ static int vmclock_probe(struct platform_device *pdev)
 		goto out;
 	}
 
+	dev_set_drvdata(dev, st);
+
 	if (le32_to_cpu(st->clk->magic) != VMCLOCK_MAGIC ||
 	    le32_to_cpu(st->clk->size) > resource_size(&st->res) ||
 	    le16_to_cpu(st->clk->version) != 1) {
@@ -547,6 +550,8 @@ static int vmclock_probe(struct platform_device *pdev)
 		goto out;
 	}
 
+	st->miscdev.minor = MISC_DYNAMIC_MINOR;
+
 	/*
 	 * If the structure is big enough, it can be mapped to userspace.
 	 * Theoretically a guest OS even using larger pages could still
@@ -554,7 +559,6 @@ static int vmclock_probe(struct platform_device *pdev)
 	 * cross that bridge if/when we come to it.
 	 */
 	if (le32_to_cpu(st->clk->size) >= PAGE_SIZE) {
-		st->miscdev.minor = MISC_DYNAMIC_MINOR;
 		st->miscdev.fops = &vmclock_miscdev_fops;
 		st->miscdev.name = st->name;
 
@@ -586,8 +590,6 @@ static int vmclock_probe(struct platform_device *pdev)
 		 st->miscdev.minor ? "miscdev" : "",
 		 (st->miscdev.minor && st->ptp_clock) ? ", " : "",
 		 st->ptp_clock ? "PTP" : "");
-
-	dev_set_drvdata(dev, st);
 
  out:
 	return ret;
