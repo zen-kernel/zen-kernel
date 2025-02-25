@@ -11,7 +11,6 @@
 #include <asm/cpufeature.h>
 #include <asm/special_insns.h>
 #include <asm/smp.h>
-#include <asm/invlpgb.h>
 #include <asm/invpcid.h>
 #include <asm/pti.h>
 #include <asm/processor-flags.h>
@@ -106,7 +105,9 @@ struct tlb_state {
 	 * need to be invalidated.
 	 */
 	bool invalidate_other;
+#ifdef CONFIG_X86_BROADCAST_TLB_FLUSH
 	bool need_tlbsync;
+#endif
 
 #ifdef CONFIG_ADDRESS_MASKING
 	/*
@@ -187,11 +188,7 @@ extern unsigned long mmu_cr4_features;
 extern u32 *trampoline_cr4_features;
 
 /* How many pages can we invalidate with one INVLPGB. */
-#ifdef CONFIG_X86_BROADCAST_TLB_FLUSH
 extern u16 invlpgb_count_max;
-#else
-#define invlpgb_count_max 1
-#endif
 
 extern void initialize_tlbstate_and_flush(void);
 
@@ -241,12 +238,8 @@ void flush_tlb_one_kernel(unsigned long addr);
 void flush_tlb_multi(const struct cpumask *cpumask,
 		      const struct flush_tlb_info *info);
 
-#ifdef CONFIG_X86_BROADCAST_TLB_FLUSH
 static inline bool is_dyn_asid(u16 asid)
 {
-	if (!cpu_feature_enabled(X86_FEATURE_INVLPGB))
-		return true;
-
 	return asid < TLB_NR_DYN_ASIDS;
 }
 
@@ -263,6 +256,7 @@ static inline bool in_asid_transition(struct mm_struct *mm)
 	return mm && READ_ONCE(mm->context.asid_transition);
 }
 
+#ifdef CONFIG_X86_BROADCAST_TLB_FLUSH
 static inline u16 mm_global_asid(struct mm_struct *mm)
 {
 	u16 asid;
@@ -277,38 +271,24 @@ static inline u16 mm_global_asid(struct mm_struct *mm)
 
 	return asid;
 }
+
+static inline void assign_mm_global_asid(struct mm_struct *mm, u16 asid)
+{
+	/*
+	 * Notably flush_tlb_mm_range() -> broadcast_tlb_flush() ->
+	 * finish_asid_transition() needs to observe asid_transition = true
+	 * once it observes global_asid.
+	 */
+	mm->context.asid_transition = true;
+	smp_store_release(&mm->context.global_asid, asid);
+}
 #else
-static inline bool is_dyn_asid(u16 asid)
-{
-	return true;
-}
-
-static inline bool is_global_asid(u16 asid)
-{
-	return false;
-}
-
-static inline bool in_asid_transition(struct mm_struct *mm)
-{
-	return false;
-}
-
 static inline u16 mm_global_asid(struct mm_struct *mm)
 {
 	return 0;
 }
 
-static inline bool needs_global_asid_reload(struct mm_struct *next, u16 prev_asid)
-{
-	return false;
-}
-
-static inline void broadcast_tlb_flush(struct flush_tlb_info *info)
-{
-	VM_WARN_ON_ONCE(1);
-}
-
-static inline void consider_global_asid(struct mm_struct *mm)
+static inline void assign_mm_global_asid(struct mm_struct *mm, u16 asid)
 {
 }
 

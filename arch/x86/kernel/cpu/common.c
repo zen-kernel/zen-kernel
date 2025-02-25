@@ -242,6 +242,33 @@ DEFINE_PER_CPU_PAGE_ALIGNED(struct gdt_page, gdt_page) = { .gdt = {
 } };
 EXPORT_PER_CPU_SYMBOL_GPL(gdt_page);
 
+#ifdef CONFIG_X86_BROADCAST_TLB_FLUSH
+static void disable_invlpgb(void)
+{
+	/* do not emit a message if the feature is not present */
+	if (!boot_cpu_has(X86_FEATURE_INVLPGB))
+		return;
+
+	setup_clear_cpu_cap(X86_FEATURE_INVLPGB);
+	pr_info("INVLPGB feature disabled\n");
+}
+
+static int __init x86_noinvlpgb_setup(char *s)
+{
+	/* noinvlpgb doesn't accept parameters */
+	if (s)
+		return -EINVAL;
+
+	disable_invlpgb();
+	return 0;
+}
+early_param("noinvlpgb", x86_noinvlpgb_setup);
+#else
+static void disable_invlpgb(void)
+{
+}
+#endif
+
 #ifdef CONFIG_X86_64
 static int __init x86_nopcid_setup(char *s)
 {
@@ -255,6 +282,7 @@ static int __init x86_nopcid_setup(char *s)
 
 	setup_clear_cpu_cap(X86_FEATURE_PCID);
 	pr_info("nopcid: PCID feature disabled\n");
+	disable_invlpgb();
 	return 0;
 }
 early_param("nopcid", x86_nopcid_setup);
