@@ -555,3 +555,11 @@ int ivpu_jsm_dct_disable(struct ivpu_device *vdev)
 	return ivpu_ipc_send_receive_internal(vdev, &req, VPU_JSM_MSG_DCT_DISABLE_DONE, &resp,
 					      VPU_IPC_CHAN_ASYNC_CMD, vdev->timeout.jsm);
 }
+
+int ivpu_jsm_state_dump(struct ivpu_device *vdev)
+{
+	struct vpu_jsm_msg req = { .type = VPU_JSM_MSG_STATE_DUMP };
+
+	return ivpu_ipc_send_and_wait(vdev, &req, VPU_IPC_CHAN_ASYNC_CMD,
+				      vdev->timeout.state_dump_msg);
+}
