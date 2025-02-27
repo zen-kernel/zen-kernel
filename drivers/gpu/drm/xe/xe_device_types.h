@@ -345,7 +345,13 @@ struct xe_device {
 		spinlock_t lock;
 
 		/** @irq.enabled: interrupts enabled on this device */
-		bool enabled;
+		atomic_t enabled;
+
+		/** @irq.msix: irq info for platforms that support MSI-X */
+		struct {
+			/** @irq.msix.nvec: number of MSI-X interrupts */
+			u16 nvec;
+		} msix;
 	} irq;
 
 	/** @ttm: ttm device */

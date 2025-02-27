@@ -11,16 +11,12 @@
 use crate::{
     bindings,
     error::{to_result, Error, Result, VTABLE_DEFAULT_ERROR},
+    ffi::{c_int, c_long, c_uint, c_ulong},
     prelude::*,
     str::CStr,
     types::{ForeignOwnable, Opaque},
 };
-use core::{
-    ffi::{c_int, c_long, c_uint, c_ulong},
-    marker::PhantomData,
-    mem::MaybeUninit,
-    pin::Pin,
-};
+use core::{marker::PhantomData, mem::MaybeUninit, pin::Pin};
 
 /// Options for creating a misc device.
 #[derive(Copy, Clone)]
@@ -229,7 +225,7 @@ unsafe extern "C" fn fops_ioctl<T: MiscDevice>(
     // SAFETY: Ioctl calls can borrow the private data of the file.
     let device = unsafe { <T::Ptr as ForeignOwnable>::borrow(private) };
 
-    match T::ioctl(device, cmd, arg as usize) {
+    match T::ioctl(device, cmd, arg) {
         Ok(ret) => ret as c_long,
         Err(err) => err.to_errno() as c_long,
     }
@@ -249,7 +245,7 @@ unsafe extern "C" fn fops_compat_ioctl<T: MiscDevice>(
     // SAFETY: Ioctl calls can borrow the private data of the file.
     let device = unsafe { <T::Ptr as ForeignOwnable>::borrow(private) };
 
-    match T::compat_ioctl(device, cmd, arg as usize) {
+    match T::compat_ioctl(device, cmd, arg) {
         Ok(ret) => ret as c_long,
         Err(err) => err.to_errno() as c_long,
     }
