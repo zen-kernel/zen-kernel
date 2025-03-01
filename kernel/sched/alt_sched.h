@@ -156,7 +156,10 @@ struct rq {
 	/* runqueue lock: */
 	raw_spinlock_t			lock;
 
-	struct task_struct __rcu	*curr;
+	union {
+		struct task_struct __rcu *donor; /* Scheduler context */
+		struct task_struct __rcu *curr;  /* Execution context */
+	};
 	struct task_struct		*idle;
 	struct task_struct		*stop;
 	struct mm_struct		*prev_mm;
@@ -505,6 +508,11 @@ static inline void raw_spin_rq_unlock_irq(struct rq *rq)
 static inline int task_current(struct rq *rq, struct task_struct *p)
 {
 	return rq->curr == p;
+}
+
+static inline int task_current_donor(struct rq *rq, struct task_struct *p)
+{
+	return rq->donor == p;
 }
 
 static inline bool task_on_cpu(struct task_struct *p)
