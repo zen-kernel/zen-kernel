@@ -1659,6 +1659,9 @@ static void osnoise_sleep(bool skip_period)
  */
 static inline int osnoise_migration_pending(void)
 {
+#ifdef CONFIG_SCHED_ALT
+	return 0;
+#else
 	if (!current->migration_pending)
 		return 0;
 
@@ -1680,6 +1683,7 @@ static inline int osnoise_migration_pending(void)
 	mutex_unlock(&interface_lock);
 
 	return 1;
+#endif
 }
 
 /*
