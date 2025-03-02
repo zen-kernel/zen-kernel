@@ -555,8 +555,6 @@ static inline int cpu_of(const struct rq *rq)
 #endif
 }
 
-extern void resched_curr(struct rq *rq);
-extern void resched_curr_lazy(struct rq *rq);
 extern void resched_cpu(int cpu);
 
 #include "stats.h"
