@@ -75,6 +75,7 @@ config PREEMPT
 config PREEMPT_LAZY
 	bool "Scheduler controlled preemption model"
 	depends on !ARCH_NO_PREEMPT
+	depends on !SCHED_ALT
 	depends on ARCH_HAS_PREEMPT_LAZY
 	select PREEMPT_BUILD if !PREEMPT_DYNAMIC
 	help
