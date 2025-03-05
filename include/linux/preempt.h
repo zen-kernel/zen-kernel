@@ -486,7 +486,9 @@ DEFINE_LOCK_GUARD_0(migrate, migrate_disable(), migrate_enable())
 extern bool preempt_model_none(void);
 extern bool preempt_model_voluntary(void);
 extern bool preempt_model_full(void);
+#ifndef CONFIG_SCHED_ALT
 extern bool preempt_model_lazy(void);
+#endif
 
 #else
 
@@ -525,7 +527,11 @@ static inline bool preempt_model_rt(void)
  */
 static inline bool preempt_model_preemptible(void)
 {
+	#ifdef CONFIG_SCHED_ALT
+	return preempt_model_full() || preempt_model_rt();
+	#else
 	return preempt_model_full() || preempt_model_lazy() || preempt_model_rt();
+	#endif
 }
 
 #endif /* __LINUX_PREEMPT_H */
