@@ -100,7 +100,7 @@ static inline void resched_latency_warn(int cpu, u64 latency) {}
 
 static inline int task_on_rq_queued(struct task_struct *p)
 {
-	return p->on_rq == TASK_ON_RQ_QUEUED;
+	return READ_ONCE(p->on_rq) == TASK_ON_RQ_QUEUED;
 }
 
 static inline int task_on_rq_migrating(struct task_struct *p)
