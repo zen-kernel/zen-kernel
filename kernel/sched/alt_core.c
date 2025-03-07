@@ -3288,8 +3288,12 @@ static int sysctl_schedstats(const struct ctl_table *table, int write, void *buf
 		set_schedstats(state);
 	return err;
 }
+#endif /* CONFIG_PROC_SYSCTL */
+#endif /* CONFIG_SCHEDSTATS */
 
-static struct ctl_table sched_core_sysctls[] = {
+#ifdef CONFIG_SYSCTL
+static const struct ctl_table sched_core_sysctls[] = {
+#ifdef CONFIG_SCHEDSTATS
 	{
 		.procname       = "sched_schedstats",
 		.data           = NULL,
@@ -3299,6 +3303,7 @@ static struct ctl_table sched_core_sysctls[] = {
 		.extra1         = SYSCTL_ZERO,
 		.extra2         = SYSCTL_ONE,
 	},
+#endif /* CONFIG_SCHEDSTATS */
 };
 static int __init sched_core_sysctl_init(void)
 {
@@ -3306,8 +3311,7 @@ static int __init sched_core_sysctl_init(void)
 	return 0;
 }
 late_initcall(sched_core_sysctl_init);
-#endif /* CONFIG_PROC_SYSCTL */
-#endif /* CONFIG_SCHEDSTATS */
+#endif /* CONFIG_SYSCTL */
 
 /*
  * wake_up_new_task - wake up a newly created task for the first time.
