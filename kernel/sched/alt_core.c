@@ -700,8 +700,10 @@ static inline void dequeue_task(struct task_struct *p, struct rq *rq, int flags)
 	__SCHED_DEQUEUE_TASK(p, rq, flags, update_sched_preempt_mask(rq));
 	--rq->nr_running;
 #ifdef CONFIG_SMP
-	if (1 == rq->nr_running)
+	if (1 == rq->nr_running) {
 		cpumask_clear_cpu(cpu_of(rq), &sched_rq_pending_mask);
+		rq->prio_balance_time = 0;
+	}
 #endif
 
 	sched_update_tick_dependency(rq);
@@ -720,8 +722,10 @@ static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
 	__SCHED_ENQUEUE_TASK(p, rq, flags, update_sched_preempt_mask(rq));
 	++rq->nr_running;
 #ifdef CONFIG_SMP
-	if (2 == rq->nr_running)
+	if (2 == rq->nr_running) {
 		cpumask_set_cpu(cpu_of(rq), &sched_rq_pending_mask);
+		rq->prio_balance_time = rq->clock;
+	}
 #endif
 
 	sched_update_tick_dependency(rq);
@@ -2011,7 +2015,7 @@ sched_preempt_mask_flush(cpumask_t *mask, int prio, int ref)
 }
 
 static inline int
-preempt_mask_check(cpumask_t *preempt_mask, cpumask_t *allow_mask, int prio)
+preempt_mask_check(cpumask_t *preempt_mask, const cpumask_t *allow_mask, int prio)
 {
 	cpumask_t *mask = sched_preempt_mask + prio;
 	int pr = atomic_read(&sched_prio_record);
@@ -3203,7 +3207,6 @@ int sched_cgroup_fork(struct task_struct *p, struct kernel_clone_args *kargs)
 #endif
 
 	if (p->time_slice < RESCHED_NS) {
-		p->time_slice = sysctl_sched_base_slice;
 		resched_curr(rq);
 	}
 	sched_task_fork(p, rq);
@@ -4489,15 +4492,19 @@ static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 
 			if ((nr_migrated = migrate_pending_tasks(src_rq, rq, cpu))) {
 				src_rq->nr_running -= nr_migrated;
-				if (src_rq->nr_running < 2)
+				if (src_rq->nr_running < 2) {
+					rq->prio_balance_time = 0;
 					cpumask_clear_cpu(i, &sched_rq_pending_mask);
+				}
 
 				spin_release(&src_rq->lock.dep_map, _RET_IP_);
 				do_raw_spin_unlock(&src_rq->lock);
 
 				rq->nr_running += nr_migrated;
-				if (rq->nr_running > 1)
+				if (rq->nr_running > 1) {
+					rq->prio_balance_time = rq->clock;
 					cpumask_set_cpu(cpu, &sched_rq_pending_mask);
+				}
 
 				update_sched_preempt_mask(rq);
 				cpufreq_update_util(rq, 0);
@@ -4522,6 +4529,77 @@ static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 
 	if (SCHED_FIFO != p->policy && task_on_rq_queued(p))
 		requeue_task(p, rq);
+}
+
+static inline int balance_select_task_rq(struct task_struct *p)
+{
+	cpumask_t mask;
+	int cpu = task_cpu(p);
+
+	if (cpumask_empty(sched_idle_mask) &&
+	    cpumask_and(&mask, p->cpus_ptr, cpu_active_mask) &&
+	    preempt_mask_check(&mask, &mask, task_sched_prio(p))) {
+		return best_mask_cpu(cpu, &mask);
+	}
+
+	return cpu;
+}
+
+static inline void
+__move_queued_task(struct rq *rq, struct task_struct *p, struct rq *dest_rq, int dest_cpu)
+{
+	WRITE_ONCE(p->on_rq, TASK_ON_RQ_MIGRATING);
+	dequeue_task(p, rq, 0);
+	set_task_cpu(p, dest_cpu);
+
+	sched_mm_cid_migrate_to(dest_rq, p);
+
+	sched_task_sanity_check(p, dest_rq);
+	enqueue_task(p, dest_rq, 0);
+	WRITE_ONCE(p->on_rq, TASK_ON_RQ_QUEUED);
+	wakeup_preempt(dest_rq);
+}
+
+static inline void prio_balance(struct rq *rq)
+{
+	struct task_struct *p, *next;
+	int cpu, dest_cpu;
+
+	if (!rq->online)
+		return;
+
+	if (0 == rq->prio_balance_time)
+		return;
+
+	if (rq->clock - rq->prio_balance_time < sysctl_sched_base_slice << 2)
+		return;
+
+	rq->prio_balance_time = rq->clock;
+	cpu = cpu_of(rq);
+
+	if (!cpumask_empty(sched_idle_mask))
+		return;
+
+	p = sched_rq_next_task(rq->curr, rq);
+	while (p != rq->idle) {
+		next = sched_rq_next_task(p, rq);
+		if (!is_migration_disabled(p) && (dest_cpu = balance_select_task_rq(p)) != cpu) {
+			struct rq *dest_rq;
+
+			dest_rq = cpu_rq(dest_cpu);
+
+			if (do_raw_spin_trylock(&dest_rq->lock)) {
+				spin_acquire(&dest_rq->lock.dep_map,
+					     SINGLE_DEPTH_NESTING, 1, _RET_IP_);
+
+				__move_queued_task(rq, p, dest_rq, dest_cpu);
+
+				spin_release(&dest_rq->lock.dep_map, _RET_IP_);
+				do_raw_spin_unlock(&dest_rq->lock);
+			}
+		}
+		p = next;
+	}
 }
 
 /*
@@ -4769,6 +4847,7 @@ picked:
 		cpu = cpu_of(rq);
 	} else {
 		__balance_callbacks(rq);
+		prio_balance(rq);
 		raw_spin_unlock_irq(&rq->lock);
 	}
 }
@@ -6403,6 +6482,7 @@ void __init sched_init(void)
 
 		sched_queue_init(&rq->queue);
 		rq->prio = IDLE_TASK_SCHED_PRIO;
+		rq->prio_balance_time = 0;
 #ifdef CONFIG_SCHED_PDS
 		rq->prio_idx = rq->prio;
 #endif
