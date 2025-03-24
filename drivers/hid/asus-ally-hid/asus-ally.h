@@ -9,13 +9,16 @@
  #define __ASUS_ALLY_H
 
 #include <linux/hid.h>
+#include <linux/led-class-multicolor.h>
 #include <linux/types.h>
 
 #define HID_ALLY_INTF_CFG_IN 0x83
+#define HID_ALLY_X_INTF_IN 0x87
 
 #define HID_ALLY_REPORT_SIZE 64
 #define HID_ALLY_GET_REPORT_ID 0x0D
 #define HID_ALLY_SET_REPORT_ID 0x5A
+#define HID_ALLY_SET_RGB_REPORT_ID 0x5D
 #define HID_ALLY_FEATURE_CODE_PAGE 0xD1
 
 #define HID_ALLY_X_INPUT_REPORT 0x0B
@@ -44,10 +47,35 @@ enum ally_command_codes {
     CMD_SET_ANTI_DEADZONE           = 0x18,
 };
 
+struct ally_rgb_resume_data {
+	uint8_t brightness;
+	uint8_t red[4];
+	uint8_t green[4];
+	uint8_t blue[4];
+	bool initialized;
+};
+
+struct ally_rgb_dev {
+	struct ally_handheld *ally;
+	struct hid_device *hdev;
+	struct led_classdev_mc led_rgb_dev;
+	struct work_struct work;
+	bool output_worker_initialized;
+	spinlock_t lock;
+
+	bool removed;
+	bool update_rgb;
+	uint8_t red[4];
+	uint8_t green[4];
+	uint8_t blue[4];
+};
+
 struct ally_handheld {
 	/* All read/write to IN interfaces must lock */
 	struct mutex intf_mutex;
 	struct hid_device *cfg_hdev;
+
+	struct ally_rgb_dev *led_rgb_dev;
 };
 
 int ally_gamepad_send_packet(struct ally_handheld *ally,
@@ -66,5 +94,10 @@ int ally_gamepad_send_two_byte_packet(struct ally_handheld *ally,
 				      u8 param1, u8 param2);
 int ally_gamepad_check_ready(struct hid_device *hdev);
 u8 get_endpoint_address(struct hid_device *hdev);
+
+int ally_rgb_create(struct hid_device *hdev, struct ally_handheld *ally);
+void ally_rgb_remove(struct hid_device *hdev, struct ally_handheld *ally);
+void ally_rgb_store_settings(struct ally_handheld *ally);
+void ally_rgb_resume(struct ally_handheld *ally);
 
 #endif /* __ASUS_ALLY_H */

@@ -26,6 +26,7 @@ static const struct hid_device_id rog_ally_devices[] = {
 static DEFINE_MUTEX(ally_data_mutex);
 static struct ally_handheld ally_drvdata = {
     .cfg_hdev = NULL,
+    .led_rgb_dev = NULL,
 };
 
 static inline int asus_dev_set_report(struct hid_device *hdev, const u8 *buf, size_t len)
@@ -292,6 +293,15 @@ static int ally_hid_probe(struct hid_device *hdev, const struct hid_device_id *_
 	if (ret < 0)
 		goto err_close;
 
+	if (ep == HID_ALLY_INTF_CFG_IN) {
+		ret = ally_rgb_create(hdev, &ally_drvdata);
+		if (ret < 0)
+			hid_err(hdev, "Failed to create Ally gamepad LEDs.\n");
+			 /* Non-fatal, continue without RGB features */
+		else
+			hid_info(hdev, "Created Ally RGB LED controls.\n");
+	}
+
 	return 0;
 
 err_close:
@@ -303,6 +313,15 @@ err_stop:
 
 static void ally_hid_remove(struct hid_device *hdev)
 {
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+
+	if (!ally)
+		goto out;
+
+	if (ally->led_rgb_dev)
+		ally_rgb_remove(hdev, ally);
+
+out:
 	hid_hw_close(hdev);
 	hid_hw_stop(hdev);
 }
@@ -323,6 +342,8 @@ static int ally_hid_reset_resume(struct hid_device *hdev)
 	if (ret < 0)
 		return ret;
 
+	ally_rgb_resume(ally);
+
 	return 0;
 }
 
@@ -336,8 +357,21 @@ static int ally_pm_thaw(struct device *dev)
 	return ally_hid_reset_resume(hdev);
 }
 
+static int ally_pm_prepare(struct device *dev)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+
+	if (ally->led_rgb_dev) {
+		ally_rgb_store_settings(ally);
+	}
+
+	return 0;
+}
+
 static const struct dev_pm_ops ally_pm_ops = {
 	.thaw = ally_pm_thaw,
+	.prepare = ally_pm_prepare,
 };
 
 MODULE_DEVICE_TABLE(hid, rog_ally_devices);

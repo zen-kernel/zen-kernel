@@ -2,4 +2,5 @@
 #
 # Makefile - ASUS ROG Ally handheld device driver
 #
-obj-$(CONFIG_ASUS_ALLY_HID)	+= asus-ally-hid-core.o
+asus-ally-hid-y := asus-ally-hid-core.o asus-ally-rgb.o
+obj-$(CONFIG_ASUS_ALLY_HID) := asus-ally-hid.o
