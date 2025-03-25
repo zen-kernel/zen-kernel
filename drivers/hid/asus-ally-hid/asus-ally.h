@@ -71,7 +71,25 @@ struct ally_rgb_dev {
 	uint8_t blue[4];
 };
 
+/* rumble packet structure */
+struct ff_data {
+	u8 enable;
+	u8 magnitude_left;
+	u8 magnitude_right;
+	u8 magnitude_strong;
+	u8 magnitude_weak;
+	u8 pulse_sustain_10ms;
+	u8 pulse_release_10ms;
+	u8 loop_count;
+} __packed;
+
+struct ff_report {
+	u8 report_id;
+	struct ff_data ff;
+} __packed;
+
 struct ally_x_input {
+	struct ally_handheld *ally;
 	struct input_dev *input;
 	struct hid_device *hdev;
 	spinlock_t lock;
@@ -83,6 +101,9 @@ struct ally_x_input {
 	bool right_qam_steam_mode;
 	/* Prevent multiple queued event due to the enforced delay in worker */
 	bool update_qam_chord;
+
+	struct ff_report *ff_packet;
+	bool update_ff;
 };
 
 struct ally_handheld {

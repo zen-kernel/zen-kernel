@@ -28,12 +28,28 @@ static const int hat_values[][2] = {
 static void ally_x_work(struct work_struct *work)
 {
 	struct ally_x_input *ally_x = container_of(work, struct ally_x_input, output_worker);
+	struct ff_report *ff_report = NULL;
 	bool update_qam_chord = false;
+	bool update_ff = false;
 	unsigned long flags;
 
 	spin_lock_irqsave(&ally_x->lock, flags);
 	update_qam_chord = ally_x->update_qam_chord;
+
+	update_ff = ally_x->update_ff;
+	if (ally_x->update_ff) {
+		ff_report = kmemdup(ally_x->ff_packet, sizeof(*ally_x->ff_packet), GFP_KERNEL);
+		ally_x->update_ff = false;
+	}
 	spin_unlock_irqrestore(&ally_x->lock, flags);
+
+	if (update_ff && ff_report) {
+		ff_report->ff.magnitude_left = ff_report->ff.magnitude_strong;
+		ff_report->ff.magnitude_right = ff_report->ff.magnitude_weak;
+		ally_gamepad_send_packet(ally_x->ally, ally_x->hdev,
+					 (u8 *)ff_report, sizeof(*ff_report));
+	}
+	kfree(ff_report);
 
 	if (update_qam_chord) {
 		/*
@@ -53,6 +69,28 @@ static void ally_x_work(struct work_struct *work)
 		ally_x->update_qam_chord = false;
 		spin_unlock_irqrestore(&ally_x->lock, flags);
 	}
+}
+
+static int ally_x_play_effect(struct input_dev *idev, void *data, struct ff_effect *effect)
+{
+	struct hid_device *hdev = input_get_drvdata(idev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	struct ally_x_input *ally_x = ally->ally_x_input;
+	unsigned long flags;
+
+	if (effect->type != FF_RUMBLE)
+		return 0;
+
+	spin_lock_irqsave(&ally_x->lock, flags);
+	ally_x->ff_packet->ff.magnitude_strong = effect->u.rumble.strong_magnitude / 512;
+	ally_x->ff_packet->ff.magnitude_weak = effect->u.rumble.weak_magnitude / 512;
+	ally_x->update_ff = true;
+	spin_unlock_irqrestore(&ally_x->lock, flags);
+
+	if (ally_x->output_worker_initialized)
+		schedule_work(&ally_x->output_worker);
+
+	return 0;
 }
 
 /* Return true if event was handled, otherwise false */
@@ -219,6 +257,9 @@ static int ally_x_setup_input(struct hid_device *hdev, struct ally_x_input *ally
 	input_set_capability(input, EV_KEY, BTN_TRIGGER_HAPPY);
 	input_set_capability(input, EV_KEY, BTN_TRIGGER_HAPPY1);
 
+	input_set_capability(input, EV_FF, FF_RUMBLE);
+	input_ff_create_memless(input, NULL, ally_x_play_effect);
+
 	ret = input_register_device(input);
 	if (ret) {
 		input_unregister_device(input);
@@ -234,6 +275,7 @@ int ally_x_create(struct hid_device *hdev, struct ally_handheld *ally)
 {
 	uint8_t max_output_report_size;
 	struct ally_x_input *ally_x;
+	struct ff_report *ff_report;
 	int ret;
 
 	ally_x = devm_kzalloc(&hdev->dev, sizeof(*ally_x), GFP_KERNEL);
@@ -241,6 +283,7 @@ int ally_x_create(struct hid_device *hdev, struct ally_handheld *ally)
 		return -ENOMEM;
 
 	ally_x->hdev = hdev;
+	ally_x->ally = ally;
 	ally->ally_x_input = ally_x;
 
 	max_output_report_size = sizeof(struct ally_x_input_report);
@@ -254,6 +297,20 @@ int ally_x_create(struct hid_device *hdev, struct ally_handheld *ally)
 	ally_x->output_worker_initialized = true;
 	ally_x->right_qam_steam_mode =
 		true;
+
+	ff_report = devm_kzalloc(&hdev->dev, sizeof(*ff_report), GFP_KERNEL);
+	if (!ff_report) {
+		ret = -ENOMEM;
+		goto free_ally_x;
+	}
+
+	/* None of these bytes will change for the FF command for now */
+	ff_report->report_id = 0x0D;
+	ff_report->ff.enable = 0x0F; /* Enable all by default */
+	ff_report->ff.pulse_sustain_10ms = 0xFF; /* Duration */
+	ff_report->ff.pulse_release_10ms = 0x00; /* Start Delay */
+	ff_report->ff.loop_count = 0xEB; /* Loop Count */
+	ally_x->ff_packet = ff_report;
 
 	if (sysfs_create_file(&hdev->dev.kobj, &dev_attr_ally_x_qam_mode.attr)) {
 		ret = -ENODEV;
