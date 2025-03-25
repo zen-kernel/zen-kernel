@@ -5,6 +5,7 @@
  *  Copyright (c) 2023 Luke Jones <luke@ljones.dev>
  */
 
+#include "linux/delay.h"
 #include "linux/input-event-codes.h"
 #include <linux/hid.h>
 #include <linux/types.h>
@@ -24,11 +25,42 @@ static const int hat_values[][2] = {
 	{ 0, 1 }, { -1, 1 }, { -1, 0 }, { -1, -1 },
 };
 
+static void ally_x_work(struct work_struct *work)
+{
+	struct ally_x_input *ally_x = container_of(work, struct ally_x_input, output_worker);
+	bool update_qam_chord = false;
+	unsigned long flags;
+
+	spin_lock_irqsave(&ally_x->lock, flags);
+	update_qam_chord = ally_x->update_qam_chord;
+	spin_unlock_irqrestore(&ally_x->lock, flags);
+
+	if (update_qam_chord) {
+		/*
+		 * The sleeps here are required to allow steam to register the button combo.
+		 */
+		input_report_key(ally_x->input, BTN_MODE, 1);
+		input_sync(ally_x->input);
+		msleep(150);
+		input_report_key(ally_x->input, BTN_A, 1);
+		input_sync(ally_x->input);
+		input_report_key(ally_x->input, BTN_A, 0);
+		input_sync(ally_x->input);
+		input_report_key(ally_x->input, BTN_MODE, 0);
+		input_sync(ally_x->input);
+
+		spin_lock_irqsave(&ally_x->lock, flags);
+		ally_x->update_qam_chord = false;
+		spin_unlock_irqrestore(&ally_x->lock, flags);
+	}
+}
+
 /* Return true if event was handled, otherwise false */
 bool ally_x_raw_event(struct ally_x_input *ally_x, struct hid_report *report, u8 *data,
 			    int size)
 {
 	struct ally_x_input_report *in_report;
+	unsigned long flags;
 	u8 byte;
 
 	if (data[0] == 0x0B) {
@@ -63,6 +95,33 @@ bool ally_x_raw_event(struct ally_x_input *ally_x, struct hid_report *report, u8
 
 		return true;
 	}
+	/*
+	 * The MCU used on Ally provides many devices: gamepad, keyboord, mouse, other.
+	 * The AC and QAM buttons route through another interface making it difficult to
+	 * use the events unless we grab those and use them here. Only works for Ally X.
+	 */
+	else if (data[0] == 0x5A) {
+		if (ally_x->right_qam_steam_mode) {
+			spin_lock_irqsave(&ally_x->lock, flags);
+			if (data[1] == 0x38 && !ally_x->update_qam_chord) {
+				ally_x->update_qam_chord = true;
+				if (ally_x->output_worker_initialized)
+					schedule_work(&ally_x->output_worker);
+			}
+			spin_unlock_irqrestore(&ally_x->lock, flags);
+		} else {
+			input_report_key(ally_x->input, KEY_F19, data[1] == 0x38);
+		}
+		/* Left/XBox button */
+		input_report_key(ally_x->input, BTN_MODE, data[1] == 0xA6);
+		/* QAM long press */
+		input_report_key(ally_x->input, KEY_F17, data[1] == 0xA7);
+		/* QAM long press released */
+		input_report_key(ally_x->input, KEY_F18, data[1] == 0xA8);
+		input_sync(ally_x->input);
+
+		return data[1] == 0xA6 || data[1] == 0xA7 || data[1] == 0xA8 || data[1] == 0x38;
+	}
 
 	return false;
 }
@@ -87,6 +146,41 @@ static struct input_dev *ally_x_alloc_input_dev(struct hid_device *hdev,
 
 	return input_dev;
 }
+
+static ssize_t ally_x_qam_mode_show(struct device *dev, struct device_attribute *attr,
+								char *buf)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	struct ally_x_input *ally_x = ally->ally_x_input;
+
+	if (!ally_x)
+		return -ENODEV;
+
+	return sysfs_emit(buf, "%d\n", ally_x->right_qam_steam_mode);
+}
+
+static ssize_t ally_x_qam_mode_store(struct device *dev, struct device_attribute *attr,
+				     const char *buf, size_t count)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	struct ally_x_input *ally_x = ally->ally_x_input;
+	bool val;
+	int ret;
+
+	if (!ally_x)
+		return -ENODEV;
+
+	ret = kstrtobool(buf, &val);
+	if (ret < 0)
+		return ret;
+
+	ally_x->right_qam_steam_mode = val;
+
+	return count;
+}
+ALLY_DEVICE_ATTR_RW(ally_x_qam_mode, qam_mode);
 
 static int ally_x_setup_input(struct hid_device *hdev, struct ally_x_input *ally_x)
 {
@@ -155,11 +249,24 @@ int ally_x_create(struct hid_device *hdev, struct ally_handheld *ally)
 	if (ret)
 		goto free_ally_x;
 
+	INIT_WORK(&ally_x->output_worker, ally_x_work);
+	spin_lock_init(&ally_x->lock);
+	ally_x->output_worker_initialized = true;
+	ally_x->right_qam_steam_mode =
+		true;
+
+	if (sysfs_create_file(&hdev->dev.kobj, &dev_attr_ally_x_qam_mode.attr)) {
+		ret = -ENODEV;
+		goto unregister_input;
+	}
+
 	hid_info(hdev, "Registered Ally X controller using %s\n",
-		 dev_name(&ally_x->input->dev));
+			dev_name(&ally_x->input->dev));
 
 	return 0;
 
+unregister_input:
+	input_unregister_device(ally_x->input);
 free_ally_x:
 	devm_kfree(&hdev->dev, ally_x);
 	return ret;
@@ -167,5 +274,12 @@ free_ally_x:
 
 void ally_x_remove(struct hid_device *hdev, struct ally_handheld *ally)
 {
-	ally->ally_x_input = NULL;
+	if (ally->ally_x_input) {
+		sysfs_remove_file(&hdev->dev.kobj, &dev_attr_ally_x_qam_mode.attr);
+
+		if (ally->ally_x_input->output_worker_initialized)
+			cancel_work_sync(&ally->ally_x_input->output_worker);
+
+		ally->ally_x_input = NULL;
+	}
 }

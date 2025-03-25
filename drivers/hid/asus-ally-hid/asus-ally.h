@@ -74,6 +74,15 @@ struct ally_rgb_dev {
 struct ally_x_input {
 	struct input_dev *input;
 	struct hid_device *hdev;
+	spinlock_t lock;
+
+	struct work_struct output_worker;
+	bool output_worker_initialized;
+
+	/* Set if the right QAM emits Home + A chord */
+	bool right_qam_steam_mode;
+	/* Prevent multiple queued event due to the enforced delay in worker */
+	bool update_qam_chord;
 };
 
 struct ally_handheld {
@@ -112,5 +121,9 @@ int ally_x_create(struct hid_device *hdev, struct ally_handheld *ally);
 void ally_x_remove(struct hid_device *hdev, struct ally_handheld *ally);
 bool ally_x_raw_event(struct ally_x_input *ally_x, struct hid_report *report, u8 *data,
 			    int size);
+
+#define ALLY_DEVICE_ATTR_RW(_name, _sysfs_name)    \
+	struct device_attribute dev_attr_##_name = \
+		__ATTR(_sysfs_name, 0644, _name##_show, _name##_store)
 
 #endif /* __ASUS_ALLY_H */
