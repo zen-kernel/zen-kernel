@@ -27,6 +27,7 @@ static DEFINE_MUTEX(ally_data_mutex);
 static struct ally_handheld ally_drvdata = {
     .cfg_hdev = NULL,
     .led_rgb_dev = NULL,
+    .ally_x_input = NULL,
 };
 
 static inline int asus_dev_set_report(struct hid_device *hdev, const u8 *buf, size_t len)
@@ -229,6 +230,28 @@ u8 get_endpoint_address(struct hid_device *hdev)
 /* ROG Ally driver init                                                                           */
 /**************************************************************************************************/
 
+static int ally_raw_event(struct hid_device *hdev, struct hid_report *report, u8 *data,
+					int size)
+{
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	struct ally_x_input *ally_x;
+
+	if (!ally)
+		return -ENODEV;
+
+	ally_x = ally->ally_x_input;
+	if (ally_x) {
+		if ((hdev->bus == BUS_USB && report->id == HID_ALLY_X_INPUT_REPORT &&
+		   size == HID_ALLY_X_INPUT_REPORT_SIZE) ||
+		   (data[0] == 0x5A)) {
+			if (ally_x_raw_event(ally_x, report, data, size))
+				return 0;
+		}
+	}
+
+	return 0;
+}
+
 static int ally_hid_init(struct hid_device *hdev)
 {
 	int ret;
@@ -302,6 +325,22 @@ static int ally_hid_probe(struct hid_device *hdev, const struct hid_device_id *_
 			hid_info(hdev, "Created Ally RGB LED controls.\n");
 	}
 
+	if (ep == HID_ALLY_X_INTF_IN) {
+		ret = ally_x_create(hdev, &ally_drvdata);
+		if (ret < 0) {
+			hid_err(hdev, "Failed to create Ally X gamepad device.\n");
+			ally_drvdata.ally_x_input = NULL;
+			goto err_close;
+		} else {
+			hid_info(hdev, "Created Ally X gamepad device.\n");
+		}
+		// Not required since we send this inputs ep through the gamepad input dev
+		// if (drvdata.gamepad_cfg && drvdata.gamepad_cfg->input) {
+		// 	input_unregister_device(drvdata.gamepad_cfg->input);
+		// 	hid_info(hdev, "Ally X removed unrequired input dev.\n");
+		// }
+	}
+
 	return 0;
 
 err_close:
@@ -320,6 +359,9 @@ static void ally_hid_remove(struct hid_device *hdev)
 
 	if (ally->led_rgb_dev)
 		ally_rgb_remove(hdev, ally);
+
+	if (ally->ally_x_input)
+		ally_x_remove(hdev, ally);
 
 out:
 	hid_hw_close(hdev);
@@ -380,6 +422,7 @@ static struct hid_driver rog_ally_cfg = { .name = "asus_rog_ally",
 		.id_table = rog_ally_devices,
 		.probe = ally_hid_probe,
 		.remove = ally_hid_remove,
+		.raw_event = ally_raw_event,
 		/* ALLy 1 requires this to reset device state correctly */
 		.reset_resume = ally_hid_reset_resume,
 		.driver = {

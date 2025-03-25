@@ -22,6 +22,7 @@
 #define HID_ALLY_FEATURE_CODE_PAGE 0xD1
 
 #define HID_ALLY_X_INPUT_REPORT 0x0B
+#define HID_ALLY_X_INPUT_REPORT_SIZE 16
 
 enum ally_command_codes {
     CMD_SET_GAMEPAD_MODE            = 0x01,
@@ -70,12 +71,19 @@ struct ally_rgb_dev {
 	uint8_t blue[4];
 };
 
+struct ally_x_input {
+	struct input_dev *input;
+	struct hid_device *hdev;
+};
+
 struct ally_handheld {
 	/* All read/write to IN interfaces must lock */
 	struct mutex intf_mutex;
 	struct hid_device *cfg_hdev;
 
 	struct ally_rgb_dev *led_rgb_dev;
+
+	struct ally_x_input *ally_x_input;
 };
 
 int ally_gamepad_send_packet(struct ally_handheld *ally,
@@ -99,5 +107,10 @@ int ally_rgb_create(struct hid_device *hdev, struct ally_handheld *ally);
 void ally_rgb_remove(struct hid_device *hdev, struct ally_handheld *ally);
 void ally_rgb_store_settings(struct ally_handheld *ally);
 void ally_rgb_resume(struct ally_handheld *ally);
+
+int ally_x_create(struct hid_device *hdev, struct ally_handheld *ally);
+void ally_x_remove(struct hid_device *hdev, struct ally_handheld *ally);
+bool ally_x_raw_event(struct ally_x_input *ally_x, struct hid_report *report, u8 *data,
+			    int size);
 
 #endif /* __ASUS_ALLY_H */
