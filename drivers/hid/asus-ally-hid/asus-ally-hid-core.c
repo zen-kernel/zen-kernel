@@ -24,6 +24,9 @@ static const struct hid_device_id rog_ally_devices[] = {
 	{}
 };
 
+const char * ally_keyboard_name = "ROG Ally Keyboard";
+const char * ally_mouse_name = "ROG Ally Mouse";
+
 /* Changes to ally_drvdata must lock */
 static DEFINE_MUTEX(ally_data_mutex);
 static struct ally_handheld ally_drvdata = {
@@ -388,6 +391,21 @@ cleanup:
 	return ret;
 }
 
+static int ally_input_configured(struct hid_device *hdev, struct hid_input *hi)
+{
+	int ep = get_endpoint_address(hdev);
+
+	hid_info(hdev, "Input configured: endpoint 0x%02x, name: %s\n", ep, hi->input->name);
+
+	if (ep == HID_ALLY_KEYBOARD_INTF_IN)
+		hi->input->name = ally_keyboard_name;
+
+	if (ep == HID_ALLY_MOUSE_INTF_IN)
+		hi->input->name = ally_mouse_name;
+
+	return 0;
+}
+
 static int ally_hid_probe(struct hid_device *hdev, const struct hid_device_id *_id)
 {
 	int ret, ep;
@@ -545,6 +563,7 @@ static struct hid_driver rog_ally_cfg = { .name = "asus_rog_ally",
 		.probe = ally_hid_probe,
 		.remove = ally_hid_remove,
 		.raw_event = ally_raw_event,
+		.input_configured = ally_input_configured,
 		/* ALLy 1 requires this to reset device state correctly */
 		.reset_resume = ally_hid_reset_resume,
 		.driver = {

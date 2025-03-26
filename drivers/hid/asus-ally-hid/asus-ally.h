@@ -13,6 +13,7 @@
 #include <linux/types.h>
 
 #define HID_ALLY_KEYBOARD_INTF_IN 0x81
+#define HID_ALLY_MOUSE_INTF_IN 0x82
 #define HID_ALLY_INTF_CFG_IN 0x83
 #define HID_ALLY_X_INTF_IN 0x87
 
