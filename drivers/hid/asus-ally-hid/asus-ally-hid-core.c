@@ -6,6 +6,8 @@
  */
 
 #include "linux/mutex.h"
+#include "linux/stddef.h"
+#include "linux/types.h"
 #include <linux/usb.h>
 
 #include "../hid-ids.h"
@@ -230,14 +232,113 @@ u8 get_endpoint_address(struct hid_device *hdev)
 /* ROG Ally driver init                                                                           */
 /**************************************************************************************************/
 
+static int cad_sequence_state = 0;
+static unsigned long cad_last_event_time = 0;
+
+/* Ally left buton emits a sequence of events: ctrl+alt+del. Capture this and emit only a single code */
+static bool handle_ctrl_alt_del(struct hid_device *hdev, u8 *data, int size)
+{
+	if (size < 16 || data[0] != 0x01)
+		return false;
+
+	if (cad_sequence_state > 0 && time_after(jiffies, cad_last_event_time + msecs_to_jiffies(100)))
+		cad_sequence_state = 0;
+
+	cad_last_event_time = jiffies;
+
+	switch (cad_sequence_state) {
+	case 0:
+		if (data[1] == 0x01 && data[2] == 0x00 && data[3] == 0x00) {
+			cad_sequence_state = 1;
+			data[1] = 0x00;
+			return true;
+		}
+		break;
+	case 1:
+		if (data[1] == 0x05 && data[2] == 0x00 && data[3] == 0x00) {
+			cad_sequence_state = 2;
+			data[1] = 0x00;
+			return true;
+		}
+		break;
+	case 2:
+		if (data[1] == 0x05 && data[2] == 0x00 && data[3] == 0x4c) {
+			cad_sequence_state = 3;
+			data[1] = 0x00;
+			data[3] = 0x6F; // F20;
+			return true;
+		}
+		break;
+	case 3:
+		if (data[1] == 0x04 && data[2] == 0x00 && data[3] == 0x4c) {
+			cad_sequence_state = 4;
+			data[1] = 0x00;
+			data[1] = data[3] = 0x00;
+			return true;
+		}
+		break;
+	case 4:
+		if (data[1] == 0x00 && data[2] == 0x00 && data[3] == 0x4c) {
+			cad_sequence_state = 5;
+			data[3] = 0x00;
+			return true;
+		}
+		break;
+	}
+	cad_sequence_state = 0;
+	return false;
+}
+
+static bool handle_ally_event(struct hid_device *hdev, u8 *data, int size)
+{
+	struct input_dev *keyboard_input;
+	int keycode = 0;
+
+	if (data[0] == 0x5A) {
+		switch (data[1]) {
+		case 0x38:
+			keycode = KEY_F19;
+			break;
+		case 0xA6:
+			keycode = KEY_F16;
+			break;
+		case 0xA7:
+			keycode = KEY_F17;
+			break;
+		case 0xA8:
+			keycode = KEY_F18;
+			break;
+		default:
+			return false;
+		}
+
+		keyboard_input = ally_drvdata.keyboard_input;
+		if (keyboard_input) {
+			input_report_key(keyboard_input, keycode, 1);
+			input_sync(keyboard_input);
+			input_report_key(keyboard_input, keycode, 0);
+			input_sync(keyboard_input);
+			return true;
+		}
+
+		memset(data, 0, size);
+	}
+	return false;
+}
+
 static int ally_raw_event(struct hid_device *hdev, struct hid_report *report, u8 *data,
 					int size)
 {
 	struct ally_handheld *ally = hid_get_drvdata(hdev);
 	struct ally_x_input *ally_x;
+	int ep;
 
 	if (!ally)
 		return -ENODEV;
+
+	ep = get_endpoint_address(hdev);
+	if (ep != HID_ALLY_INTF_CFG_IN && ep != HID_ALLY_X_INTF_IN && ep != HID_ALLY_KEYBOARD_INTF_IN)
+		return 0;
 
 	ally_x = ally->ally_x_input;
 	if (ally_x) {
@@ -247,6 +348,17 @@ static int ally_raw_event(struct hid_device *hdev, struct hid_report *report, u8
 			if (ally_x_raw_event(ally_x, report, data, size))
 				return 0;
 		}
+	}
+
+	switch (ep) {
+	case HID_ALLY_INTF_CFG_IN:
+		if (handle_ally_event(hdev, data, size))
+			return 0;
+		break;
+	case HID_ALLY_KEYBOARD_INTF_IN:
+		if (handle_ctrl_alt_del(hdev, data, size))
+			return 0;
+		break;
 	}
 
 	return 0;
@@ -288,6 +400,8 @@ static int ally_hid_probe(struct hid_device *hdev, const struct hid_device_id *_
 	mutex_lock(&ally_data_mutex);
 	if (ep == HID_ALLY_INTF_CFG_IN)
 		ally_drvdata.cfg_hdev = hdev;
+	if (ep == HID_ALLY_KEYBOARD_INTF_IN)
+		ally_drvdata.keyboard_hdev = hdev;
 	mutex_unlock(&ally_data_mutex);
 	/*** CRITICAL END ***/
 
@@ -299,10 +413,19 @@ static int ally_hid_probe(struct hid_device *hdev, const struct hid_device_id *_
 		return ret;
 	}
 
-	ret = hid_hw_start(hdev, HID_CONNECT_HIDRAW);
-	if (ret) {
-		hid_err(hdev, "Failed to start HID device\n");
-		return ret;
+	if (ep == HID_ALLY_INTF_CFG_IN || ep == HID_ALLY_X_INTF_IN) {
+		ret = hid_hw_start(hdev, HID_CONNECT_HIDRAW);
+	} else if (ep == HID_ALLY_KEYBOARD_INTF_IN) {
+		ret = hid_hw_start(hdev, HID_CONNECT_HIDINPUT | HID_CONNECT_HIDRAW);
+		if (!list_empty(&hdev->inputs)) {
+			struct hid_input *hidinput = list_first_entry(&hdev->inputs, struct hid_input, list);
+			ally_drvdata.keyboard_input = hidinput->input;
+		}
+		hid_info(hdev, "Connected keyboard interface with input events\n");
+	} else {
+		ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
+		hid_info(hdev, "Passing through HID events for endpoint: 0x%02x\n", ep);
+		return 0;
 	}
 
 	ret = hid_hw_open(hdev);
@@ -320,7 +443,6 @@ static int ally_hid_probe(struct hid_device *hdev, const struct hid_device_id *_
 		ret = ally_rgb_create(hdev, &ally_drvdata);
 		if (ret < 0)
 			hid_err(hdev, "Failed to create Ally gamepad LEDs.\n");
-			 /* Non-fatal, continue without RGB features */
 		else
 			hid_info(hdev, "Created Ally RGB LED controls.\n");
 	}

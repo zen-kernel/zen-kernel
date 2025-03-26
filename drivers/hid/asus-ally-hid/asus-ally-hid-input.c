@@ -139,19 +139,23 @@ bool ally_x_raw_event(struct ally_x_input *ally_x, struct hid_report *report, u8
 	 * use the events unless we grab those and use them here. Only works for Ally X.
 	 */
 	else if (data[0] == 0x5A) {
-		if (ally_x->right_qam_steam_mode) {
+		if (ally_x->qam_mode) {
 			spin_lock_irqsave(&ally_x->lock, flags);
+			/* Right Armoury Crate button */
 			if (data[1] == 0x38 && !ally_x->update_qam_chord) {
 				ally_x->update_qam_chord = true;
 				if (ally_x->output_worker_initialized)
 					schedule_work(&ally_x->output_worker);
 			}
 			spin_unlock_irqrestore(&ally_x->lock, flags);
+			/* Left/XBox button */
+			input_report_key(ally_x->input, BTN_MODE, data[1] == 0xA6);
 		} else {
-			input_report_key(ally_x->input, KEY_F19, data[1] == 0x38);
+			/* Right Armoury Crate button */
+			input_report_key(ally_x->input, KEY_PROG1, data[1] == 0x38);
+			/* Left/XBox button */
+			input_report_key(ally_x->input, KEY_F16, data[1] == 0xA6);
 		}
-		/* Left/XBox button */
-		input_report_key(ally_x->input, BTN_MODE, data[1] == 0xA6);
 		/* QAM long press */
 		input_report_key(ally_x->input, KEY_F17, data[1] == 0xA7);
 		/* QAM long press released */
@@ -195,7 +199,7 @@ static ssize_t ally_x_qam_mode_show(struct device *dev, struct device_attribute 
 	if (!ally_x)
 		return -ENODEV;
 
-	return sysfs_emit(buf, "%d\n", ally_x->right_qam_steam_mode);
+	return sysfs_emit(buf, "%d\n", ally_x->qam_mode);
 }
 
 static ssize_t ally_x_qam_mode_store(struct device *dev, struct device_attribute *attr,
@@ -214,7 +218,7 @@ static ssize_t ally_x_qam_mode_store(struct device *dev, struct device_attribute
 	if (ret < 0)
 		return ret;
 
-	ally_x->right_qam_steam_mode = val;
+	ally_x->qam_mode = val;
 
 	return count;
 }
@@ -250,7 +254,6 @@ static int ally_x_setup_input(struct hid_device *hdev, struct ally_x_input *ally
 	input_set_capability(input, EV_KEY, BTN_THUMBR);
 
 	input_set_capability(input, EV_KEY, KEY_PROG1);
-	input_set_capability(input, EV_KEY, KEY_PROG2);
 	input_set_capability(input, EV_KEY, KEY_F16);
 	input_set_capability(input, EV_KEY, KEY_F17);
 	input_set_capability(input, EV_KEY, KEY_F18);
@@ -295,7 +298,7 @@ int ally_x_create(struct hid_device *hdev, struct ally_handheld *ally)
 	INIT_WORK(&ally_x->output_worker, ally_x_work);
 	spin_lock_init(&ally_x->lock);
 	ally_x->output_worker_initialized = true;
-	ally_x->right_qam_steam_mode =
+	ally_x->qam_mode =
 		true;
 
 	ff_report = devm_kzalloc(&hdev->dev, sizeof(*ff_report), GFP_KERNEL);

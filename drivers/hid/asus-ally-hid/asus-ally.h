@@ -12,6 +12,7 @@
 #include <linux/led-class-multicolor.h>
 #include <linux/types.h>
 
+#define HID_ALLY_KEYBOARD_INTF_IN 0x81
 #define HID_ALLY_INTF_CFG_IN 0x83
 #define HID_ALLY_X_INTF_IN 0x87
 
@@ -97,8 +98,8 @@ struct ally_x_input {
 	struct work_struct output_worker;
 	bool output_worker_initialized;
 
-	/* Set if the right QAM emits Home + A chord */
-	bool right_qam_steam_mode;
+	/* Set if the left QAM emits Guide/Mode and right QAM emits Home + A chord */
+	bool qam_mode;
 	/* Prevent multiple queued event due to the enforced delay in worker */
 	bool update_qam_chord;
 
@@ -114,6 +115,9 @@ struct ally_handheld {
 	struct ally_rgb_dev *led_rgb_dev;
 
 	struct ally_x_input *ally_x_input;
+
+	struct hid_device *keyboard_hdev;
+	struct input_dev *keyboard_input;
 };
 
 int ally_gamepad_send_packet(struct ally_handheld *ally,
