@@ -1,0 +1,8 @@
+config ASUS_ALLY_HID
+	tristate "Asus Ally handheld support"
+	depends on USB_HID
+	depends on LEDS_CLASS
+	depends on LEDS_CLASS_MULTICOLOR
+	select POWER_SUPPLY
+	help
+	Support for configuring the Asus ROG Ally gamepad using attributes.
