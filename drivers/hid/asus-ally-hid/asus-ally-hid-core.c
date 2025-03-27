@@ -458,6 +458,12 @@ static int ally_hid_probe(struct hid_device *hdev, const struct hid_device_id *_
 		goto err_close;
 
 	if (ep == HID_ALLY_INTF_CFG_IN) {
+		ret = ally_config_create(hdev, &ally_drvdata);
+		if (ret < 0)
+			hid_err(hdev, "Failed to create Ally configuration interface.\n");
+		else
+			hid_info(hdev, "Created Ally configuration interface.\n");
+
 		ret = ally_rgb_create(hdev, &ally_drvdata);
 		if (ret < 0)
 			hid_err(hdev, "Failed to create Ally gamepad LEDs.\n");
@@ -499,6 +505,9 @@ static void ally_hid_remove(struct hid_device *hdev)
 
 	if (ally->led_rgb_dev)
 		ally_rgb_remove(hdev, ally);
+
+	if (ally->config)
+		ally_config_remove(hdev, ally);
 
 	if (ally->ally_x_input)
 		ally_x_remove(hdev, ally);

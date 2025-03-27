@@ -108,6 +108,37 @@ struct ally_x_input {
 	bool update_ff;
 };
 
+struct ally_config {
+	struct hid_device *hdev;
+	/* Must be locked if the data is being changed */
+	struct mutex config_mutex;
+	bool initialized;
+
+	/* Device capabilities flags */
+	bool is_ally_x;
+	bool xbox_controller_support;
+	bool user_cal_support;
+	bool turbo_support;
+	bool resp_curve_support;
+	bool dir_to_btn_support;
+	bool gyro_support;
+	bool anti_deadzone_support;
+
+	/* Current settings */
+	bool xbox_controller_enabled;
+	u8 gamepad_mode;
+	u8 left_deadzone;
+	u8 left_outer_threshold;
+	u8 right_deadzone;
+	u8 right_outer_threshold;
+	u8 left_anti_deadzone;
+	u8 right_anti_deadzone;
+	u8 left_trigger_min;
+	u8 left_trigger_max;
+	u8 right_trigger_min;
+	u8 right_trigger_max;
+};
+
 struct ally_handheld {
 	/* All read/write to IN interfaces must lock */
 	struct mutex intf_mutex;
@@ -119,6 +150,8 @@ struct ally_handheld {
 
 	struct hid_device *keyboard_hdev;
 	struct input_dev *keyboard_input;
+
+	struct ally_config *config;
 };
 
 int ally_gamepad_send_packet(struct ally_handheld *ally,
@@ -147,6 +180,9 @@ int ally_x_create(struct hid_device *hdev, struct ally_handheld *ally);
 void ally_x_remove(struct hid_device *hdev, struct ally_handheld *ally);
 bool ally_x_raw_event(struct ally_x_input *ally_x, struct hid_report *report, u8 *data,
 			    int size);
+
+int ally_config_create(struct hid_device *hdev, struct ally_handheld *ally);
+void ally_config_remove(struct hid_device *hdev, struct ally_handheld *ally);
 
 #define ALLY_DEVICE_ATTR_RW(_name, _sysfs_name)    \
 	struct device_attribute dev_attr_##_name = \
