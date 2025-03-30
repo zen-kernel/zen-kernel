@@ -15,38 +15,6 @@
 #include "../hid-ids.h"
 
 /**
- * ally_request_response - Send a command and get response
- * @hdev: HID device
- * @hidbuf: Buffer containing the command (will be overwritten with response)
- *
- * Returns 0 on success, negative error code on failure
- * The response will be written to hidbuf
- */
-static int ally_request_response(struct hid_device *hdev, u8 *hidbuf)
-{
-	int ret;
-
-	hidbuf[0] = HID_ALLY_SET_REPORT_ID;
-	hidbuf[1] = HID_ALLY_FEATURE_CODE_PAGE;
-
-	ret = asus_dev_set_report(hdev, hidbuf, HID_ALLY_REPORT_SIZE);
-	if (ret < 0) {
-		hid_err(hdev, "Command failed set report: %d\n", ret);
-		return ret;
-	}
-
-	memset(hidbuf, 0, HID_ALLY_REPORT_SIZE);
-
-	ret = asus_dev_get_report(hdev, hidbuf, HID_ALLY_REPORT_SIZE);
-	if (ret < 0) {
-		hid_err(hdev, "Failed to get command response: %d\n", ret);
-		return ret;
-	}
-
-	return 0;
-}
-
-/**
  * ally_check_capability - Check if a specific capability is supported
  * @hdev: HID device
  * @flag_code: Capability flag code to check
@@ -55,6 +23,7 @@ static int ally_request_response(struct hid_device *hdev, u8 *hidbuf)
  */
 static bool ally_check_capability(struct hid_device *hdev, u8 flag_code)
 {
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
 	bool result = false;
 	u8 *hidbuf;
 	int ret;
@@ -68,7 +37,7 @@ static bool ally_check_capability(struct hid_device *hdev, u8 flag_code)
 	hidbuf[2] = flag_code;
 	hidbuf[3] = 0x01;
 
-	ret = ally_request_response(hdev, hidbuf);
+	ret = ally_gamepad_send_receive_packet(ally, hdev, hidbuf, HID_ALLY_REPORT_SIZE);
 	if (ret < 0)
 		goto cleanup;
 
@@ -121,6 +90,7 @@ static int ally_detect_capabilities(struct hid_device *hdev,
 static int ally_set_xbox_controller(struct hid_device *hdev,
 				    struct ally_config *cfg, bool enabled)
 {
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
 	u8 buffer[64] = { 0 };
 	int ret;
 
@@ -133,9 +103,10 @@ static int ally_set_xbox_controller(struct hid_device *hdev,
 	buffer[3] = 0x01;
 	buffer[4] = enabled ? 0x01 : 0x00;
 
-	ret = asus_dev_set_report(hdev, buffer, sizeof(buffer));
-	if (ret < 0)
-		return ret;
+	ret = ally_gamepad_send_one_byte_packet(
+		ally, hdev, CMD_SET_XBOX_CONTROLLER,
+		enabled ? 0x01 : 0x00);
+	if (ret < 0) return ret;
 
 	cfg->xbox_controller_enabled = enabled;
 	return 0;
@@ -187,8 +158,94 @@ static ssize_t xbox_controller_store(struct device *dev,
 
 static DEVICE_ATTR_RW(xbox_controller);
 
+/**
+ * ally_set_vibration_intensity - Set vibration intensity values
+ * @hdev: HID device
+ * @cfg: Ally config
+ * @left: Left motor intensity (0-100)
+ * @right: Right motor intensity (0-100)
+ *
+ * Returns 0 on success, negative error code on failure
+ */
+static int ally_set_vibration_intensity(struct hid_device *hdev,
+					struct ally_config *cfg, u8 left,
+					u8 right)
+{
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	u8 buffer[64] = { 0 };
+	int ret;
+
+	if (!cfg)
+		return -ENODEV;
+
+	buffer[0] = HID_ALLY_SET_REPORT_ID;
+	buffer[1] = HID_ALLY_FEATURE_CODE_PAGE;
+	buffer[2] = CMD_SET_VIBRATION_INTENSITY;
+	buffer[3] = 0x02; /* Length */
+	buffer[4] = left;
+	buffer[5] = right;
+
+	ret = ally_gamepad_send_two_byte_packet(
+		ally, hdev, CMD_SET_VIBRATION_INTENSITY, left, right);
+	if (ret < 0)
+		return ret;
+
+	mutex_lock(&cfg->config_mutex);
+	cfg->vibration_intensity_left = left;
+	cfg->vibration_intensity_right = right;
+	mutex_unlock(&cfg->config_mutex);
+
+	return 0;
+}
+
+static ssize_t vibration_intensity_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	struct ally_config *cfg;
+
+	if (!ally || !ally->config)
+		return -ENODEV;
+
+	cfg = ally->config;
+
+	return sprintf(buf, "%u,%u\n", cfg->vibration_intensity_left,
+		       cfg->vibration_intensity_right);
+}
+
+static ssize_t vibration_intensity_store(struct device *dev,
+					 struct device_attribute *attr,
+					 const char *buf, size_t count)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	struct ally_config *cfg;
+	u8 left, right;
+	int ret;
+
+	if (!ally || !ally->config)
+		return -ENODEV;
+
+	cfg = ally->config;
+
+	ret = sscanf(buf, "%hhu %hhu", &left, &right);
+	if (ret != 2 || left > 100 || right > 100)
+		return -EINVAL;
+
+	ret = ally_set_vibration_intensity(hdev, cfg, left, right);
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(vibration_intensity);
+
 static struct attribute *ally_config_attrs[] = {
 	&dev_attr_xbox_controller.attr,
+	&dev_attr_vibration_intensity.attr,
 	NULL
 };
 
@@ -249,6 +306,10 @@ int ally_config_create(struct hid_device *hdev, struct ally_handheld *ally)
 	cfg->left_outer_threshold = 90;
 	cfg->right_deadzone = 10;
 	cfg->right_outer_threshold = 90;
+
+	cfg->vibration_intensity_left = 100;
+	cfg->vibration_intensity_right = 100;
+	cfg->vibration_active = false;
 
 	// ONLY FOR ALLY 1
 	if (cfg->xbox_controller_support) {
