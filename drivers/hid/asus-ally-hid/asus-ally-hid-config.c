@@ -243,6 +243,190 @@ static ssize_t vibration_intensity_store(struct device *dev,
 
 static DEVICE_ATTR_RW(vibration_intensity);
 
+/**
+ * ally_set_dzot_ranges - Generic function to set joystick or trigger ranges
+ * @hdev: HID device
+ * @cfg: Ally config struct
+ * @command: Command to use (CMD_SET_JOYSTICK_DEADZONE or CMD_SET_TRIGGER_RANGE)
+ * @param1: First parameter
+ * @param2: Second parameter
+ * @param3: Third parameter
+ * @param4: Fourth parameter
+ *
+ * Returns 0 on success, negative error code on failure
+ */
+static int ally_set_dzot_ranges(struct hid_device *hdev,
+					       struct ally_config *cfg,
+					       u8 command, u8 param1, u8 param2,
+					       u8 param3, u8 param4)
+{
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	u8 packet[HID_ALLY_REPORT_SIZE] = { 0 };
+	int ret;
+
+	packet[0] = HID_ALLY_SET_REPORT_ID;
+	packet[1] = HID_ALLY_FEATURE_CODE_PAGE;
+	packet[2] = command;
+	packet[3] = 0x04; /* Length */
+	packet[4] = param1;
+	packet[5] = param2;
+	packet[6] = param3;
+	packet[7] = param4;
+
+	ret = ally_gamepad_send_packet(ally, hdev, packet,
+				       HID_ALLY_REPORT_SIZE);
+	return ret;
+}
+
+static int ally_validate_joystick_dzot(u8 left_dz, u8 left_ot, u8 right_dz,
+				       u8 right_ot)
+{
+	if (left_dz > 50 || right_dz > 50)
+		return -EINVAL;
+
+	if (left_ot < 70 || left_ot > 100 || right_ot < 70 || right_ot > 100)
+		return -EINVAL;
+
+	return 0;
+}
+
+static int ally_set_joystick_dzot(struct hid_device *hdev,
+				  struct ally_config *cfg, u8 left_dz,
+				  u8 left_ot, u8 right_dz, u8 right_ot)
+{
+	int ret;
+
+	ret = ally_validate_joystick_dzot(left_dz, left_ot, right_dz, right_ot);
+	if (ret < 0)
+		return ret;
+
+	ret = ally_set_dzot_ranges(hdev, cfg,
+				  CMD_SET_JOYSTICK_DEADZONE,
+				  left_dz, left_ot, right_dz,
+				  right_ot);
+	if (ret < 0)
+		return ret;
+
+	mutex_lock(&cfg->config_mutex);
+	cfg->left_deadzone = left_dz;
+	cfg->left_outer_threshold = left_ot;
+	cfg->right_deadzone = right_dz;
+	cfg->right_outer_threshold = right_ot;
+	mutex_unlock(&cfg->config_mutex);
+
+	return 0;
+}
+
+static ssize_t joystick_deadzone_show(struct device *dev,
+				      struct device_attribute *attr, char *buf,
+				      u8 deadzone, u8 outer_threshold)
+{
+	return sprintf(buf, "%u %u\n", deadzone, outer_threshold);
+}
+
+static ssize_t joystick_deadzone_store(struct device *dev,
+				       struct device_attribute *attr,
+				       const char *buf, size_t count,
+				       bool is_left, struct ally_config *cfg)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	u8 dz, ot;
+	int ret;
+
+	ret = sscanf(buf, "%hhu %hhu", &dz, &ot);
+	if (ret != 2)
+		return -EINVAL;
+
+	if (is_left) {
+		ret = ally_set_joystick_dzot(hdev, cfg, dz, ot,
+					     cfg->right_deadzone,
+					     cfg->right_outer_threshold);
+	} else {
+		ret = ally_set_joystick_dzot(hdev, cfg, cfg->left_deadzone,
+					     cfg->left_outer_threshold, dz, ot);
+	}
+
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+
+static ssize_t joystick_left_deadzone_show(struct device *dev,
+					   struct device_attribute *attr,
+					   char *buf)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	struct ally_config *cfg = ally->config;
+
+	return joystick_deadzone_show(dev, attr, buf, cfg->left_deadzone,
+				      cfg->left_outer_threshold);
+}
+
+static ssize_t joystick_left_deadzone_store(struct device *dev,
+					    struct device_attribute *attr,
+					    const char *buf, size_t count)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+
+	return joystick_deadzone_store(dev, attr, buf, count, true,
+				       ally->config);
+}
+
+static ssize_t joystick_right_deadzone_show(struct device *dev,
+					    struct device_attribute *attr,
+					    char *buf)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	struct ally_config *cfg = ally->config;
+
+	return joystick_deadzone_show(dev, attr, buf, cfg->right_deadzone,
+				      cfg->right_outer_threshold);
+}
+
+static ssize_t joystick_right_deadzone_store(struct device *dev,
+					     struct device_attribute *attr,
+					     const char *buf, size_t count)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+
+	return joystick_deadzone_store(dev, attr, buf, count, false,
+				       ally->config);
+}
+
+ALLY_DEVICE_CONST_ATTR_RO(js_deadzone_index, deadzone_index, "inner outer\n");
+ALLY_DEVICE_CONST_ATTR_RO(js_deadzone_inner_min, deadzone_inner_min, "0\n");
+ALLY_DEVICE_CONST_ATTR_RO(js_deadzone_inner_max, deadzone_inner_max, "50\n");
+ALLY_DEVICE_CONST_ATTR_RO(js_deadzone_outer_min, deadzone_outer_min, "70\n");
+ALLY_DEVICE_CONST_ATTR_RO(js_deadzone_outer_max, deadzone_outer_max, "100\n");
+
+ALLY_DEVICE_ATTR_RW(joystick_left_deadzone, deadzone);
+ALLY_DEVICE_ATTR_RW(joystick_right_deadzone, deadzone);
+
+static struct attribute *axis_xy_left_attrs[] = {
+	&dev_attr_joystick_left_deadzone.attr,
+	&dev_attr_js_deadzone_index.attr,
+	&dev_attr_js_deadzone_inner_min.attr,
+	&dev_attr_js_deadzone_inner_max.attr,
+	&dev_attr_js_deadzone_outer_min.attr,
+	&dev_attr_js_deadzone_outer_max.attr,
+	NULL
+};
+
+static struct attribute *axis_xy_right_attrs[] = {
+	&dev_attr_joystick_right_deadzone.attr,
+	&dev_attr_js_deadzone_index.attr,
+	&dev_attr_js_deadzone_inner_min.attr,
+	&dev_attr_js_deadzone_inner_max.attr,
+	&dev_attr_js_deadzone_outer_min.attr,
+	&dev_attr_js_deadzone_outer_max.attr,
+	NULL
+};
+
 static struct attribute *ally_config_attrs[] = {
 	&dev_attr_xbox_controller.attr,
 	&dev_attr_vibration_intensity.attr,
@@ -250,9 +434,17 @@ static struct attribute *ally_config_attrs[] = {
 };
 
 static const struct attribute_group ally_attr_groups[] = {
-    {
-        .attrs = ally_config_attrs,
-    },
+	{
+		.attrs = ally_config_attrs,
+	},
+	{
+		.name = "axis_xy_left",
+		.attrs = axis_xy_left_attrs,
+	},
+	{
+		.name = "axis_xy_right",
+		.attrs = axis_xy_right_attrs,
+	},
 };
 
 /**

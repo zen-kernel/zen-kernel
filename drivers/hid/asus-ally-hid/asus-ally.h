@@ -193,4 +193,17 @@ void ally_config_remove(struct hid_device *hdev, struct ally_handheld *ally);
 	struct device_attribute dev_attr_##_name = \
 		__ATTR(_sysfs_name, 0644, _name##_show, _name##_store)
 
+#define ALLY_DEVICE_ATTR_RO(_name, _sysfs_name)    \
+	struct device_attribute dev_attr_##_name = \
+		__ATTR(_sysfs_name, 0444, _name##_show, NULL)
+
+#define ALLY_DEVICE_CONST_ATTR_RO(fname, sysfs_name, value)			\
+	static ssize_t fname##_show(struct device *dev,				\
+				   struct device_attribute *attr, char *buf)	\
+	{									\
+		return sprintf(buf, value);					\
+	}									\
+	struct device_attribute dev_attr_##fname =				\
+		__ATTR(sysfs_name, 0444, fname##_show, NULL)
+
 #endif /* __ASUS_ALLY_H */
