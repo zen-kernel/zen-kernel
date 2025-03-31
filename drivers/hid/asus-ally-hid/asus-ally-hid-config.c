@@ -427,6 +427,142 @@ static struct attribute *axis_xy_right_attrs[] = {
 	NULL
 };
 
+/**
+ * ally_set_trigger_range - Set trigger range values
+ * @hdev: HID device
+ * @cfg: Ally config
+ * @left_min: Left trigger minimum (0-255)
+ * @left_max: Left trigger maximum (0-255)
+ * @right_min: Right trigger minimum (0-255)
+ * @right_max: Right trigger maximum (0-255)
+ *
+ * Returns 0 on success, negative error code on failure
+ */
+static int ally_set_trigger_range(struct hid_device *hdev,
+				  struct ally_config *cfg, u8 left_min,
+				  u8 left_max, u8 right_min, u8 right_max)
+{
+	int ret;
+
+	if (left_min >= left_max || right_min >= right_max)
+		return -EINVAL;
+
+	ret = ally_set_dzot_ranges(hdev, cfg,
+						  CMD_SET_TRIGGER_RANGE,
+						  left_min, left_max, right_min,
+						  right_max);
+	if (ret < 0)
+		return ret;
+
+	mutex_lock(&cfg->config_mutex);
+	cfg->left_trigger_min = left_min;
+	cfg->left_trigger_max = left_max;
+	cfg->right_trigger_min = right_min;
+	cfg->right_trigger_max = right_max;
+	mutex_unlock(&cfg->config_mutex);
+
+	return 0;
+}
+
+static ssize_t trigger_range_show(struct device *dev,
+				  struct device_attribute *attr, char *buf,
+				  u8 min_val, u8 max_val)
+{
+	return sprintf(buf, "%u %u\n", min_val, max_val);
+}
+
+static ssize_t trigger_range_store(struct device *dev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t count, bool is_left,
+				   struct ally_config *cfg)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	u8 min_val, max_val;
+	int ret;
+
+	ret = sscanf(buf, "%hhu %hhu", &min_val, &max_val);
+	if (ret != 2)
+		return -EINVAL;
+
+	if (is_left) {
+		ret = ally_set_trigger_range(hdev, cfg, min_val, max_val,
+					     cfg->right_trigger_min,
+					     cfg->right_trigger_max);
+	} else {
+		ret = ally_set_trigger_range(hdev, cfg, cfg->left_trigger_min,
+					     cfg->left_trigger_max, min_val,
+					     max_val);
+	}
+
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+
+static ssize_t trigger_left_deadzone_show(struct device *dev,
+				       struct device_attribute *attr, char *buf)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	struct ally_config *cfg = ally->config;
+
+	return trigger_range_show(dev, attr, buf, cfg->left_trigger_min,
+				  cfg->left_trigger_max);
+}
+
+static ssize_t trigger_left_deadzone_store(struct device *dev,
+					struct device_attribute *attr,
+					const char *buf, size_t count)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+
+	return trigger_range_store(dev, attr, buf, count, true, ally->config);
+}
+
+static ssize_t trigger_right_deadzone_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	struct ally_config *cfg = ally->config;
+
+	return trigger_range_show(dev, attr, buf, cfg->right_trigger_min,
+				  cfg->right_trigger_max);
+}
+
+static ssize_t trigger_right_deadzone_store(struct device *dev,
+					 struct device_attribute *attr,
+					 const char *buf, size_t count)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+
+	return trigger_range_store(dev, attr, buf, count, false, ally->config);
+}
+
+ALLY_DEVICE_CONST_ATTR_RO(tr_deadzone_inner_min, deadzone_inner_min, "0\n");
+ALLY_DEVICE_CONST_ATTR_RO(tr_deadzone_inner_max, deadzone_inner_max, "255\n");
+
+ALLY_DEVICE_ATTR_RW(trigger_left_deadzone, deadzone);
+ALLY_DEVICE_ATTR_RW(trigger_right_deadzone, deadzone);
+
+static struct attribute *axis_z_left_attrs[] = {
+	&dev_attr_trigger_left_deadzone.attr,
+	&dev_attr_tr_deadzone_inner_min.attr,
+	&dev_attr_tr_deadzone_inner_max.attr,
+	NULL
+};
+
+static struct attribute *axis_z_right_attrs[] = {
+	&dev_attr_trigger_right_deadzone.attr,
+	&dev_attr_tr_deadzone_inner_min.attr,
+	&dev_attr_tr_deadzone_inner_max.attr,
+	NULL
+};
+
 static struct attribute *ally_config_attrs[] = {
 	&dev_attr_xbox_controller.attr,
 	&dev_attr_vibration_intensity.attr,
@@ -444,6 +580,14 @@ static const struct attribute_group ally_attr_groups[] = {
 	{
 		.name = "axis_xy_right",
 		.attrs = axis_xy_right_attrs,
+	},
+	{
+		.name = "axis_z_left",
+		.attrs = axis_z_left_attrs,
+	},
+	{
+		.name = "axis_z_right",
+		.attrs = axis_z_right_attrs,
 	},
 };
 
