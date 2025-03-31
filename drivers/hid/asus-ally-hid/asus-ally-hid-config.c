@@ -407,6 +407,135 @@ ALLY_DEVICE_CONST_ATTR_RO(js_deadzone_outer_max, deadzone_outer_max, "100\n");
 ALLY_DEVICE_ATTR_RW(joystick_left_deadzone, deadzone);
 ALLY_DEVICE_ATTR_RW(joystick_right_deadzone, deadzone);
 
+/**
+ * ally_set_anti_deadzone - Set anti-deadzone values for joysticks
+ * @ally: ally handheld structure
+ * @left_adz: Left joystick anti-deadzone value (0-100)
+ * @right_adz: Right joystick anti-deadzone value (0-100)
+ *
+ * Return: 0 on success, negative on failure
+ */
+static int ally_set_anti_deadzone(struct ally_handheld *ally, u8 left_adz,
+				  u8 right_adz)
+{
+	struct hid_device *hdev = ally->cfg_hdev;
+	int ret;
+
+	if (!ally->config->anti_deadzone_support) {
+		hid_dbg(hdev, "Anti-deadzone not supported on this device\n");
+		return -EOPNOTSUPP;
+	}
+
+	if (left_adz > 100 || right_adz > 100)
+		return -EINVAL;
+
+	ret = ally_gamepad_send_two_byte_packet(
+		ally, hdev, CMD_SET_ANTI_DEADZONE, left_adz, right_adz);
+	if (ret < 0) {
+		hid_err(hdev, "Failed to set anti-deadzone values: %d\n", ret);
+		return ret;
+	}
+
+	ally->config->left_anti_deadzone = left_adz;
+	ally->config->right_anti_deadzone = right_adz;
+	hid_dbg(hdev, "Set joystick anti-deadzone: left=%d, right=%d\n",
+		left_adz, right_adz);
+
+	return 0;
+}
+
+static ssize_t anti_deadzone_show(struct device *dev,
+				 struct device_attribute *attr, char *buf,
+				 u8 anti_deadzone)
+{
+	return sprintf(buf, "%u\n", anti_deadzone);
+}
+
+static ssize_t anti_deadzone_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count, bool is_left,
+				  struct ally_handheld *ally)
+{
+	u8 adz;
+	int ret;
+
+	if (!ally || !ally->config)
+		return -ENODEV;
+
+	if (!ally->config->anti_deadzone_support)
+		return -EOPNOTSUPP;
+
+	ret = kstrtou8(buf, 10, &adz);
+	if (ret)
+		return ret;
+
+	if (adz > 100)
+		return -EINVAL;
+
+	if (is_left)
+		ret = ally_set_anti_deadzone(ally, adz, ally->config->right_anti_deadzone);
+	else
+		ret = ally_set_anti_deadzone(ally, ally->config->left_anti_deadzone, adz);
+
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+
+static ssize_t js_left_anti_deadzone_show(struct device *dev,
+						struct device_attribute *attr,
+						char *buf)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+
+	if (!ally || !ally->config)
+		return -ENODEV;
+
+	return anti_deadzone_show(dev, attr, buf,
+				  ally->config->left_anti_deadzone);
+}
+
+static ssize_t js_left_anti_deadzone_store(struct device *dev,
+						 struct device_attribute *attr,
+						 const char *buf, size_t count)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+
+	return anti_deadzone_store(dev, attr, buf, count, true, ally);
+}
+
+static ssize_t js_right_anti_deadzone_show(struct device *dev,
+						 struct device_attribute *attr,
+						 char *buf)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+
+	if (!ally || !ally->config)
+		return -ENODEV;
+
+	return anti_deadzone_show(dev, attr, buf,
+				  ally->config->right_anti_deadzone);
+}
+
+static ssize_t js_right_anti_deadzone_store(struct device *dev,
+						  struct device_attribute *attr,
+						  const char *buf, size_t count)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+
+	return anti_deadzone_store(dev, attr, buf, count, false, ally);
+}
+
+ALLY_DEVICE_ATTR_RW(js_left_anti_deadzone, anti_deadzone);
+ALLY_DEVICE_ATTR_RW(js_right_anti_deadzone, anti_deadzone);
+ALLY_DEVICE_CONST_ATTR_RO(js_anti_deadzone_min, js_anti_deadzone_min, "0\n");
+ALLY_DEVICE_CONST_ATTR_RO(js_anti_deadzone_max, js_anti_deadzone_max, "100\n");
+
 static struct attribute *axis_xy_left_attrs[] = {
 	&dev_attr_joystick_left_deadzone.attr,
 	&dev_attr_js_deadzone_index.attr,
@@ -414,6 +543,9 @@ static struct attribute *axis_xy_left_attrs[] = {
 	&dev_attr_js_deadzone_inner_max.attr,
 	&dev_attr_js_deadzone_outer_min.attr,
 	&dev_attr_js_deadzone_outer_max.attr,
+	&dev_attr_js_left_anti_deadzone.attr,
+	&dev_attr_js_anti_deadzone_min.attr,
+	&dev_attr_js_anti_deadzone_max.attr,
 	NULL
 };
 
@@ -424,6 +556,9 @@ static struct attribute *axis_xy_right_attrs[] = {
 	&dev_attr_js_deadzone_inner_max.attr,
 	&dev_attr_js_deadzone_outer_min.attr,
 	&dev_attr_js_deadzone_outer_max.attr,
+	&dev_attr_js_right_anti_deadzone.attr,
+	&dev_attr_js_anti_deadzone_min.attr,
+	&dev_attr_js_anti_deadzone_max.attr,
 	NULL
 };
 
