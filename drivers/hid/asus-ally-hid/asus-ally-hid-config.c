@@ -536,6 +536,322 @@ ALLY_DEVICE_ATTR_RW(js_right_anti_deadzone, anti_deadzone);
 ALLY_DEVICE_CONST_ATTR_RO(js_anti_deadzone_min, js_anti_deadzone_min, "0\n");
 ALLY_DEVICE_CONST_ATTR_RO(js_anti_deadzone_max, js_anti_deadzone_max, "100\n");
 
+/**
+ * ally_set_joystick_resp_curve - Set joystick response curve parameters
+ * @ally: ally handheld structure
+ * @hdev: HID device
+ * @side: Which joystick side (0=left, 1=right)
+ * @curve: Response curve parameter structure
+ *
+ * Return: 0 on success, negative on failure
+ */
+static int ally_set_joystick_resp_curve(struct ally_handheld *ally,
+					struct hid_device *hdev, u8 side,
+					struct joystick_resp_curve *curve)
+{
+	u8 packet[HID_ALLY_REPORT_SIZE] = { 0 };
+	int ret;
+	struct ally_config *cfg = ally->config;
+
+	if (!cfg || !cfg->resp_curve_support) {
+		hid_dbg(hdev, "Response curve not supported on this device\n");
+		return -EOPNOTSUPP;
+	}
+
+	if (side > 1) {
+		return -EINVAL;
+	}
+
+	packet[0] = HID_ALLY_SET_REPORT_ID;
+	packet[1] = HID_ALLY_FEATURE_CODE_PAGE;
+	packet[2] = CMD_SET_RESP_CURVE;
+	packet[3] = 0x09; /* Length */
+	packet[4] = side;
+
+	packet[5] = curve->entry_1.move;
+	packet[6] = curve->entry_1.resp;
+	packet[7] = curve->entry_2.move;
+	packet[8] = curve->entry_2.resp;
+	packet[9] = curve->entry_3.move;
+	packet[10] = curve->entry_3.resp;
+	packet[11] = curve->entry_4.move;
+	packet[12] = curve->entry_4.resp;
+
+	ret = ally_gamepad_send_packet(ally, hdev, packet,
+				       HID_ALLY_REPORT_SIZE);
+	if (ret < 0) {
+		hid_err(hdev, "Failed to set joystick response curve: %d\n",
+			ret);
+		return ret;
+	}
+
+	mutex_lock(&cfg->config_mutex);
+	if (side == 0) {
+		memcpy(&cfg->left_curve, curve, sizeof(*curve));
+	} else {
+		memcpy(&cfg->right_curve, curve, sizeof(*curve));
+	}
+	mutex_unlock(&cfg->config_mutex);
+
+	hid_dbg(hdev, "Set joystick response curve for side %d\n", side);
+	return 0;
+}
+
+static int response_curve_apply(struct hid_device *hdev, struct ally_handheld *ally, bool is_left)
+{
+	struct ally_config *cfg = ally->config;
+	struct joystick_resp_curve *curve = is_left ? &cfg->left_curve : &cfg->right_curve;
+
+	if (!(curve->entry_1.move < curve->entry_2.move &&
+	      curve->entry_2.move < curve->entry_3.move &&
+	      curve->entry_3.move < curve->entry_4.move)) {
+		return -EINVAL;
+	}
+
+	return ally_set_joystick_resp_curve(ally, hdev, is_left ? 0 : 1, curve);
+}
+
+static ssize_t response_curve_apply_left_store(struct device *dev,
+					      struct device_attribute *attr,
+					      const char *buf, size_t count)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	int ret;
+	bool apply;
+
+	if (!ally->config->resp_curve_support)
+		return -EOPNOTSUPP;
+
+	ret = kstrtobool(buf, &apply);
+	if (ret)
+		return ret;
+
+	if (!apply)
+		return count;  /* Only apply on "1" or "true" value */
+
+	ret = response_curve_apply(hdev, ally, true);
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+
+static ssize_t response_curve_apply_right_store(struct device *dev,
+					       struct device_attribute *attr,
+					       const char *buf, size_t count)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	int ret;
+	bool apply;
+
+	if (!ally->config->resp_curve_support)
+		return -EOPNOTSUPP;
+
+	ret = kstrtobool(buf, &apply);
+	if (ret)
+		return ret;
+
+	if (!apply)
+		return count;  /* Only apply on "1" or "true" value */
+
+	ret = response_curve_apply(hdev, ally, false);
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+
+static ssize_t response_curve_pct_show(struct device *dev,
+				      struct device_attribute *attr, char *buf,
+				      struct joystick_resp_curve *curve, int idx)
+{
+	switch (idx) {
+	case 1: return sprintf(buf, "%u\n", curve->entry_1.resp);
+	case 2: return sprintf(buf, "%u\n", curve->entry_2.resp);
+	case 3: return sprintf(buf, "%u\n", curve->entry_3.resp);
+	case 4: return sprintf(buf, "%u\n", curve->entry_4.resp);
+	default: return -EINVAL;
+	}
+}
+
+static ssize_t response_curve_move_show(struct device *dev,
+				      struct device_attribute *attr, char *buf,
+				      struct joystick_resp_curve *curve, int idx)
+{
+	switch (idx) {
+	case 1: return sprintf(buf, "%u\n", curve->entry_1.move);
+	case 2: return sprintf(buf, "%u\n", curve->entry_2.move);
+	case 3: return sprintf(buf, "%u\n", curve->entry_3.move);
+	case 4: return sprintf(buf, "%u\n", curve->entry_4.move);
+	default: return -EINVAL;
+	}
+}
+
+static ssize_t response_curve_pct_store(struct device *dev,
+				       struct device_attribute *attr,
+				       const char *buf, size_t count,
+				       bool is_left, struct ally_handheld *ally,
+				       int idx)
+{
+	struct ally_config *cfg = ally->config;
+	struct joystick_resp_curve *curve = is_left ? &cfg->left_curve : &cfg->right_curve;
+	u8 value;
+	int ret;
+
+	if (!cfg->resp_curve_support)
+		return -EOPNOTSUPP;
+
+	ret = kstrtou8(buf, 10, &value);
+	if (ret)
+		return ret;
+
+	if (value > 100)
+		return -EINVAL;
+
+	mutex_lock(&cfg->config_mutex);
+	switch (idx) {
+	case 1: curve->entry_1.resp = value; break;
+	case 2: curve->entry_2.resp = value; break;
+	case 3: curve->entry_3.resp = value; break;
+	case 4: curve->entry_4.resp = value; break;
+	default: ret = -EINVAL;
+	}
+	mutex_unlock(&cfg->config_mutex);
+
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+
+static ssize_t response_curve_move_store(struct device *dev,
+				       struct device_attribute *attr,
+				       const char *buf, size_t count,
+				       bool is_left, struct ally_handheld *ally,
+				       int idx)
+{
+	struct ally_config *cfg = ally->config;
+	struct joystick_resp_curve *curve = is_left ? &cfg->left_curve : &cfg->right_curve;
+	u8 value;
+	int ret;
+
+	if (!cfg->resp_curve_support)
+		return -EOPNOTSUPP;
+
+	ret = kstrtou8(buf, 10, &value);
+	if (ret)
+		return ret;
+
+	if (value > 100)
+		return -EINVAL;
+
+	mutex_lock(&cfg->config_mutex);
+	switch (idx) {
+	case 1: curve->entry_1.move = value; break;
+	case 2: curve->entry_2.move = value; break;
+	case 3: curve->entry_3.move = value; break;
+	case 4: curve->entry_4.move = value; break;
+	default: ret = -EINVAL;
+	}
+	mutex_unlock(&cfg->config_mutex);
+
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+
+#define DEFINE_JS_CURVE_PCT_FOPS(region, side)                             \
+	static ssize_t response_curve_pct_##region##_##side##_show(              \
+		struct device *dev, struct device_attribute *attr, char *buf) \
+	{                                                                     \
+		struct hid_device *hdev = to_hid_device(dev);                 \
+		struct ally_handheld *ally = hid_get_drvdata(hdev);           \
+		return response_curve_pct_show(                               \
+			dev, attr, buf, &ally->config->side##_curve, region);    \
+	}                                                                     \
+                                                                              \
+	static ssize_t response_curve_pct_##region##_##side##_store(             \
+		struct device *dev, struct device_attribute *attr,            \
+		const char *buf, size_t count)                                \
+	{                                                                     \
+		struct hid_device *hdev = to_hid_device(dev);                 \
+		struct ally_handheld *ally = hid_get_drvdata(hdev);           \
+		return response_curve_pct_store(dev, attr, buf, count,        \
+						side##_is_left, ally, region);   \
+	}
+
+#define DEFINE_JS_CURVE_MOVE_FOPS(region, side)                            \
+	static ssize_t response_curve_move_##region##_##side##_show(             \
+		struct device *dev, struct device_attribute *attr, char *buf) \
+	{                                                                     \
+		struct hid_device *hdev = to_hid_device(dev);                 \
+		struct ally_handheld *ally = hid_get_drvdata(hdev);           \
+		return response_curve_move_show(                              \
+			dev, attr, buf, &ally->config->side##_curve, region);    \
+	}                                                                     \
+                                                                              \
+	static ssize_t response_curve_move_##region##_##side##_store(            \
+		struct device *dev, struct device_attribute *attr,            \
+		const char *buf, size_t count)                                \
+	{                                                                     \
+		struct hid_device *hdev = to_hid_device(dev);                 \
+		struct ally_handheld *ally = hid_get_drvdata(hdev);           \
+		return response_curve_move_store(dev, attr, buf, count,       \
+						 side##_is_left, ally, region);  \
+	}
+
+#define DEFINE_JS_CURVE_ATTRS(region, side)                                 \
+	DEFINE_JS_CURVE_PCT_FOPS(region, side)                              \
+		DEFINE_JS_CURVE_MOVE_FOPS(region, side)                     \
+			ALLY_DEVICE_ATTR_RW(response_curve_pct_##region##_##side, \
+					    response_curve_pct_##region);        \
+	ALLY_DEVICE_ATTR_RW(response_curve_move_##region##_##side,                \
+			    response_curve_move_##region)
+
+/* Helper defines for "is_left" parameter */
+#define left_is_left true
+#define right_is_left false
+
+DEFINE_JS_CURVE_ATTRS(1, left);
+DEFINE_JS_CURVE_ATTRS(2, left);
+DEFINE_JS_CURVE_ATTRS(3, left);
+DEFINE_JS_CURVE_ATTRS(4, left);
+
+DEFINE_JS_CURVE_ATTRS(1, right);
+DEFINE_JS_CURVE_ATTRS(2, right);
+DEFINE_JS_CURVE_ATTRS(3, right);
+DEFINE_JS_CURVE_ATTRS(4, right);
+
+ALLY_DEVICE_ATTR_WO(response_curve_apply_left, response_curve_apply);
+ALLY_DEVICE_ATTR_WO(response_curve_apply_right, response_curve_apply);
+
+static ssize_t deadzone_left_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	struct ally_config *cfg = ally->config;
+
+	return sprintf(buf, "%u %u\n", cfg->left_deadzone, cfg->left_outer_threshold);
+}
+
+static ssize_t deadzone_right_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	struct ally_config *cfg = ally->config;
+
+	return sprintf(buf, "%u %u\n", cfg->right_deadzone, cfg->right_outer_threshold);
+}
+
+DEVICE_ATTR_RO(deadzone_left);
+DEVICE_ATTR_RO(deadzone_right);
+ALLY_DEVICE_CONST_ATTR_RO(deadzone_index, deadzone_index, "inner outer\n");
+
 static struct attribute *axis_xy_left_attrs[] = {
 	&dev_attr_joystick_left_deadzone.attr,
 	&dev_attr_js_deadzone_index.attr,
@@ -546,6 +862,15 @@ static struct attribute *axis_xy_left_attrs[] = {
 	&dev_attr_js_left_anti_deadzone.attr,
 	&dev_attr_js_anti_deadzone_min.attr,
 	&dev_attr_js_anti_deadzone_max.attr,
+	&dev_attr_response_curve_pct_1_left.attr,
+	&dev_attr_response_curve_pct_2_left.attr,
+	&dev_attr_response_curve_pct_3_left.attr,
+	&dev_attr_response_curve_pct_4_left.attr,
+	&dev_attr_response_curve_move_1_left.attr,
+	&dev_attr_response_curve_move_2_left.attr,
+	&dev_attr_response_curve_move_3_left.attr,
+	&dev_attr_response_curve_move_4_left.attr,
+	&dev_attr_response_curve_apply_left.attr,
 	NULL
 };
 
@@ -559,6 +884,15 @@ static struct attribute *axis_xy_right_attrs[] = {
 	&dev_attr_js_right_anti_deadzone.attr,
 	&dev_attr_js_anti_deadzone_min.attr,
 	&dev_attr_js_anti_deadzone_max.attr,
+	&dev_attr_response_curve_pct_1_right.attr,
+	&dev_attr_response_curve_pct_2_right.attr,
+	&dev_attr_response_curve_pct_3_right.attr,
+	&dev_attr_response_curve_pct_4_right.attr,
+	&dev_attr_response_curve_move_1_right.attr,
+	&dev_attr_response_curve_move_2_right.attr,
+	&dev_attr_response_curve_move_3_right.attr,
+	&dev_attr_response_curve_move_4_right.attr,
+	&dev_attr_response_curve_apply_right.attr,
 	NULL
 };
 
@@ -781,6 +1115,25 @@ int ally_config_create(struct hid_device *hdev, struct ally_handheld *ally)
 	cfg->vibration_intensity_left = 100;
 	cfg->vibration_intensity_right = 100;
 	cfg->vibration_active = false;
+
+	/* Initialize default response curve values (linear) */
+	cfg->left_curve.entry_1.move = 0;
+	cfg->left_curve.entry_1.resp = 0;
+	cfg->left_curve.entry_2.move = 33;
+	cfg->left_curve.entry_2.resp = 33;
+	cfg->left_curve.entry_3.move = 66;
+	cfg->left_curve.entry_3.resp = 66;
+	cfg->left_curve.entry_4.move = 100;
+	cfg->left_curve.entry_4.resp = 100;
+
+	cfg->right_curve.entry_1.move = 0;
+	cfg->right_curve.entry_1.resp = 0;
+	cfg->right_curve.entry_2.move = 33;
+	cfg->right_curve.entry_2.resp = 33;
+	cfg->right_curve.entry_3.move = 66;
+	cfg->right_curve.entry_3.resp = 66;
+	cfg->right_curve.entry_4.move = 100;
+	cfg->right_curve.entry_4.resp = 100;
 
 	// ONLY FOR ALLY 1
 	if (cfg->xbox_controller_support) {

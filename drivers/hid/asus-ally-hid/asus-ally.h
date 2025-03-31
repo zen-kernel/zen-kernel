@@ -108,6 +108,18 @@ struct ally_x_input {
 	bool update_ff;
 };
 
+struct resp_curve_param {
+	u8 move;
+	u8 resp;
+} __packed;
+
+struct joystick_resp_curve {
+	struct resp_curve_param entry_1;
+	struct resp_curve_param entry_2;
+	struct resp_curve_param entry_3;
+	struct resp_curve_param entry_4;
+} __packed;
+
 struct ally_config {
 	struct hid_device *hdev;
 	/* Must be locked if the data is being changed */
@@ -142,6 +154,9 @@ struct ally_config {
 	u8 vibration_intensity_left;
 	u8 vibration_intensity_right;
 	bool vibration_active;
+
+	struct joystick_resp_curve left_curve;
+	struct joystick_resp_curve right_curve;
 };
 
 struct ally_handheld {
@@ -196,6 +211,10 @@ void ally_config_remove(struct hid_device *hdev, struct ally_handheld *ally);
 #define ALLY_DEVICE_ATTR_RO(_name, _sysfs_name)    \
 	struct device_attribute dev_attr_##_name = \
 		__ATTR(_sysfs_name, 0444, _name##_show, NULL)
+
+#define ALLY_DEVICE_ATTR_WO(_name, _sysfs_name)    \
+	struct device_attribute dev_attr_##_name = \
+		__ATTR(_sysfs_name, 0200, NULL, _name##_store)
 
 #define ALLY_DEVICE_CONST_ATTR_RO(fname, sysfs_name, value)			\
 	static ssize_t fname##_show(struct device *dev,				\
