@@ -1032,9 +1032,146 @@ static struct attribute *axis_z_right_attrs[] = {
 	NULL
 };
 
+/* Map from string name to enum value */
+static int get_gamepad_mode_from_name(const char *name)
+{
+	int i;
+
+	for (i = ALLY_GAMEPAD_MODE_GAMEPAD; i <= ALLY_GAMEPAD_MODE_KEYBOARD;
+	     i++) {
+		if (gamepad_mode_names[i] &&
+		    strcmp(name, gamepad_mode_names[i]) == 0)
+			return i;
+	}
+
+	return -1;
+}
+
+/**
+ * ally_set_gamepad_mode - Set the gamepad operating mode
+ * @ally: ally handheld structure
+ * @hdev: HID device
+ * @mode: Gamepad mode to set
+ *
+ * Returns: 0 on success, negative on failure
+ */
+static int ally_set_gamepad_mode(struct ally_handheld *ally,
+				 struct hid_device *hdev, u8 mode)
+{
+	struct ally_config *cfg = ally->config;
+	int ret;
+
+	if (!cfg)
+		return -EINVAL;
+
+	if (mode < ALLY_GAMEPAD_MODE_GAMEPAD ||
+	    mode > ALLY_GAMEPAD_MODE_KEYBOARD) {
+		hid_err(hdev, "Invalid gamepad mode: %u\n", mode);
+		return -EINVAL;
+	}
+
+	ret = ally_gamepad_send_one_byte_packet(ally, hdev,
+						CMD_SET_GAMEPAD_MODE, mode);
+	if (ret < 0) {
+		hid_err(hdev, "Failed to set gamepad mode: %d\n", ret);
+		return ret;
+	}
+
+	mutex_lock(&cfg->config_mutex);
+	cfg->gamepad_mode = mode;
+	mutex_unlock(&cfg->config_mutex);
+
+	hid_info(hdev, "Set gamepad mode to %s\n", gamepad_mode_names[mode]);
+	return 0;
+}
+
+static ssize_t gamepad_mode_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	struct ally_config *cfg;
+
+	if (!ally || !ally->config)
+		return -ENODEV;
+
+	cfg = ally->config;
+
+	if (cfg->gamepad_mode >= ALLY_GAMEPAD_MODE_GAMEPAD &&
+	    cfg->gamepad_mode <= ALLY_GAMEPAD_MODE_KEYBOARD) {
+		return sprintf(buf, "%s\n",
+			       gamepad_mode_names[cfg->gamepad_mode]);
+	} else {
+		return sprintf(buf, "unknown (%u)\n", cfg->gamepad_mode);
+	}
+}
+
+static ssize_t gamepad_mode_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	char mode_name[16];
+	int mode;
+	int ret;
+
+	if (!ally || !ally->config)
+		return -ENODEV;
+
+	if (sscanf(buf, "%15s", mode_name) != 1)
+		return -EINVAL;
+
+	mode = get_gamepad_mode_from_name(mode_name);
+	if (mode < 0) {
+		hid_err(hdev, "Unknown gamepad mode: %s\n", mode_name);
+		return -EINVAL;
+	}
+
+	ret = ally_set_gamepad_mode(ally, hdev, mode);
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+
+static ssize_t gamepad_modes_available_show(struct device *dev,
+					    struct device_attribute *attr,
+					    char *buf)
+{
+	int i;
+	int len = 0;
+
+	for (i = ALLY_GAMEPAD_MODE_GAMEPAD; i <= ALLY_GAMEPAD_MODE_KEYBOARD;
+	     i++) {
+		len += sprintf(buf + len, "%s ", gamepad_mode_names[i]);
+	}
+
+	/* Replace the last space with a newline */
+	if (len > 0)
+		buf[len - 1] = '\n';
+
+	return len;
+}
+
+DEVICE_ATTR_RW(gamepad_mode);
+DEVICE_ATTR_RO(gamepad_modes_available);
+
+static int ally_set_default_gamepad_mode(struct hid_device *hdev,
+					 struct ally_config *cfg)
+{
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+
+	cfg->gamepad_mode = ALLY_GAMEPAD_MODE_GAMEPAD;
+
+	return ally_set_gamepad_mode(ally, hdev, cfg->gamepad_mode);
+}
+
 static struct attribute *ally_config_attrs[] = {
 	&dev_attr_xbox_controller.attr,
 	&dev_attr_vibration_intensity.attr,
+	&dev_attr_gamepad_mode.attr,
+	&dev_attr_gamepad_modes_available.attr,
 	NULL
 };
 
@@ -1414,6 +1551,10 @@ int ally_config_create(struct hid_device *hdev, struct ally_handheld *ally)
 			goto err_free;
 		}
 	}
+
+	ret = ally_set_default_gamepad_mode(hdev, cfg);
+		if (ret < 0)
+			hid_warn(hdev, "Failed to set default gamepad mode: %d\n", ret);
 
 	cfg->gamepad_mode = 0x01;
 	cfg->left_deadzone = 10;

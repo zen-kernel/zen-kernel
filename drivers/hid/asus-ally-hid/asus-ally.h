@@ -50,6 +50,16 @@ enum ally_command_codes {
     CMD_SET_ANTI_DEADZONE           = 0x18,
 };
 
+enum ally_gamepad_mode {
+	ALLY_GAMEPAD_MODE_GAMEPAD = 0x01,
+	ALLY_GAMEPAD_MODE_KEYBOARD = 0x02,
+};
+
+static const char *const gamepad_mode_names[] = {
+	[ALLY_GAMEPAD_MODE_GAMEPAD] = "gamepad",
+	[ALLY_GAMEPAD_MODE_KEYBOARD] = "keyboard"
+};
+
 /* Button identifiers for the attribute system */
 enum ally_button_id {
 	ALLY_BTN_A,
