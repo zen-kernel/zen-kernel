@@ -1061,6 +1061,305 @@ static const struct attribute_group ally_attr_groups[] = {
 };
 
 /**
+ * ally_get_turbo_params - Get turbo parameters for a specific button
+ * @cfg: Ally config structure
+ * @button_id: Button identifier from ally_button_id enum
+ *
+ * Returns: Pointer to the button's turbo parameters, or NULL if invalid
+ */
+static struct button_turbo_params *ally_get_turbo_params(struct ally_config *cfg,
+                                                       enum ally_button_id button_id)
+{
+	struct turbo_config *turbo;
+
+	if (!cfg || button_id >= ALLY_BTN_MAX)
+		return NULL;
+
+	turbo = &cfg->turbo;
+
+	switch (button_id) {
+	case ALLY_BTN_A:
+		return &turbo->btn_a;
+	case ALLY_BTN_B:
+		return &turbo->btn_b;
+	case ALLY_BTN_X:
+		return &turbo->btn_x;
+	case ALLY_BTN_Y:
+		return &turbo->btn_y;
+	case ALLY_BTN_LB:
+		return &turbo->btn_lb;
+	case ALLY_BTN_RB:
+		return &turbo->btn_rb;
+	case ALLY_BTN_DU:
+		return &turbo->btn_du;
+	case ALLY_BTN_DD:
+		return &turbo->btn_dd;
+	case ALLY_BTN_DL:
+		return &turbo->btn_dl;
+	case ALLY_BTN_DR:
+		return &turbo->btn_dr;
+	case ALLY_BTN_J0B:
+		return &turbo->btn_j0b;
+	case ALLY_BTN_J1B:
+		return &turbo->btn_j1b;
+	case ALLY_BTN_MENU:
+		return &turbo->btn_menu;
+	case ALLY_BTN_VIEW:
+		return &turbo->btn_view;
+	case ALLY_BTN_M1:
+		return &turbo->btn_m1;
+	case ALLY_BTN_M2:
+		return &turbo->btn_m2;
+	default:
+		return NULL;
+	}
+}
+
+/**
+ * ally_set_turbo_params - Set turbo parameters for all buttons
+ * @hdev: HID device
+ * @cfg: Ally config structure
+ *
+ * Returns: 0 on success, negative on failure
+ */
+static int ally_set_turbo_params(struct hid_device *hdev, struct ally_config *cfg)
+{
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	struct turbo_config *turbo = &cfg->turbo;
+	u8 packet[HID_ALLY_REPORT_SIZE] = { 0 };
+	int ret;
+
+	if (!cfg->turbo_support) {
+		hid_dbg(hdev, "Turbo functionality not supported on this device\n");
+		return -EOPNOTSUPP;
+	}
+
+	packet[0] = HID_ALLY_SET_REPORT_ID;
+	packet[1] = HID_ALLY_FEATURE_CODE_PAGE;
+	packet[2] = CMD_SET_TURBO_PARAMS;
+	packet[3] = 0x20; /* Length - 32 bytes for 16 buttons with 2 values each */
+
+	packet[4] = turbo->btn_du.turbo;
+	packet[5] = turbo->btn_du.toggle;
+	packet[6] = turbo->btn_dd.turbo;
+	packet[7] = turbo->btn_dd.toggle;
+	packet[8] = turbo->btn_dl.turbo;
+	packet[9] = turbo->btn_dl.toggle;
+	packet[10] = turbo->btn_dr.turbo;
+	packet[11] = turbo->btn_dr.toggle;
+	packet[12] = turbo->btn_j0b.turbo;
+	packet[13] = turbo->btn_j0b.toggle;
+	packet[14] = turbo->btn_j1b.turbo;
+	packet[15] = turbo->btn_j1b.toggle;
+	packet[16] = turbo->btn_lb.turbo;
+	packet[17] = turbo->btn_lb.toggle;
+	packet[18] = turbo->btn_rb.turbo;
+	packet[19] = turbo->btn_rb.toggle;
+	packet[20] = turbo->btn_a.turbo;
+	packet[21] = turbo->btn_a.toggle;
+	packet[22] = turbo->btn_b.turbo;
+	packet[23] = turbo->btn_b.toggle;
+	packet[24] = turbo->btn_x.turbo;
+	packet[25] = turbo->btn_x.toggle;
+	packet[26] = turbo->btn_y.turbo;
+	packet[27] = turbo->btn_y.toggle;
+	packet[28] = turbo->btn_view.turbo;
+	packet[29] = turbo->btn_view.toggle;
+	packet[30] = turbo->btn_menu.turbo;
+	packet[31] = turbo->btn_menu.toggle;
+	packet[32] = turbo->btn_m2.turbo;
+	packet[33] = turbo->btn_m2.toggle;
+	packet[34] = turbo->btn_m1.turbo;
+	packet[35] = turbo->btn_m1.toggle;
+
+	ret = ally_gamepad_send_packet(ally, hdev, packet, HID_ALLY_REPORT_SIZE);
+	if (ret < 0) {
+		hid_err(hdev, "Failed to set turbo parameters: %d\n", ret);
+		return ret;
+	}
+
+	return 0;
+}
+
+struct button_turbo_attr {
+	struct device_attribute dev_attr;
+	int button_id;
+};
+
+#define to_button_turbo_attr(x) container_of(x, struct button_turbo_attr, dev_attr)
+
+static ssize_t button_turbo_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	struct button_turbo_attr *btn_attr = to_button_turbo_attr(attr);
+	struct button_turbo_params *params;
+
+	if (!ally->config->turbo_support)
+		return sprintf(buf, "Unsupported\n");
+
+	params = ally_get_turbo_params(ally->config, btn_attr->button_id);
+	if (!params)
+		return -EINVAL;
+
+	/* Format: turbo_interval_ms[,toggle_interval_ms] */
+	if (params->toggle)
+		return sprintf(buf, "%d,%d\n", params->turbo * 50, params->toggle * 50);
+	else
+		return sprintf(buf, "%d\n", params->turbo * 50);
+}
+
+static ssize_t button_turbo_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+	struct ally_handheld *ally = hid_get_drvdata(hdev);
+	struct button_turbo_attr *btn_attr = to_button_turbo_attr(attr);
+	struct button_turbo_params *params;
+	unsigned int turbo_ms, toggle_ms = 0;
+	int ret;
+
+	if (!ally->config->turbo_support)
+		return -EOPNOTSUPP;
+
+	params = ally_get_turbo_params(ally->config, btn_attr->button_id);
+	if (!params)
+		return -EINVAL;
+
+	/* Parse input: turbo_interval_ms[,toggle_interval_ms] */
+	ret = sscanf(buf, "%u,%u", &turbo_ms, &toggle_ms);
+	if (ret < 1)
+		return -EINVAL;
+
+	if (turbo_ms != 0 && (turbo_ms < 50 || turbo_ms > 1000))
+		return -EINVAL;
+
+	if (ret > 1 && toggle_ms > 0 && (toggle_ms < 50 || toggle_ms > 1000))
+		return -EINVAL;
+
+	mutex_lock(&ally->config->config_mutex);
+
+	params->turbo = turbo_ms / 50;
+	params->toggle = toggle_ms / 50;
+
+	ret = ally_set_turbo_params(hdev, ally->config);
+
+	mutex_unlock(&ally->config->config_mutex);
+
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+
+/* Helper to create button turbo attribute */
+static struct button_turbo_attr *button_turbo_attr_create(int button_id)
+{
+	struct button_turbo_attr *attr;
+
+	attr = kzalloc(sizeof(*attr), GFP_KERNEL);
+	if (!attr)
+		return NULL;
+
+	attr->button_id = button_id;
+	sysfs_attr_init(&attr->dev_attr.attr);
+	attr->dev_attr.attr.name = "turbo";
+	attr->dev_attr.attr.mode = 0644;
+	attr->dev_attr.show = button_turbo_show;
+	attr->dev_attr.store = button_turbo_store;
+
+	return attr;
+}
+
+/* Structure to hold button sysfs information */
+struct button_sysfs_entry {
+	struct attribute_group group;
+	struct attribute *attrs[2]; /* turbo + NULL terminator */
+	struct button_turbo_attr *turbo_attr;
+};
+
+/**
+ * ally_create_button_attributes - Create button attributes
+ * @hdev: HID device
+ * @cfg: Ally config structure
+ *
+ * Returns: 0 on success, negative on failure
+ */
+static int ally_create_button_attributes(struct hid_device *hdev, struct ally_config *cfg)
+{
+	struct button_sysfs_entry *entries;
+	int i, ret;
+
+	if (!cfg->turbo_support)
+		return 0;
+
+	entries = devm_kcalloc(&hdev->dev, ALLY_BTN_MAX, sizeof(*entries), GFP_KERNEL);
+	if (!entries)
+		return -ENOMEM;
+
+	cfg->button_entries = entries;
+
+	for (i = 0; i < ALLY_BTN_MAX; i++) {
+		entries[i].turbo_attr = button_turbo_attr_create(i);
+		if (!entries[i].turbo_attr) {
+			ret = -ENOMEM;
+			goto err_cleanup;
+		}
+
+		entries[i].attrs[0] = &entries[i].turbo_attr->dev_attr.attr;
+		entries[i].attrs[1] = NULL;
+
+		entries[i].group.name = ally_button_names[i];
+		entries[i].group.attrs = entries[i].attrs;
+
+		ret = sysfs_create_group(&hdev->dev.kobj, &entries[i].group);
+		if (ret < 0) {
+			hid_err(hdev, "Failed to create sysfs group for %s: %d\n",
+				ally_button_names[i], ret);
+			goto err_cleanup;
+		}
+	}
+
+	return 0;
+
+err_cleanup:
+	while (--i >= 0)
+		sysfs_remove_group(&hdev->dev.kobj, &entries[i].group);
+
+	for (i = 0; i < ALLY_BTN_MAX; i++) {
+		if (entries[i].turbo_attr)
+			kfree(entries[i].turbo_attr);
+	}
+
+	return ret;
+}
+
+/**
+ * ally_remove_button_attributes - Remove button attributes
+ * @hdev: HID device
+ * @cfg: Ally config structure
+ */
+static void ally_remove_button_attributes(struct hid_device *hdev, struct ally_config *cfg)
+{
+	struct button_sysfs_entry *entries;
+	int i;
+
+	if (!cfg || !cfg->button_entries)
+		return;
+
+	entries = cfg->button_entries;
+
+	/* Remove all attribute groups */
+	for (i = 0; i < ALLY_BTN_MAX; i++) {
+		sysfs_remove_group(&hdev->dev.kobj, &entries[i].group);
+		if (entries[i].turbo_attr)
+			kfree(entries[i].turbo_attr);
+	}
+}
+
+/**
  * ally_config_create - Initialize configuration and create sysfs entries
  * @hdev: HID device
  * @ally: Ally device data
@@ -1102,6 +1401,16 @@ int ally_config_create(struct hid_device *hdev, struct ally_handheld *ally)
 			while (--i >= 0)
 				sysfs_remove_group(&hdev->dev.kobj,
 						   &ally_attr_groups[i]);
+			goto err_free;
+		}
+	}
+
+	if (cfg->turbo_support) {
+		ret = ally_create_button_attributes(hdev, cfg);
+		if (ret < 0) {
+			hid_err(hdev, "Failed to create button attributes: %d\n", ret);
+			for (i = 0; i < ARRAY_SIZE(ally_attr_groups); i++)
+				sysfs_remove_group(&hdev->dev.kobj, &ally_attr_groups[i]);
 			goto err_free;
 		}
 	}
@@ -1175,6 +1484,9 @@ void ally_config_remove(struct hid_device *hdev, struct ally_handheld *ally)
 
 	if (get_endpoint_address(hdev) != HID_ALLY_INTF_CFG_IN)
 		return;
+
+	if (cfg->turbo_support && cfg->button_entries)
+			ally_remove_button_attributes(hdev, cfg);
 
 	/* Remove all attribute groups in reverse order */
 	for (i = ARRAY_SIZE(ally_attr_groups) - 1; i >= 0; i--)

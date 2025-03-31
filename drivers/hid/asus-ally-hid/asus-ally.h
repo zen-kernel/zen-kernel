@@ -50,6 +50,47 @@ enum ally_command_codes {
     CMD_SET_ANTI_DEADZONE           = 0x18,
 };
 
+/* Button identifiers for the attribute system */
+enum ally_button_id {
+	ALLY_BTN_A,
+	ALLY_BTN_B,
+	ALLY_BTN_X,
+	ALLY_BTN_Y,
+	ALLY_BTN_LB,
+	ALLY_BTN_RB,
+	ALLY_BTN_DU,
+	ALLY_BTN_DD,
+	ALLY_BTN_DL,
+	ALLY_BTN_DR,
+	ALLY_BTN_J0B,
+	ALLY_BTN_J1B,
+	ALLY_BTN_MENU,
+	ALLY_BTN_VIEW,
+	ALLY_BTN_M1,
+	ALLY_BTN_M2,
+	ALLY_BTN_MAX
+};
+
+/* Names for the button directories in sysfs */
+static const char *const ally_button_names[ALLY_BTN_MAX] = {
+	[ALLY_BTN_A] = "btn_a",
+	[ALLY_BTN_B] = "btn_b",
+	[ALLY_BTN_X] = "btn_x",
+	[ALLY_BTN_Y] = "btn_y",
+	[ALLY_BTN_LB] = "btn_lb",
+	[ALLY_BTN_RB] = "btn_rb",
+	[ALLY_BTN_DU] = "dpad_up",
+	[ALLY_BTN_DD] = "dpad_down",
+	[ALLY_BTN_DL] = "dpad_left",
+	[ALLY_BTN_DR] = "dpad_right",
+	[ALLY_BTN_J0B] = "btn_l3",
+	[ALLY_BTN_J1B] = "btn_r3",
+	[ALLY_BTN_MENU] = "btn_menu",
+	[ALLY_BTN_VIEW] = "btn_view",
+	[ALLY_BTN_M1] = "btn_m1",
+	[ALLY_BTN_M2] = "btn_m2",
+};
+
 struct ally_rgb_resume_data {
 	uint8_t brightness;
 	uint8_t red[4];
@@ -120,6 +161,37 @@ struct joystick_resp_curve {
 	struct resp_curve_param entry_4;
 } __packed;
 
+/*
+ * Button turbo parameters structure
+ * Each button can have:
+ * - turbo: Turbo press interval in multiple of 50ms (0 = disabled, 1-20 = 50ms-1000ms)
+ * - toggle: Toggle interval (0 = disabled)
+ */
+struct button_turbo_params {
+	u8 turbo;
+	u8 toggle;
+} __packed;
+
+/* Collection of all button turbo settings */
+struct turbo_config {
+	struct button_turbo_params btn_du;   /* D-pad Up */
+	struct button_turbo_params btn_dd;   /* D-pad Down */
+	struct button_turbo_params btn_dl;   /* D-pad Left */
+	struct button_turbo_params btn_dr;   /* D-pad Right */
+	struct button_turbo_params btn_j0b;  /* Left joystick button */
+	struct button_turbo_params btn_j1b;  /* Right joystick button */
+	struct button_turbo_params btn_lb;   /* Left bumper */
+	struct button_turbo_params btn_rb;   /* Right bumper */
+	struct button_turbo_params btn_a;    /* A button */
+	struct button_turbo_params btn_b;    /* B button */
+	struct button_turbo_params btn_x;    /* X button */
+	struct button_turbo_params btn_y;    /* Y button */
+	struct button_turbo_params btn_view; /* View button */
+	struct button_turbo_params btn_menu; /* Menu button */
+	struct button_turbo_params btn_m2;   /* M2 button */
+	struct button_turbo_params btn_m1;   /* M1 button */
+};
+
 struct ally_config {
 	struct hid_device *hdev;
 	/* Must be locked if the data is being changed */
@@ -154,6 +226,9 @@ struct ally_config {
 	u8 vibration_intensity_left;
 	u8 vibration_intensity_right;
 	bool vibration_active;
+
+	struct turbo_config turbo;
+	struct button_sysfs_entry *button_entries;
 
 	struct joystick_resp_curve left_curve;
 	struct joystick_resp_curve right_curve;
