@@ -1547,7 +1547,7 @@ static int airoha_qdma_get_gdm_port(struct airoha_eth *eth,
 
 	sport = FIELD_GET(QDMA_ETH_RXMSG_SPORT_MASK, msg1);
 	switch (sport) {
-	case 0x10 ... 0x13:
+	case 0x10 ... 0x14:
 		port = 0;
 		break;
 	case 0x2 ... 0x4:
@@ -2793,7 +2793,7 @@ static int airoha_qdma_set_tx_ets_sched(struct airoha_gdm_port *port,
 	struct tc_ets_qopt_offload_replace_params *p = &opt->replace_params;
 	enum tx_sched_mode mode = TC_SCH_SP;
 	u16 w[AIROHA_NUM_QOS_QUEUES] = {};
-	int i, nstrict = 0, nwrr, qidx;
+	int i, nstrict = 0;
 
 	if (p->bands > AIROHA_NUM_QOS_QUEUES)
 		return -EINVAL;
@@ -2811,17 +2811,17 @@ static int airoha_qdma_set_tx_ets_sched(struct airoha_gdm_port *port,
 	 * lowest priorities with respect to SP ones.
 	 * e.g: WRR0, WRR1, .., WRRm, SP0, SP1, .., SPn
 	 */
-	nwrr = p->bands - nstrict;
-	qidx = nstrict && nwrr ? nstrict : 0;
-	for (i = 1; i <= p->bands; i++) {
-		if (p->priomap[i % AIROHA_NUM_QOS_QUEUES] != qidx)
+	for (i = 0; i < nstrict; i++) {
+		if (p->priomap[p->bands - i - 1] != i)
 			return -EINVAL;
-
-		qidx = i == nwrr ? 0 : qidx + 1;
 	}
 
-	for (i = 0; i < nwrr; i++)
+	for (i = 0; i < p->bands - nstrict; i++) {
+		if (p->priomap[i] != nstrict + i)
+			return -EINVAL;
+
 		w[i] = p->weights[nstrict + i];
+	}
 
 	if (!nstrict)
 		mode = TC_SCH_WRR8;
@@ -3082,7 +3082,7 @@ static int airoha_tc_get_htb_get_leaf_queue(struct airoha_gdm_port *port,
 		return -EINVAL;
 	}
 
-	opt->qid = channel;
+	opt->qid = AIROHA_NUM_TX_RING + channel;
 
 	return 0;
 }

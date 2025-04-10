@@ -4674,6 +4674,11 @@ static inline int ext4_iget_extra_inode(struct inode *inode,
 	    *magic == cpu_to_le32(EXT4_XATTR_MAGIC)) {
 		int err;
 
+		err = xattr_check_inode(inode, IHDR(inode, raw_inode),
+					ITAIL(inode, raw_inode));
+		if (err)
+			return err;
+
 		ext4_set_inode_state(inode, EXT4_STATE_XATTR);
 		err = ext4_find_inline_data_nolock(inode);
 		if (!err && ext4_has_inline_data(inode))
@@ -5007,8 +5012,16 @@ struct inode *__ext4_iget(struct super_block *sb, unsigned long ino,
 			inode->i_op = &ext4_encrypted_symlink_inode_operations;
 		} else if (ext4_inode_is_fast_symlink(inode)) {
 			inode->i_op = &ext4_fast_symlink_inode_operations;
-			nd_terminate_link(ei->i_data, inode->i_size,
-				sizeof(ei->i_data) - 1);
+			if (inode->i_size == 0 ||
+			    inode->i_size >= sizeof(ei->i_data) ||
+			    strnlen((char *)ei->i_data, inode->i_size + 1) !=
+								inode->i_size) {
+				ext4_error_inode(inode, function, line, 0,
+					"invalid fast symlink length %llu",
+					 (unsigned long long)inode->i_size);
+				ret = -EFSCORRUPTED;
+				goto bad_inode;
+			}
 			inode_set_cached_link(inode, (char *)ei->i_data,
 					      inode->i_size);
 		} else {
@@ -5464,7 +5477,7 @@ int ext4_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
 			    oldsize & (inode->i_sb->s_blocksize - 1)) {
 				error = ext4_inode_attach_jinode(inode);
 				if (error)
-					goto err_out;
+					goto out_mmap_sem;
 			}
 
 			handle = ext4_journal_start(inode, EXT4_HT_INODE, 3);
