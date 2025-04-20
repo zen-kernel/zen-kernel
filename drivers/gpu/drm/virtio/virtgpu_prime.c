@@ -250,7 +250,6 @@ static int virtgpu_dma_buf_init_obj(struct drm_device *dev,
 	virtio_gpu_cmd_resource_create_blob(vgdev, bo, &params,
 					    ents, nents);
 	bo->guest_blob = true;
-	bo->attached = true;
 
 	dma_buf_unpin(attach);
 	dma_resv_unlock(resv);
@@ -319,6 +318,7 @@ struct drm_gem_object *virtgpu_gem_prime_import(struct drm_device *dev,
 		return ERR_PTR(-ENOMEM);
 
 	obj = &bo->base.base;
+	obj->resv = buf->resv;
 	obj->funcs = &virtgpu_gem_dma_buf_funcs;
 	drm_gem_private_object_init(dev, obj, buf->size);
 
