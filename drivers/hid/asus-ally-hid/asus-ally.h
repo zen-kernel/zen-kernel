@@ -239,6 +239,7 @@ struct ally_config {
 
 	struct turbo_config turbo;
 	struct button_sysfs_entry *button_entries;
+	void *button_mappings; /* ally_button_mapping array indexed by gamepad_mode */
 
 	struct joystick_resp_curve left_curve;
 	struct joystick_resp_curve right_curve;
