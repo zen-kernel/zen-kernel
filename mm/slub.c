@@ -1950,6 +1950,11 @@ static inline void handle_failed_objexts_alloc(unsigned long obj_exts,
 #define OBJCGS_CLEAR_MASK	(__GFP_DMA | __GFP_RECLAIMABLE | \
 				__GFP_ACCOUNT | __GFP_NOFAIL)
 
+static inline void init_slab_obj_exts(struct slab *slab)
+{
+	slab->obj_exts = 0;
+}
+
 int alloc_slab_obj_exts(struct slab *slab, struct kmem_cache *s,
 		        gfp_t gfp, bool new_slab)
 {
@@ -2033,6 +2038,10 @@ static inline bool need_slab_obj_ext(void)
 }
 
 #else /* CONFIG_SLAB_OBJ_EXT */
+
+static inline void init_slab_obj_exts(struct slab *slab)
+{
+}
 
 static int alloc_slab_obj_exts(struct slab *slab, struct kmem_cache *s,
 			       gfp_t gfp, bool new_slab)
@@ -2601,6 +2610,7 @@ static struct slab *allocate_slab(struct kmem_cache *s, gfp_t flags, int node)
 	slab->objects = oo_objects(oo);
 	slab->inuse = 0;
 	slab->frozen = 0;
+	init_slab_obj_exts(slab);
 
 	account_slab(slab, oo_order(oo), s, flags);
 

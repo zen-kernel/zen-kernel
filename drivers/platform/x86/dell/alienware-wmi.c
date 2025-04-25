@@ -216,6 +216,15 @@ static int __init dmi_matched(const struct dmi_system_id *dmi)
 static const struct dmi_system_id alienware_quirks[] __initconst = {
 	{
 		.callback = dmi_matched,
+		.ident = "Alienware Area-51m R2",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Alienware"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Alienware Area-51m R2"),
+		},
+		.driver_data = &quirk_x_series,
+	},
+	{
+		.callback = dmi_matched,
 		.ident = "Alienware ASM100",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Alienware"),
@@ -243,12 +252,21 @@ static const struct dmi_system_id alienware_quirks[] __initconst = {
 	},
 	{
 		.callback = dmi_matched,
+		.ident = "Alienware m16 R1",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Alienware"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Alienware m16 R1"),
+		},
+		.driver_data = &quirk_g_series,
+	},
+	{
+		.callback = dmi_matched,
 		.ident = "Alienware m16 R1 AMD",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Alienware"),
 			DMI_MATCH(DMI_PRODUCT_NAME, "Alienware m16 R1 AMD"),
 		},
-		.driver_data = &quirk_x_series,
+		.driver_data = &quirk_g_series,
 	},
 	{
 		.callback = dmi_matched,
@@ -256,6 +274,15 @@ static const struct dmi_system_id alienware_quirks[] __initconst = {
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Alienware"),
 			DMI_MATCH(DMI_PRODUCT_NAME, "Alienware m17 R5 AMD"),
+		},
+		.driver_data = &quirk_x_series,
+	},
+	{
+		.callback = dmi_matched,
+		.ident = "Alienware m16 R2",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Alienware"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Alienware m16 R2"),
 		},
 		.driver_data = &quirk_x_series,
 	},
@@ -274,6 +301,15 @@ static const struct dmi_system_id alienware_quirks[] __initconst = {
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Alienware"),
 			DMI_MATCH(DMI_PRODUCT_NAME, "Alienware x15 R1"),
+		},
+		.driver_data = &quirk_x_series,
+	},
+	{
+		.callback = dmi_matched,
+		.ident = "Alienware x15 R2",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Alienware"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Alienware x15 R2"),
 		},
 		.driver_data = &quirk_x_series,
 	},
@@ -342,6 +378,15 @@ static const struct dmi_system_id alienware_quirks[] __initconst = {
 	},
 	{
 		.callback = dmi_matched,
+		.ident = "Dell Inc. G16 7630",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Dell G16 7630"),
+		},
+		.driver_data = &quirk_g_series,
+	},
+	{
+		.callback = dmi_matched,
 		.ident = "Dell Inc. G3 3500",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
@@ -364,6 +409,15 @@ static const struct dmi_system_id alienware_quirks[] __initconst = {
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
 			DMI_MATCH(DMI_PRODUCT_NAME, "G5 5500"),
+		},
+		.driver_data = &quirk_g_series,
+	},
+	{
+		.callback = dmi_matched,
+		.ident = "Dell Inc. G5 5505",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_MATCH(DMI_PRODUCT_NAME, "G5 5505"),
 		},
 		.driver_data = &quirk_g_series,
 	},

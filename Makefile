@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 6
 PATCHLEVEL = 14
-SUBLEVEL = 3
+SUBLEVEL = 4
 EXTRAVERSION = -zen
 NAME = Channeling Inner Peace for Peak Performance
 
@@ -480,7 +480,6 @@ export rust_common_flags := --edition=2021 \
 			    -Wclippy::ignored_unit_patterns \
 			    -Wclippy::mut_mut \
 			    -Wclippy::needless_bitwise_bool \
-			    -Wclippy::needless_continue \
 			    -Aclippy::needless_lifetimes \
 			    -Wclippy::no_mangle_with_rust_abi \
 			    -Wclippy::undocumented_unsafe_blocks \

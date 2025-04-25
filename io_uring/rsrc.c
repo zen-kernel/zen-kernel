@@ -130,6 +130,18 @@ struct io_rsrc_node *io_rsrc_node_alloc(int type)
 	return node;
 }
 
+static void io_clear_table_tags(struct io_rsrc_data *data)
+{
+	int i;
+
+	for (i = 0; i < data->nr; i++) {
+		struct io_rsrc_node *node = data->nodes[i];
+
+		if (node)
+			node->tag = 0;
+	}
+}
+
 __cold void io_rsrc_data_free(struct io_ring_ctx *ctx, struct io_rsrc_data *data)
 {
 	if (!data->nr)
@@ -539,6 +551,7 @@ int io_sqe_files_register(struct io_ring_ctx *ctx, void __user *arg,
 	io_file_table_set_alloc_range(ctx, 0, ctx->file_table.data.nr);
 	return 0;
 fail:
+	io_clear_table_tags(&ctx->file_table.data);
 	io_sqe_files_unregister(ctx);
 	return ret;
 }
@@ -855,8 +868,10 @@ int io_sqe_buffers_register(struct io_ring_ctx *ctx, void __user *arg,
 	}
 
 	ctx->buf_table = data;
-	if (ret)
+	if (ret) {
+		io_clear_table_tags(&ctx->buf_table);
 		io_sqe_buffers_unregister(ctx);
+	}
 	return ret;
 }
 
