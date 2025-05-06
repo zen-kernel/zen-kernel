@@ -4426,7 +4426,7 @@ void alt_sched_debug(void)
 #define SCHED_NR_MIGRATE_BREAK 32
 #endif
 
-const_debug unsigned int sysctl_sched_nr_migrate = SCHED_NR_MIGRATE_BREAK;
+__read_mostly unsigned int sysctl_sched_nr_migrate = SCHED_NR_MIGRATE_BREAK;
 
 /*
  * Migrate pending tasks in @rq to @dest_cpu
