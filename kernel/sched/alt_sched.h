@@ -703,6 +703,7 @@ extern int preempt_dynamic_mode;
 extern int sched_dynamic_mode(const char *str);
 extern void sched_dynamic_update(int mode);
 #endif
+extern const char *preempt_modes[];
 
 static inline void nohz_run_idle_balance(int cpu) { }
 
