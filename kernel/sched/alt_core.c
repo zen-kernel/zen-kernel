@@ -1529,7 +1529,7 @@ __do_set_cpus_ptr(struct task_struct *p, const struct cpumask *new_mask)
 	 *
 	 * XXX do further audits, this smells like something putrid.
 	 */
-	SCHED_WARN_ON(!p->on_cpu);
+	WARN_ON_ONCE(!p->on_cpu);
 	p->cpus_ptr = new_mask;
 }
 
@@ -4399,7 +4399,7 @@ static inline void schedule_debug(struct task_struct *prev, bool preempt)
 		preempt_count_set(PREEMPT_DISABLED);
 	}
 	rcu_sleep_check();
-	SCHED_WARN_ON(ct_state() == CT_STATE_USER);
+	WARN_ON_ONCE(ct_state() == CT_STATE_USER);
 
 	profile_hit(SCHED_PROFILING, __builtin_return_address(0));
 
@@ -4815,7 +4815,7 @@ static inline void sched_submit_work(struct task_struct *tsk)
 	 * deadlock if the callback attempts to acquire a lock which is
 	 * already acquired.
 	 */
-	SCHED_WARN_ON(current->__state & TASK_RTLOCK_WAIT);
+	WARN_ON_ONCE(current->__state & TASK_RTLOCK_WAIT);
 
 	/*
 	 * If we are going to sleep and we have plugged IO queued,
@@ -7561,7 +7561,7 @@ static void task_mm_cid_work(struct callback_head *work)
 	struct mm_struct *mm;
 	int weight, cpu;
 
-	SCHED_WARN_ON(t != container_of(work, struct task_struct, cid_work));
+	WARN_ON_ONCE(t != container_of(work, struct task_struct, cid_work));
 
 	work->next = work;	/* Prevent double-add */
 	if (t->flags & PF_EXITING)
