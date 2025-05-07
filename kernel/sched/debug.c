@@ -1301,6 +1301,11 @@ void proc_sched_show_task(struct task_struct *p, struct pid_namespace *ns,
 
 	sched_show_numa(p, m);
 }
+#else
+void proc_sched_show_task(struct task_struct *p, struct pid_namespace *ns,
+						  struct seq_file *m)
+{ }
+#endif /* !CONFIG_SCHED_ALT */
 
 void proc_sched_set_task(struct task_struct *p)
 {
@@ -1308,7 +1313,6 @@ void proc_sched_set_task(struct task_struct *p)
 	memset(&p->stats, 0, sizeof(p->stats));
 #endif
 }
-#endif /* !CONFIG_SCHED_ALT */
 
 void resched_latency_warn(int cpu, u64 latency)
 {
