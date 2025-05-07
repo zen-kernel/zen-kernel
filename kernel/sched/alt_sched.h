@@ -47,14 +47,6 @@ extern void sched_release_group(struct task_group *tg);
 
 #define IDLE_TASK_SCHED_PRIO	(SCHED_LEVELS - 1)
 
-#ifdef CONFIG_SCHED_DEBUG
-# define SCHED_WARN_ON(x)	WARN_ONCE(x, #x)
-extern void resched_latency_warn(int cpu, u64 latency);
-#else
-# define SCHED_WARN_ON(x)	({ (void)(x), 0; })
-static inline void resched_latency_warn(int cpu, u64 latency) {}
-#endif
-
 /*
  * Increase resolution of nice-level calculations for 64-bit architectures.
  * The extra resolution improves shares distribution and load balancing of
@@ -83,15 +75,6 @@ static inline void resched_latency_warn(int cpu, u64 latency) {}
 # define NICE_0_LOAD_SHIFT	(SCHED_FIXEDPOINT_SHIFT)
 # define scale_load(w)		(w)
 # define scale_load_down(w)	(w)
-#endif
-
-/*
- * Tunables that become constants when CONFIG_SCHED_DEBUG is off:
- */
-#ifdef CONFIG_SCHED_DEBUG
-# define const_debug __read_mostly
-#else
-# define const_debug const
 #endif
 
 /* task_struct::on_rq states: */
@@ -174,10 +157,8 @@ struct rq {
 
 	atomic_t nr_iowait;
 
-#ifdef CONFIG_SCHED_DEBUG
 	u64 last_seen_need_resched_ns;
 	int ticks_without_resched;
-#endif
 
 #ifdef CONFIG_MEMBARRIER
 	int membarrier_state;
@@ -297,7 +278,7 @@ DECLARE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 #define raw_rq()		raw_cpu_ptr(&runqueues)
 
 #ifdef CONFIG_SMP
-#if defined(CONFIG_SCHED_DEBUG) && defined(CONFIG_SYSCTL)
+#ifdef CONFIG_SYSCTL
 void register_sched_domain_sysctl(void);
 void unregister_sched_domain_sysctl(void);
 #else
@@ -339,7 +320,9 @@ static inline int best_mask_cpu(int cpu, const cpumask_t *mask)
 	return __best_mask_cpu(mask, per_cpu(sched_cpu_topo_masks, cpu));
 }
 
-#endif
+#endif /* CONFIG_SMP */
+
+extern void resched_latency_warn(int cpu, u64 latency);
 
 #ifndef arch_scale_freq_tick
 static __always_inline
