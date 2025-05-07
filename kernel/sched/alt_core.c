@@ -61,7 +61,6 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(ipi_send_cpumask);
  */
 EXPORT_TRACEPOINT_SYMBOL_GPL(pelt_irq_tp);
 
-#ifdef CONFIG_SCHED_DEBUG
 #define sched_feat(x)	(1)
 /*
  * Print a warning if need_resched is set for the given duration (if
@@ -72,9 +71,6 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(pelt_irq_tp);
  */
 __read_mostly int sysctl_resched_latency_warn_ms = 100;
 __read_mostly int sysctl_resched_latency_warn_once = 1;
-#else
-#define sched_feat(x)	(0)
-#endif /* CONFIG_SCHED_DEBUG */
 
 #define ALT_SCHED_VERSION "v6.14-r1"
 
@@ -1484,7 +1480,6 @@ static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
 
 void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 {
-#ifdef CONFIG_SCHED_DEBUG
 	unsigned int state = READ_ONCE(p->__state);
 
 	/*
@@ -1510,7 +1505,6 @@ void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 	WARN_ON_ONCE(!cpu_online(new_cpu));
 
 	WARN_ON_ONCE(is_migration_disabled(p));
-#endif
 	trace_sched_migrate_task(p, new_cpu);
 
 	if (task_cpu(p) != new_cpu)
@@ -4049,7 +4043,6 @@ static inline void scheduler_task_tick(struct rq *rq)
 	set_preempt_need_resched();
 }
 
-#ifdef CONFIG_SCHED_DEBUG
 static u64 cpu_resched_latency(struct rq *rq)
 {
 	int latency_warn_ms = READ_ONCE(sysctl_resched_latency_warn_ms);
@@ -4094,9 +4087,6 @@ static int __init setup_resched_latency_warn_ms(char *str)
 	return 1;
 }
 __setup("resched_latency_warn_ms=", setup_resched_latency_warn_ms);
-#else
-static inline u64 cpu_resched_latency(struct rq *rq) { return 0; }
-#endif /* CONFIG_SCHED_DEBUG */
 
 /*
  * This function gets called by the timer code, with HZ frequency.
@@ -4741,9 +4731,7 @@ static void __sched notrace __schedule(int sched_mode)
 picked:
 	clear_tsk_need_resched(prev);
 	clear_preempt_need_resched();
-#ifdef CONFIG_SCHED_DEBUG
 	rq->last_seen_need_resched_ns = 0;
-#endif
 
 	is_switch = prev != next;
 	if (likely(is_switch)) {
@@ -5119,7 +5107,7 @@ asmlinkage __visible void __sched preempt_schedule_irq(void)
 int default_wake_function(wait_queue_entry_t *curr, unsigned mode, int wake_flags,
 			  void *key)
 {
-	WARN_ON_ONCE(IS_ENABLED(CONFIG_SCHED_DEBUG) && wake_flags & ~(WF_SYNC|WF_CURRENT_CPU));
+	WARN_ON_ONCE(wake_flags & ~(WF_SYNC|WF_CURRENT_CPU));
 	return try_to_wake_up(curr->private, mode, wake_flags);
 }
 EXPORT_SYMBOL(default_wake_function);
@@ -5782,12 +5770,10 @@ void show_state_filter(unsigned int state_filter)
 			sched_show_task(p);
 	}
 
-#ifdef CONFIG_SCHED_DEBUG
 	/* TODO: Alt schedule FW should support this
 	if (!state_filter)
 		sysrq_sched_debug_show();
 	*/
-#endif
 	rcu_read_unlock();
 	/*
 	 * Only show locks if all tasks are dumped:
