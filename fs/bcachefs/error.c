@@ -11,6 +11,14 @@
 
 #define FSCK_ERR_RATELIMIT_NR	10
 
+void bch2_log_msg_start(struct bch_fs *c, struct printbuf *out)
+{
+#ifdef BCACHEFS_LOG_PREFIX
+	prt_printf(out, bch2_log_msg(c, ""));
+#endif
+	printbuf_indent_add(out, 2);
+}
+
 bool bch2_inconsistent_error(struct bch_fs *c)
 {
 	set_bit(BCH_FS_error, &c->flags);
