@@ -80,9 +80,6 @@
 #ifdef CONFIG_RT_MUTEXES
 #include <linux/rtmutex.h>
 #endif
-#ifdef CONFIG_USER_NS
-#include <linux/user_namespace.h>
-#endif
 
 /* shared constants to be used in various sysctls */
 const int sysctl_vals[] = { 0, 1, 2, 3, 4, 100, 200, 1000, 3000, INT_MAX, 65535, -1 };
@@ -106,6 +103,10 @@ static const int six_hundred_forty_kb = 640 * 1024;
 
 static const int ngroups_max = NGROUPS_MAX;
 static const int cap_last_cap = CAP_LAST_CAP;
+
+#ifdef CONFIG_USER_NS
+extern int unprivileged_userns_clone;
+#endif
 
 #ifdef CONFIG_PROC_SYSCTL
 
