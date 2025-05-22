@@ -17,6 +17,7 @@
 #include "ivpu_ipc.h"
 #include "ivpu_job.h"
 #include "ivpu_jsm_msg.h"
+#include "ivpu_mmu.h"
 #include "ivpu_pm.h"
 #include "ivpu_trace.h"
 #include "vpu_boot_api.h"
@@ -360,11 +361,14 @@ void ivpu_context_abort_locked(struct ivpu_file_priv *file_priv)
 	struct ivpu_device *vdev = file_priv->vdev;
 
 	lockdep_assert_held(&file_priv->lock);
+	ivpu_dbg(vdev, JOB, "Context ID: %u abort\n", file_priv->ctx.id);
 
 	ivpu_cmdq_fini_all(file_priv);
 
 	if (vdev->fw->sched_mode == VPU_SCHEDULING_MODE_OS)
 		ivpu_jsm_context_release(vdev, file_priv->ctx.id);
+
+	ivpu_mmu_disable_ssid_events(vdev, file_priv->ctx.id);
 
 	file_priv->aborted = true;
 }
@@ -845,12 +849,12 @@ void ivpu_job_done_consumer_fini(struct ivpu_device *vdev)
 	ivpu_ipc_consumer_del(vdev, &vdev->job_done_consumer);
 }
 
-void ivpu_context_abort_thread_handler(struct work_struct *work)
+void ivpu_context_abort_work_fn(struct work_struct *work)
 {
 	struct ivpu_device *vdev = container_of(work, struct ivpu_device, context_abort_work);
 	struct ivpu_file_priv *file_priv;
-	unsigned long ctx_id;
 	struct ivpu_job *job;
+	unsigned long ctx_id;
 	unsigned long id;
 
 	if (vdev->fw->sched_mode == VPU_SCHEDULING_MODE_HW)
@@ -866,6 +870,13 @@ void ivpu_context_abort_thread_handler(struct work_struct *work)
 		mutex_unlock(&file_priv->lock);
 	}
 	mutex_unlock(&vdev->context_list_lock);
+
+	/*
+	 * We will not receive new MMU event interrupts until existing events are discarded
+	 * however, we want to discard these events only after aborting the faulty context
+	 * to avoid generating new faults from that context
+	 */
+	ivpu_mmu_discard_events(vdev);
 
 	if (vdev->fw->sched_mode != VPU_SCHEDULING_MODE_HW)
 		return;
