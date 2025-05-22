@@ -124,7 +124,11 @@
 #include <kunit/visibility.h>
 
 #ifdef CONFIG_USER_NS
+# ifdef CONFIG_USER_NS_UNPRIVILEGED
 static int unprivileged_userns_clone = 1;
+# else
+static int unprivileged_userns_clone = 0;
+# endif
 #else
 #define unprivileged_userns_clone 1
 #endif
