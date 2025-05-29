@@ -483,8 +483,6 @@ static void ieee80211_do_stop(struct ieee80211_sub_if_data *sdata, bool going_do
 		ieee80211_ibss_stop(sdata);
 		break;
 	case NL80211_IFTYPE_MONITOR:
-		if (sdata->u.mntr.flags & MONITOR_FLAG_COOK_FRAMES)
-			break;
 		list_del_rcu(&sdata->u.mntr.list);
 		break;
 	default:
@@ -584,18 +582,19 @@ static void ieee80211_do_stop(struct ieee80211_sub_if_data *sdata, bool going_do
 		/* no need to tell driver */
 		break;
 	case NL80211_IFTYPE_MONITOR:
-		if (sdata->u.mntr.flags & MONITOR_FLAG_COOK_FRAMES) {
-			local->cooked_mntrs--;
-			break;
-		}
-
 		local->monitors--;
-		if (local->monitors == 0) {
-			local->hw.conf.flags &= ~IEEE80211_CONF_MONITOR;
-			hw_reconf_flags |= IEEE80211_CONF_CHANGE_MONITOR;
-		}
 
-		ieee80211_adjust_monitor_flags(sdata, -1);
+		if (!(sdata->u.mntr.flags & MONITOR_FLAG_ACTIVE) &&
+		    !ieee80211_hw_check(&local->hw, NO_VIRTUAL_MONITOR)) {
+
+			local->virt_monitors--;
+			if (local->virt_monitors == 0) {
+				local->hw.conf.flags &= ~IEEE80211_CONF_MONITOR;
+				hw_reconf_flags |= IEEE80211_CONF_CHANGE_MONITOR;
+			}
+
+			ieee80211_adjust_monitor_flags(sdata, -1);
+		}
 		break;
 	case NL80211_IFTYPE_NAN:
 		/* clean all the functions */
@@ -689,7 +688,7 @@ static void ieee80211_do_stop(struct ieee80211_sub_if_data *sdata, bool going_do
 	case NL80211_IFTYPE_AP_VLAN:
 		break;
 	case NL80211_IFTYPE_MONITOR:
-		if (local->monitors == 0)
+		if (local->virt_monitors == 0)
 			ieee80211_del_virtual_monitor(local);
 
 		ieee80211_recalc_idle(local);
@@ -726,7 +725,7 @@ static void ieee80211_do_stop(struct ieee80211_sub_if_data *sdata, bool going_do
 	ieee80211_configure_filter(local);
 	ieee80211_hw_config(local, hw_reconf_flags);
 
-	if (local->monitors == local->open_count)
+	if (local->virt_monitors == local->open_count)
 		ieee80211_add_virtual_monitor(local);
 }
 
@@ -985,7 +984,7 @@ static bool ieee80211_set_sdata_offload_flags(struct ieee80211_sub_if_data *sdat
 		    local->hw.wiphy->frag_threshold != (u32)-1)
 			flags &= ~IEEE80211_OFFLOAD_ENCAP_ENABLED;
 
-		if (local->monitors)
+		if (local->virt_monitors)
 			flags &= ~IEEE80211_OFFLOAD_ENCAP_ENABLED;
 	} else {
 		flags &= ~IEEE80211_OFFLOAD_ENCAP_ENABLED;
@@ -995,7 +994,7 @@ static bool ieee80211_set_sdata_offload_flags(struct ieee80211_sub_if_data *sdat
 	    ieee80211_iftype_supports_hdr_offload(sdata->vif.type)) {
 		flags |= IEEE80211_OFFLOAD_DECAP_ENABLED;
 
-		if (local->monitors &&
+		if (local->virt_monitors &&
 		    !ieee80211_hw_check(&local->hw, SUPPORTS_CONC_MON_RX_DECAP))
 			flags &= ~IEEE80211_OFFLOAD_DECAP_ENABLED;
 	} else {
@@ -1333,28 +1332,27 @@ int ieee80211_do_open(struct wireless_dev *wdev, bool coming_up)
 		}
 		break;
 	case NL80211_IFTYPE_MONITOR:
-		if (sdata->u.mntr.flags & MONITOR_FLAG_COOK_FRAMES) {
-			local->cooked_mntrs++;
-			break;
-		}
-
 		if ((sdata->u.mntr.flags & MONITOR_FLAG_ACTIVE) ||
 		    ieee80211_hw_check(&local->hw, NO_VIRTUAL_MONITOR)) {
 			res = drv_add_interface(local, sdata);
 			if (res)
 				goto err_stop;
-		} else if (local->monitors == 0 && local->open_count == 0) {
-			res = ieee80211_add_virtual_monitor(local);
-			if (res)
-				goto err_stop;
+		} else {
+			if (local->virt_monitors == 0 && local->open_count == 0) {
+				res = ieee80211_add_virtual_monitor(local);
+				if (res)
+					goto err_stop;
+			}
+			local->virt_monitors++;
+
+			/* must be before the call to ieee80211_configure_filter */
+			if (local->virt_monitors == 1) {
+				local->hw.conf.flags |= IEEE80211_CONF_MONITOR;
+				hw_reconf_flags |= IEEE80211_CONF_CHANGE_MONITOR;
+			}
 		}
 
-		/* must be before the call to ieee80211_configure_filter */
 		local->monitors++;
-		if (local->monitors == 1) {
-			local->hw.conf.flags |= IEEE80211_CONF_MONITOR;
-			hw_reconf_flags |= IEEE80211_CONF_CHANGE_MONITOR;
-		}
 
 		ieee80211_adjust_monitor_flags(sdata, 1);
 		ieee80211_configure_filter(local);
@@ -1430,8 +1428,6 @@ int ieee80211_do_open(struct wireless_dev *wdev, bool coming_up)
 		rcu_assign_pointer(local->p2p_sdata, sdata);
 		break;
 	case NL80211_IFTYPE_MONITOR:
-		if (sdata->u.mntr.flags & MONITOR_FLAG_COOK_FRAMES)
-			break;
 		list_add_tail_rcu(&sdata->u.mntr.list, &local->mon_list);
 		break;
 	default:

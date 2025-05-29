@@ -87,7 +87,8 @@ static netdev_tx_t nsim_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (unlikely(nsim_forward_skb(peer_dev, skb, rq) == NET_RX_DROP))
 		goto out_drop_cnt;
 
-	napi_schedule(&rq->napi);
+	if (!hrtimer_active(&rq->napi_timer))
+		hrtimer_start(&rq->napi_timer, us_to_ktime(5), HRTIMER_MODE_REL);
 
 	rcu_read_unlock();
 	u64_stats_update_begin(&ns->syncp);
@@ -426,6 +427,22 @@ err_pp_destroy:
 	return err;
 }
 
+static enum hrtimer_restart nsim_napi_schedule(struct hrtimer *timer)
+{
+	struct nsim_rq *rq;
+
+	rq = container_of(timer, struct nsim_rq, napi_timer);
+	napi_schedule(&rq->napi);
+
+	return HRTIMER_NORESTART;
+}
+
+static void nsim_rq_timer_init(struct nsim_rq *rq)
+{
+	hrtimer_init(&rq->napi_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	rq->napi_timer.function = nsim_napi_schedule;
+}
+
 static void nsim_enable_napi(struct netdevsim *ns)
 {
 	struct net_device *dev = ns->netdev;
@@ -615,11 +632,13 @@ static struct nsim_rq *nsim_queue_alloc(void)
 		return NULL;
 
 	skb_queue_head_init(&rq->skb_queue);
+	nsim_rq_timer_init(rq);
 	return rq;
 }
 
 static void nsim_queue_free(struct nsim_rq *rq)
 {
+	hrtimer_cancel(&rq->napi_timer);
 	skb_queue_purge_reason(&rq->skb_queue, SKB_DROP_REASON_QUEUE_PURGE);
 	kfree(rq);
 }
@@ -645,8 +664,11 @@ nsim_queue_mem_alloc(struct net_device *dev, void *per_queue_mem, int idx)
 	if (ns->rq_reset_mode > 3)
 		return -EINVAL;
 
-	if (ns->rq_reset_mode == 1)
+	if (ns->rq_reset_mode == 1) {
+		if (!netif_running(ns->netdev))
+			return -ENETDOWN;
 		return nsim_create_page_pool(&qmem->pp, &ns->rq[idx]->napi);
+	}
 
 	qmem->rq = nsim_queue_alloc();
 	if (!qmem->rq)
@@ -754,11 +776,6 @@ nsim_qreset_write(struct file *file, const char __user *data,
 		return -EINVAL;
 
 	rtnl_lock();
-	if (!netif_running(ns->netdev)) {
-		ret = -ENETDOWN;
-		goto exit_unlock;
-	}
-
 	if (queue >= ns->netdev->real_num_rx_queues) {
 		ret = -EINVAL;
 		goto exit_unlock;

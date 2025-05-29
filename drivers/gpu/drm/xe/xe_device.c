@@ -722,7 +722,9 @@ int xe_device_probe(struct xe_device *xe)
 	}
 
 	/* Allocate and map stolen after potential VRAM resize */
-	xe_ttm_stolen_mgr_init(xe);
+	err = xe_ttm_stolen_mgr_init(xe);
+	if (err)
+		return err;
 
 	/*
 	 * Now that GT is initialized (TTM in particular),
@@ -733,6 +735,12 @@ int xe_device_probe(struct xe_device *xe)
 	err = xe_display_init_noaccel(xe);
 	if (err)
 		goto err;
+
+	for_each_tile(tile, xe, id) {
+		err = xe_tile_init(tile);
+		if (err)
+			goto err;
+	}
 
 	for_each_gt(gt, xe, id) {
 		last_gt = id;

@@ -1065,8 +1065,8 @@ static ssize_t current_value_store(struct kobject *kobj,
 			ret = -EINVAL;
 			goto out;
 		}
-		set_str = kasprintf(GFP_KERNEL, "%s,%s,%s", setting->display_name,
-					new_setting, tlmi_priv.pwd_admin->signature);
+		set_str = kasprintf(GFP_KERNEL, "%s,%s,%s", setting->name,
+				    new_setting, tlmi_priv.pwd_admin->signature);
 		if (!set_str) {
 			ret = -ENOMEM;
 			goto out;
@@ -1096,7 +1096,7 @@ static ssize_t current_value_store(struct kobject *kobj,
 				goto out;
 		}
 
-		set_str = kasprintf(GFP_KERNEL, "%s,%s;", setting->display_name,
+		set_str = kasprintf(GFP_KERNEL, "%s,%s;", setting->name,
 				    new_setting);
 		if (!set_str) {
 			ret = -ENOMEM;
@@ -1124,11 +1124,11 @@ static ssize_t current_value_store(struct kobject *kobj,
 		}
 
 		if (auth_str)
-			set_str = kasprintf(GFP_KERNEL, "%s,%s,%s", setting->display_name,
-					new_setting, auth_str);
+			set_str = kasprintf(GFP_KERNEL, "%s,%s,%s", setting->name,
+					    new_setting, auth_str);
 		else
-			set_str = kasprintf(GFP_KERNEL, "%s,%s;", setting->display_name,
-					new_setting);
+			set_str = kasprintf(GFP_KERNEL, "%s,%s;", setting->name,
+					    new_setting);
 		if (!set_str) {
 			ret = -ENOMEM;
 			goto out;
@@ -1633,9 +1633,6 @@ static int tlmi_analyze(void)
 			continue;
 		}
 
-		/* It is not allowed to have '/' for file name. Convert it into '\'. */
-		strreplace(item, '/', '\\');
-
 		/* Remove the value part */
 		strreplace(item, ',', '\0');
 
@@ -1647,11 +1644,16 @@ static int tlmi_analyze(void)
 			goto fail_clear_attr;
 		}
 		setting->index = i;
+
+		strscpy(setting->name, item);
+		/* It is not allowed to have '/' for file name. Convert it into '\'. */
+		strreplace(item, '/', '\\');
 		strscpy(setting->display_name, item);
+
 		/* If BIOS selections supported, load those */
 		if (tlmi_priv.can_get_bios_selections) {
-			ret = tlmi_get_bios_selections(setting->display_name,
-					&setting->possible_values);
+			ret = tlmi_get_bios_selections(setting->name,
+						       &setting->possible_values);
 			if (ret || !setting->possible_values)
 				pr_info("Error retrieving possible values for %d : %s\n",
 						i, setting->display_name);

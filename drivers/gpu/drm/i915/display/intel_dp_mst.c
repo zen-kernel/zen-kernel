@@ -221,6 +221,7 @@ int intel_dp_mtp_tu_compute_config(struct intel_dp *intel_dp,
 		to_intel_connector(conn_state->connector);
 	const struct drm_display_mode *adjusted_mode =
 		&crtc_state->hw.adjusted_mode;
+	bool is_mst = intel_crtc_has_type(crtc_state, INTEL_OUTPUT_DP_MST);
 	fixed20_12 pbn_div;
 	int bpp, slots = -EINVAL;
 	int dsc_slice_count = 0;
@@ -271,7 +272,7 @@ int intel_dp_mtp_tu_compute_config(struct intel_dp *intel_dp,
 					 link_bpp_x16,
 					 &crtc_state->dp_m_n);
 
-		if (intel_dp->is_mst) {
+		if (is_mst) {
 			int remote_bw_overhead;
 			int remote_tu;
 			fixed20_12 pbn;
