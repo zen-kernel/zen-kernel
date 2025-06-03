@@ -184,6 +184,7 @@ struct rq {
 	struct cpu_stop_work	active_balance_work;
 
 	struct balance_callback	*balance_callback;
+
 #ifdef CONFIG_HOTPLUG_CPU
 	struct rcuwait		hotplug_wait;
 #endif
@@ -212,6 +213,7 @@ struct rq {
 	/* Ensure that all clocks are in the same cache line */
 	u64			clock ____cacheline_aligned;
 	u64			clock_task;
+	u64			prio_balance_time;
 
 	unsigned int  nr_running;
 	unsigned long nr_uninterruptible;
