@@ -32,11 +32,12 @@ static int orangefs_writepage_locked(struct page *page,
 	len = i_size_read(inode);
 	if (PagePrivate(page)) {
 		wr = (struct orangefs_write_range *)page_private(page);
-		WARN_ON(wr->pos >= len);
 		off = wr->pos;
-		if (off + wr->len > len)
+		if ((off + wr->len > len) && (off <= len))
 			wlen = len - off;
 		else
+			wlen = wr->len;
+		if (wlen == 0)
 			wlen = wr->len;
 	} else {
 		WARN_ON(1);
@@ -46,8 +47,6 @@ static int orangefs_writepage_locked(struct page *page,
 		else
 			wlen = PAGE_SIZE;
 	}
-	/* Should've been handled in orangefs_invalidate_folio. */
-	WARN_ON(off == len || off + wlen > len);
 
 	WARN_ON(wlen == 0);
 	bvec_set_page(&bv, page, wlen, off % PAGE_SIZE);
@@ -340,6 +339,8 @@ static int orangefs_write_begin(struct file *file,
 			wr->len += len;
 			goto okay;
 		} else {
+			wr->pos = pos;
+			wr->len = len;
 			ret = orangefs_launder_folio(folio);
 			if (ret)
 				return ret;
