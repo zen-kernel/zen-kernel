@@ -640,8 +640,14 @@ static inline void __wp_update_state(struct write_point *wp, enum write_point_st
 	if (state != wp->state) {
 		struct task_struct *p = current;
 		u64 now = ktime_get_ns();
+
+#ifdef CONFIG_SCHED_ALT
+		u64 runtime = tsk_seruntime(p) +
+			(now - p->last_ran);
+#else
 		u64 runtime = p->se.sum_exec_runtime +
 			(now - p->se.exec_start);
+#endif
 
 		if (state == WRITE_POINT_runnable)
 			wp->last_runtime = runtime;
