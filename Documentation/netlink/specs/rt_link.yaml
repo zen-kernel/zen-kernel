@@ -1778,15 +1778,19 @@ attribute-sets:
       -
         name: iflags
         type: u16
+        byte-order: big-endian
       -
         name: oflags
         type: u16
+        byte-order: big-endian
       -
         name: ikey
         type: u32
+        byte-order: big-endian
       -
         name: okey
         type: u32
+        byte-order: big-endian
       -
         name: local
         type: binary
@@ -1806,10 +1810,11 @@ attribute-sets:
         type: u8
       -
         name: encap-limit
-        type: u32
+        type: u8
       -
         name: flowinfo
         type: u32
+        byte-order: big-endian
       -
         name: flags
         type: u32
@@ -1822,9 +1827,11 @@ attribute-sets:
       -
         name: encap-sport
         type: u16
+        byte-order: big-endian
       -
         name: encap-dport
         type: u16
+        byte-order: big-endian
       -
         name: collect-metadata
         type: flag
@@ -1847,6 +1854,54 @@ attribute-sets:
         name: erspan-hwid
         type: u16
   -
+    name: linkinfo-gre6-attrs
+    subset-of: linkinfo-gre-attrs
+    attributes:
+      -
+        name: link
+      -
+        name: iflags
+      -
+        name: oflags
+      -
+        name: ikey
+      -
+        name: okey
+      -
+        name: local
+        display-hint: ipv6
+      -
+        name: remote
+        display-hint: ipv6
+      -
+        name: ttl
+      -
+        name: encap-limit
+      -
+        name: flowinfo
+      -
+        name: flags
+      -
+        name: encap-type
+      -
+        name: encap-flags
+      -
+        name: encap-sport
+      -
+        name: encap-dport
+      -
+        name: collect-metadata
+      -
+        name: fwmark
+      -
+        name: erspan-index
+      -
+        name: erspan-ver
+      -
+        name: erspan-dir
+      -
+        name: erspan-hwid
+  -
     name: linkinfo-vti-attrs
     name-prefix: ifla-vti-
     attributes:
@@ -1856,9 +1911,11 @@ attribute-sets:
       -
         name: ikey
         type: u32
+        byte-order: big-endian
       -
         name: okey
         type: u32
+        byte-order: big-endian
       -
         name: local
         type: binary
@@ -1908,6 +1965,7 @@ attribute-sets:
       -
         name: port
         type: u16
+        byte-order: big-endian
       -
         name: collect-metadata
         type: flag
@@ -1927,6 +1985,7 @@ attribute-sets:
       -
         name: label
         type: u32
+        byte-order: big-endian
       -
         name: ttl-inherit
         type: u8
@@ -1967,9 +2026,11 @@ attribute-sets:
       -
         name: flowinfo
         type: u32
+        byte-order: big-endian
       -
         name: flags
         type: u16
+        byte-order: big-endian
       -
         name: proto
         type: u8
@@ -1999,9 +2060,11 @@ attribute-sets:
       -
         name: encap-sport
         type: u16
+        byte-order: big-endian
       -
         name: encap-dport
         type: u16
+        byte-order: big-endian
       -
         name: collect-metadata
         type: flag
@@ -2299,6 +2362,9 @@ sub-messages:
       -
         value: gretap
         attribute-set: linkinfo-gre-attrs
+      -
+        value: ip6gre
+        attribute-set: linkinfo-gre6-attrs
       -
         value: geneve
         attribute-set: linkinfo-geneve-attrs

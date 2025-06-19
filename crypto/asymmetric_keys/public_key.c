@@ -188,6 +188,8 @@ static int software_key_query(const struct kernel_pkey_params *params,
 	ptr = pkey_pack_u32(ptr, pkey->paramlen);
 	memcpy(ptr, pkey->params, pkey->paramlen);
 
+	memset(info, 0, sizeof(*info));
+
 	if (issig) {
 		sig = crypto_alloc_sig(alg_name, 0, 0);
 		if (IS_ERR(sig)) {
@@ -203,6 +205,7 @@ static int software_key_query(const struct kernel_pkey_params *params,
 			goto error_free_tfm;
 
 		len = crypto_sig_keysize(sig);
+		info->key_size = len;
 		info->max_sig_size = crypto_sig_maxsize(sig);
 		info->max_data_size = crypto_sig_digestsize(sig);
 
@@ -211,6 +214,9 @@ static int software_key_query(const struct kernel_pkey_params *params,
 			info->supported_ops |= KEYCTL_SUPPORTS_SIGN;
 
 		if (strcmp(params->encoding, "pkcs1") == 0) {
+			info->max_enc_size = len / BITS_PER_BYTE;
+			info->max_dec_size = len / BITS_PER_BYTE;
+
 			info->supported_ops |= KEYCTL_SUPPORTS_ENCRYPT;
 			if (pkey->key_is_private)
 				info->supported_ops |= KEYCTL_SUPPORTS_DECRYPT;
@@ -230,17 +236,16 @@ static int software_key_query(const struct kernel_pkey_params *params,
 			goto error_free_tfm;
 
 		len = crypto_akcipher_maxsize(tfm);
+		info->key_size = len * BITS_PER_BYTE;
 		info->max_sig_size = len;
 		info->max_data_size = len;
+		info->max_enc_size = len;
+		info->max_dec_size = len;
 
 		info->supported_ops = KEYCTL_SUPPORTS_ENCRYPT;
 		if (pkey->key_is_private)
 			info->supported_ops |= KEYCTL_SUPPORTS_DECRYPT;
 	}
-
-	info->key_size = len * 8;
-	info->max_enc_size = len;
-	info->max_dec_size = len;
 
 	ret = 0;
 

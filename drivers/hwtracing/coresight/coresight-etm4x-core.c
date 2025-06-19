@@ -1020,6 +1020,9 @@ static void etm4_disable_sysfs(struct coresight_device *csdev)
 	smp_call_function_single(drvdata->cpu, etm4_disable_hw, drvdata, 1);
 
 	raw_spin_unlock(&drvdata->spinlock);
+
+	cscfg_csdev_disable_active_config(csdev);
+
 	cpus_read_unlock();
 
 	/*
@@ -1176,7 +1179,7 @@ static void cpu_detect_trace_filtering(struct etmv4_drvdata *drvdata)
 	 * tracing at the kernel EL and EL0, forcing to use the
 	 * virtual time as the timestamp.
 	 */
-	trfcr = (TRFCR_EL1_TS_VIRTUAL |
+	trfcr = (FIELD_PREP(TRFCR_EL1_TS_MASK, TRFCR_EL1_TS_VIRTUAL) |
 		 TRFCR_EL1_ExTRE |
 		 TRFCR_EL1_E0TRE);
 
