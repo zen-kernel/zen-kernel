@@ -3399,10 +3399,11 @@ static int load_module(struct load_info *info, const char __user *uargs,
 			goto sysfs_cleanup;
 	}
 
+	if (codetag_load_module(mod))
+		goto sysfs_cleanup;
+
 	/* Get rid of temporary copy. */
 	free_copy(info, flags);
-
-	codetag_load_module(mod);
 
 	/* Done! */
 	trace_module_load(mod);
