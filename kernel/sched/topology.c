@@ -2862,4 +2862,7 @@ const struct cpumask *sched_numa_hop_mask(unsigned int node, unsigned int hops)
 }
 EXPORT_SYMBOL_GPL(sched_numa_hop_mask);
 #endif /* CONFIG_NUMA */
+
+void sched_update_asym_prefer_cpu(int cpu, int old_prio, int new_prio)
+{}
 #endif
