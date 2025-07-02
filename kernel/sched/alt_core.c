@@ -4564,7 +4564,7 @@ choose_next_task(struct rq *rq, int cpu)
 		next = sched_rq_first_task(rq);
 #endif
 	}
-#ifdef CONFIG_HIGH_RES_TIMERS
+#ifdef CONFIG_SCHED_HRTICK
 	hrtick_start(rq, next->time_slice);
 #endif
 	/*printk(KERN_INFO "sched: choose_next_task(%d) next %px\n", cpu, next);*/
