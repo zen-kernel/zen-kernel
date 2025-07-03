@@ -4553,11 +4553,11 @@ static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 		requeue_task(p, rq);
 }
 
-static inline int balance_select_task_rq(struct task_struct *p)
+static inline int balance_select_task_rq(struct task_struct *p, cpumask_t *avail_mask)
 {
 	cpumask_t mask;
 
-	if (!preempt_mask_check(&mask, cpu_active_mask, task_sched_prio(p)))
+	if (!preempt_mask_check(&mask, avail_mask, task_sched_prio(p)))
 		return -1;
 
 	if (cpumask_and(&mask, &mask, p->cpus_ptr))
@@ -4584,6 +4584,7 @@ __move_queued_task(struct rq *rq, struct task_struct *p, struct rq *dest_rq, int
 static inline void prio_balance(struct rq *rq, const int cpu)
 {
 	struct task_struct *p, *next;
+	cpumask_t mask;
 
 	if (!rq->online)
 		return;
@@ -4599,12 +4600,16 @@ static inline void prio_balance(struct rq *rq, const int cpu)
 
 	rq->prio_balance_time = rq->clock;
 
+	cpumask_copy(&mask, cpu_active_mask);
+	cpumask_clear_cpu(cpu, &mask);
+
 	p = sched_rq_next_task(rq->curr, rq);
 	while (p != rq->idle) {
 		next = sched_rq_next_task(p, rq);
 		if (!is_migration_disabled(p)) {
-			int dest_cpu = balance_select_task_rq(p);
+			int dest_cpu;
 
+			dest_cpu = balance_select_task_rq(p, &mask);
 			if (dest_cpu < 0)
 				return;
 
@@ -4612,6 +4617,8 @@ static inline void prio_balance(struct rq *rq, const int cpu)
 				struct rq *dest_rq = cpu_rq(dest_cpu);
 
 				if (do_raw_spin_trylock(&dest_rq->lock)) {
+					cpumask_clear_cpu(dest_cpu, &mask);
+
 					spin_acquire(&dest_rq->lock.dep_map,
 						     SINGLE_DEPTH_NESTING, 1, _RET_IP_);
 
