@@ -72,7 +72,7 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(pelt_irq_tp);
 __read_mostly int sysctl_resched_latency_warn_ms = 100;
 __read_mostly int sysctl_resched_latency_warn_once = 1;
 
-#define ALT_SCHED_VERSION "v6.15-r1"
+#define ALT_SCHED_VERSION "v6.15-r2"
 
 #define STOP_PRIO		(MAX_RT_PRIO - 1)
 
@@ -4668,7 +4668,7 @@ choose_next_task(struct rq *rq, int cpu)
 		next = sched_rq_first_task(rq);
 #endif
 	}
-#ifdef CONFIG_HIGH_RES_TIMERS
+#ifdef CONFIG_SCHED_HRTICK
 	hrtick_start(rq, next->time_slice);
 #endif
 	/*printk(KERN_INFO "sched: choose_next_task(%d) next %px\n", cpu, next);*/
