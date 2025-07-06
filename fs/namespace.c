@@ -2765,14 +2765,14 @@ static int attach_recursive_mnt(struct mount *source_mnt,
 	hlist_for_each_entry_safe(child, n, &tree_list, mnt_hash) {
 		struct mount *q;
 		hlist_del_init(&child->mnt_hash);
-		q = __lookup_mnt(&child->mnt_parent->mnt,
-				 child->mnt_mountpoint);
-		if (q)
-			mnt_change_mountpoint(child, smp, q);
 		/* Notice when we are propagating across user namespaces */
 		if (child->mnt_parent->mnt_ns->user_ns != user_ns)
 			lock_mnt_tree(child);
 		child->mnt.mnt_flags &= ~MNT_LOCKED;
+		q = __lookup_mnt(&child->mnt_parent->mnt,
+				 child->mnt_mountpoint);
+		if (q)
+			mnt_change_mountpoint(child, smp, q);
 		commit_tree(child);
 	}
 	put_mountpoint(smp);
@@ -5307,16 +5307,12 @@ SYSCALL_DEFINE5(open_tree_attr, int, dfd, const char __user *, filename,
 			kattr.kflags |= MOUNT_KATTR_RECURSE;
 
 		ret = wants_mount_setattr(uattr, usize, &kattr);
-		if (ret < 0)
-			return ret;
-
-		if (ret) {
+		if (ret > 0) {
 			ret = do_mount_setattr(&file->f_path, &kattr);
-			if (ret)
-				return ret;
-
 			finish_mount_kattr(&kattr);
 		}
+		if (ret)
+			return ret;
 	}
 
 	fd = get_unused_fd_flags(flags & O_CLOEXEC);

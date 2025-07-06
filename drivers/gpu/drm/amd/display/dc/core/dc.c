@@ -239,6 +239,7 @@ static bool create_links(
 	DC_LOG_DC("BIOS object table - end");
 
 	/* Create a link for each usb4 dpia port */
+	dc->lowest_dpia_link_index = MAX_LINKS;
 	for (i = 0; i < dc->res_pool->usb4_dpia_count; i++) {
 		struct link_init_data link_init_params = {0};
 		struct dc_link *link;
@@ -251,6 +252,9 @@ static bool create_links(
 
 		link = dc->link_srv->create_link(&link_init_params);
 		if (link) {
+			if (dc->lowest_dpia_link_index > dc->link_count)
+				dc->lowest_dpia_link_index = dc->link_count;
+
 			dc->links[dc->link_count] = link;
 			link->dc = dc;
 			++dc->link_count;
@@ -6246,6 +6250,35 @@ struct dc_power_profile dc_get_power_profile_for_dc_state(const struct dc_state 
 	if (dc->res_pool->funcs->get_power_profile)
 		profile.power_level = dc->res_pool->funcs->get_power_profile(context);
 	return profile;
+}
+/**
+ ***********************************************************************************************
+ * dc_get_host_router_index: Get index of host router from a dpia link
+ *
+ * This function return a host router index of the target link. If the target link is dpia link.
+ *
+ * @param [in] link: target link
+ * @param [out] host_router_index: host router index of the target link
+ *
+ * @return: true if the host router index is found and valid.
+ *
+ ***********************************************************************************************
+ */
+bool dc_get_host_router_index(const struct dc_link *link, unsigned int *host_router_index)
+{
+	struct dc *dc = link->ctx->dc;
+
+	if (link->ep_type != DISPLAY_ENDPOINT_USB4_DPIA)
+		return false;
+
+	if (link->link_index < dc->lowest_dpia_link_index)
+		return false;
+
+	*host_router_index = (link->link_index - dc->lowest_dpia_link_index) / dc->caps.num_of_dpias_per_host_router;
+	if (*host_router_index < dc->caps.num_of_host_routers)
+		return true;
+	else
+		return false;
 }
 
 /*
