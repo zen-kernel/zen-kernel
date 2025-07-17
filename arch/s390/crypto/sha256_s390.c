@@ -31,6 +31,7 @@ static int s390_sha256_init(struct shash_desc *desc)
 	sctx->state[7] = SHA256_H7;
 	sctx->count = 0;
 	sctx->func = CPACF_KIMD_SHA_256;
+	sctx->first_message_part = 0;
 
 	return 0;
 }
@@ -55,6 +56,7 @@ static int sha256_import(struct shash_desc *desc, const void *in)
 	memcpy(sctx->state, ictx->state, sizeof(ictx->state));
 	memcpy(sctx->buf, ictx->buf, sizeof(ictx->buf));
 	sctx->func = CPACF_KIMD_SHA_256;
+	sctx->first_message_part = 0;
 	return 0;
 }
 
@@ -90,6 +92,7 @@ static int s390_sha224_init(struct shash_desc *desc)
 	sctx->state[7] = SHA224_H7;
 	sctx->count = 0;
 	sctx->func = CPACF_KIMD_SHA_256;
+	sctx->first_message_part = 0;
 
 	return 0;
 }

@@ -533,7 +533,6 @@ alternative_else_nop_endif
 #undef PTE_MAYBE_SHARED
 
 	orr	tcr2, tcr2, TCR2_EL1_PIE
-	msr	REG_TCR2_EL1, x0
 
 .Lskip_indirection:
 
