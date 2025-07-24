@@ -964,4 +964,5 @@ void blk_unregister_queue(struct gendisk *disk)
 	kobject_del(&disk->queue_kobj);
 
 	blk_debugfs_remove(disk);
+	kobject_put(&disk->queue_kobj);
 }
