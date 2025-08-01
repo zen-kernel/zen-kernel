@@ -205,6 +205,7 @@ static const struct dmi_system_id awcc_dmi_table[] __initconst = {
 		},
 		.driver_data = &g_series_quirks,
 	},
+	{}
 };
 
 enum WMAX_THERMAL_INFORMATION_OPERATIONS {
