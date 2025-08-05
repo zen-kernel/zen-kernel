@@ -336,7 +336,7 @@ static long pidfd_info(struct file *file, unsigned int cmd, unsigned long arg)
 	kinfo.pid = task_pid_vnr(task);
 	kinfo.mask |= PIDFD_INFO_PID;
 
-	if (kinfo.pid == 0 || kinfo.tgid == 0 || (kinfo.ppid == 0 && kinfo.pid != 1))
+	if (kinfo.pid == 0 || kinfo.tgid == 0)
 		return -ESRCH;
 
 copy_out:
@@ -826,7 +826,7 @@ static int pidfs_init_inode(struct inode *inode, void *data)
 	const struct pid *pid = data;
 
 	inode->i_private = data;
-	inode->i_flags |= S_PRIVATE;
+	inode->i_flags |= S_PRIVATE | S_ANON_INODE;
 	inode->i_mode |= S_IRWXU;
 	inode->i_op = &pidfs_inode_operations;
 	inode->i_fop = &pidfs_file_operations;

@@ -325,14 +325,14 @@ static void nfs4_bitmap_copy_adjust(__u32 *dst, const __u32 *src,
 
 	if (nfs_have_delegated_mtime(inode)) {
 		if (!(cache_validity & NFS_INO_INVALID_ATIME))
-			dst[1] &= ~FATTR4_WORD1_TIME_ACCESS;
+			dst[1] &= ~(FATTR4_WORD1_TIME_ACCESS|FATTR4_WORD1_TIME_ACCESS_SET);
 		if (!(cache_validity & NFS_INO_INVALID_MTIME))
-			dst[1] &= ~FATTR4_WORD1_TIME_MODIFY;
+			dst[1] &= ~(FATTR4_WORD1_TIME_MODIFY|FATTR4_WORD1_TIME_MODIFY_SET);
 		if (!(cache_validity & NFS_INO_INVALID_CTIME))
-			dst[1] &= ~FATTR4_WORD1_TIME_METADATA;
+			dst[1] &= ~(FATTR4_WORD1_TIME_METADATA|FATTR4_WORD1_TIME_MODIFY_SET);
 	} else if (nfs_have_delegated_atime(inode)) {
 		if (!(cache_validity & NFS_INO_INVALID_ATIME))
-			dst[1] &= ~FATTR4_WORD1_TIME_ACCESS;
+			dst[1] &= ~(FATTR4_WORD1_TIME_ACCESS|FATTR4_WORD1_TIME_ACCESS_SET);
 	}
 }
 
@@ -3976,8 +3976,9 @@ static int _nfs4_server_capabilities(struct nfs_server *server, struct nfs_fh *f
 		     FATTR4_WORD0_CASE_INSENSITIVE |
 		     FATTR4_WORD0_CASE_PRESERVING;
 	if (minorversion)
-		bitmask[2] = FATTR4_WORD2_SUPPATTR_EXCLCREAT |
-			     FATTR4_WORD2_OPEN_ARGUMENTS;
+		bitmask[2] = FATTR4_WORD2_SUPPATTR_EXCLCREAT;
+	if (minorversion > 1)
+		bitmask[2] |= FATTR4_WORD2_OPEN_ARGUMENTS;
 
 	status = nfs4_call_sync(server->client, server, &msg, &args.seq_args, &res.seq_res, 0);
 	if (status == 0) {
@@ -5164,13 +5165,15 @@ static int nfs4_do_create(struct inode *dir, struct dentry *dentry, struct nfs4_
 }
 
 static struct dentry *nfs4_do_mkdir(struct inode *dir, struct dentry *dentry,
-				    struct nfs4_createdata *data)
+				    struct nfs4_createdata *data, int *statusp)
 {
-	int status = nfs4_call_sync(NFS_SERVER(dir)->client, NFS_SERVER(dir), &data->msg,
+	struct dentry *ret;
+
+	*statusp = nfs4_call_sync(NFS_SERVER(dir)->client, NFS_SERVER(dir), &data->msg,
 				    &data->arg.seq_args, &data->res.seq_res, 1);
 
-	if (status)
-		return ERR_PTR(status);
+	if (*statusp)
+		return NULL;
 
 	spin_lock(&dir->i_lock);
 	/* Creating a directory bumps nlink in the parent */
@@ -5179,7 +5182,11 @@ static struct dentry *nfs4_do_mkdir(struct inode *dir, struct dentry *dentry,
 				      data->res.fattr->time_start,
 				      NFS_INO_INVALID_DATA);
 	spin_unlock(&dir->i_lock);
-	return nfs_add_or_obtain(dentry, data->res.fh, data->res.fattr);
+	ret = nfs_add_or_obtain(dentry, data->res.fh, data->res.fattr);
+	if (!IS_ERR(ret))
+		return ret;
+	*statusp = PTR_ERR(ret);
+	return NULL;
 }
 
 static void nfs4_free_createdata(struct nfs4_createdata *data)
@@ -5240,17 +5247,18 @@ static int nfs4_proc_symlink(struct inode *dir, struct dentry *dentry,
 
 static struct dentry *_nfs4_proc_mkdir(struct inode *dir, struct dentry *dentry,
 				       struct iattr *sattr,
-				       struct nfs4_label *label)
+				       struct nfs4_label *label, int *statusp)
 {
 	struct nfs4_createdata *data;
-	struct dentry *ret = ERR_PTR(-ENOMEM);
+	struct dentry *ret = NULL;
 
+	*statusp = -ENOMEM;
 	data = nfs4_alloc_createdata(dir, &dentry->d_name, sattr, NF4DIR);
 	if (data == NULL)
 		goto out;
 
 	data->arg.label = label;
-	ret = nfs4_do_mkdir(dir, dentry, data);
+	ret = nfs4_do_mkdir(dir, dentry, data, statusp);
 
 	nfs4_free_createdata(data);
 out:
@@ -5273,11 +5281,12 @@ static struct dentry *nfs4_proc_mkdir(struct inode *dir, struct dentry *dentry,
 	if (!(server->attr_bitmask[2] & FATTR4_WORD2_MODE_UMASK))
 		sattr->ia_mode &= ~current_umask();
 	do {
-		alias = _nfs4_proc_mkdir(dir, dentry, sattr, label);
-		err = PTR_ERR_OR_ZERO(alias);
+		alias = _nfs4_proc_mkdir(dir, dentry, sattr, label, &err);
 		trace_nfs4_mkdir(dir, &dentry->d_name, err);
-		err = nfs4_handle_exception(NFS_SERVER(dir), err,
-				&exception);
+		if (err)
+			alias = ERR_PTR(nfs4_handle_exception(NFS_SERVER(dir),
+							      err,
+							      &exception));
 	} while (exception.retry);
 	nfs4_label_release_security(label);
 
@@ -6211,6 +6220,8 @@ static ssize_t nfs4_proc_get_acl(struct inode *inode, void *buf, size_t buflen,
 	struct nfs_server *server = NFS_SERVER(inode);
 	int ret;
 
+	if (unlikely(NFS_FH(inode)->size == 0))
+		return -ENODATA;
 	if (!nfs4_server_supports_acls(server, type))
 		return -EOPNOTSUPP;
 	ret = nfs_revalidate_inode(inode, NFS_INO_INVALID_CHANGE);
@@ -6285,6 +6296,9 @@ static int nfs4_proc_set_acl(struct inode *inode, const void *buf,
 {
 	struct nfs4_exception exception = { };
 	int err;
+
+	if (unlikely(NFS_FH(inode)->size == 0))
+		return -ENODATA;
 	do {
 		err = __nfs4_proc_set_acl(inode, buf, buflen, type);
 		trace_nfs4_set_acl(inode, err);
@@ -10852,7 +10866,7 @@ const struct nfs4_minor_version_ops *nfs_v4_minor_ops[] = {
 
 static ssize_t nfs4_listxattr(struct dentry *dentry, char *list, size_t size)
 {
-	ssize_t error, error2, error3;
+	ssize_t error, error2, error3, error4;
 	size_t left = size;
 
 	error = generic_listxattr(dentry, list, left);
@@ -10875,8 +10889,16 @@ static ssize_t nfs4_listxattr(struct dentry *dentry, char *list, size_t size)
 	error3 = nfs4_listxattr_nfs4_user(d_inode(dentry), list, left);
 	if (error3 < 0)
 		return error3;
+	if (list) {
+		list += error3;
+		left -= error3;
+	}
 
-	error += error2 + error3;
+	error4 = security_inode_listsecurity(d_inode(dentry), list, left);
+	if (error4 < 0)
+		return error4;
+
+	error += error2 + error3 + error4;
 	if (size && error > size)
 		return -ERANGE;
 	return error;

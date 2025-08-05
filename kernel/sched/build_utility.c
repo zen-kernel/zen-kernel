@@ -56,6 +56,10 @@
 
 #include "clock.c"
 
+#ifdef CONFIG_SCHED_ALT
+# include "alt_topology.c"
+#endif
+
 #ifdef CONFIG_CGROUP_CPUACCT
 # include "cpuacct.c"
 #endif
@@ -68,7 +72,7 @@
 # include "cpufreq_schedutil.c"
 #endif
 
-#include "debug.c"
+# include "debug.c"
 
 #ifdef CONFIG_SCHEDSTATS
 # include "stats.c"
@@ -82,7 +86,9 @@
 
 #ifdef CONFIG_SMP
 # include "cpupri.c"
+#ifndef CONFIG_SCHED_ALT
 # include "stop_task.c"
+#endif
 # include "topology.c"
 #endif
 

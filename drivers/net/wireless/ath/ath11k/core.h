@@ -599,6 +599,8 @@ struct ath11k_fw_stats {
 	struct list_head pdevs;
 	struct list_head vdevs;
 	struct list_head bcn;
+	u32 num_vdev_recvd;
+	u32 num_bcn_recvd;
 };
 
 struct ath11k_dbg_htt_stats {
@@ -783,7 +785,7 @@ struct ath11k {
 	u8 alpha2[REG_ALPHA2_LEN + 1];
 	struct ath11k_fw_stats fw_stats;
 	struct completion fw_stats_complete;
-	bool fw_stats_done;
+	struct completion fw_stats_done;
 
 	/* protected by conf_mutex */
 	bool ps_state_enable;
@@ -890,6 +892,11 @@ struct ath11k_msi_config {
 	int total_users;
 	struct ath11k_msi_user *users;
 	u16 hw_rev;
+};
+
+enum ath11k_pm_policy {
+	ATH11K_PM_DEFAULT,
+	ATH11K_PM_WOW,
 };
 
 /* Master structure to hold the hw data which may be used in core module */
@@ -1057,6 +1064,8 @@ struct ath11k_base {
 		u8 *eventdata;
 	} testmode;
 #endif
+
+	enum ath11k_pm_policy pm_policy;
 
 	/* must be last */
 	u8 drv_priv[] __aligned(sizeof(void *));

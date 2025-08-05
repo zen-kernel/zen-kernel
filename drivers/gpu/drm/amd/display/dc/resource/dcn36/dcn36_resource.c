@@ -1867,6 +1867,9 @@ static bool dcn36_resource_construct(
 	dc->caps.color.mpc.ogam_rom_caps.hlg = 0;
 	dc->caps.color.mpc.ocsc = 1;
 
+	dc->caps.num_of_host_routers = 2;
+	dc->caps.num_of_dpias_per_host_router = 2;
+
 	/* max_disp_clock_khz_at_vmin is slightly lower than the STA value in order
 	 * to provide some margin.
 	 * It's expected for furture ASIC to have equal or higher value, in order to
@@ -1876,7 +1879,7 @@ static bool dcn36_resource_construct(
 	dc->caps.max_disp_clock_khz_at_vmin = 650000;
 
 	/* Sequential ONO is based on ASIC. */
-	if (dc->ctx->asic_id.hw_internal_rev > 0x10)
+	if (dc->ctx->asic_id.hw_internal_rev >= 0x40)
 		dc->caps.sequential_ono = true;
 
 	/* Use pipe context based otg sync logic */

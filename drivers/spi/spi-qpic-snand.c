@@ -250,9 +250,11 @@ static const struct mtd_ooblayout_ops qcom_spi_ooblayout = {
 static int qcom_spi_ecc_init_ctx_pipelined(struct nand_device *nand)
 {
 	struct qcom_nand_controller *snandc = nand_to_qcom_snand(nand);
+	struct nand_ecc_props *reqs = &nand->ecc.requirements;
+	struct nand_ecc_props *user = &nand->ecc.user_conf;
 	struct nand_ecc_props *conf = &nand->ecc.ctx.conf;
 	struct mtd_info *mtd = nanddev_to_mtd(nand);
-	int cwperpage, bad_block_byte;
+	int cwperpage, bad_block_byte, ret;
 	struct qpic_ecc *ecc_cfg;
 
 	cwperpage = mtd->writesize / NANDC_STEP_SIZE;
@@ -261,11 +263,39 @@ static int qcom_spi_ecc_init_ctx_pipelined(struct nand_device *nand)
 	ecc_cfg = kzalloc(sizeof(*ecc_cfg), GFP_KERNEL);
 	if (!ecc_cfg)
 		return -ENOMEM;
-	snandc->qspi->oob_buf = kzalloc(mtd->writesize + mtd->oobsize,
+
+	if (user->step_size && user->strength) {
+		ecc_cfg->step_size = user->step_size;
+		ecc_cfg->strength = user->strength;
+	} else if (reqs->step_size && reqs->strength) {
+		ecc_cfg->step_size = reqs->step_size;
+		ecc_cfg->strength = reqs->strength;
+	} else {
+		/* use defaults */
+		ecc_cfg->step_size = NANDC_STEP_SIZE;
+		ecc_cfg->strength = 4;
+	}
+
+	if (ecc_cfg->step_size != NANDC_STEP_SIZE) {
+		dev_err(snandc->dev,
+			"only %u bytes ECC step size is supported\n",
+			NANDC_STEP_SIZE);
+		ret = -EOPNOTSUPP;
+		goto err_free_ecc_cfg;
+	}
+
+	if (ecc_cfg->strength != 4) {
+		dev_err(snandc->dev,
+			"only 4 bits ECC strength is supported\n");
+		ret = -EOPNOTSUPP;
+		goto err_free_ecc_cfg;
+	}
+
+	snandc->qspi->oob_buf = kmalloc(mtd->writesize + mtd->oobsize,
 					GFP_KERNEL);
 	if (!snandc->qspi->oob_buf) {
-		kfree(ecc_cfg);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto err_free_ecc_cfg;
 	}
 
 	memset(snandc->qspi->oob_buf, 0xff, mtd->writesize + mtd->oobsize);
@@ -280,13 +310,27 @@ static int qcom_spi_ecc_init_ctx_pipelined(struct nand_device *nand)
 	ecc_cfg->bytes = ecc_cfg->ecc_bytes_hw + ecc_cfg->spare_bytes + ecc_cfg->bbm_size;
 
 	ecc_cfg->steps = 4;
-	ecc_cfg->strength = 4;
-	ecc_cfg->step_size = 512;
 	ecc_cfg->cw_data = 516;
 	ecc_cfg->cw_size = ecc_cfg->cw_data + ecc_cfg->bytes;
 	bad_block_byte = mtd->writesize - ecc_cfg->cw_size * (cwperpage - 1) + 1;
 
 	mtd_set_ooblayout(mtd, &qcom_spi_ooblayout);
+
+	/*
+	 * Free the temporary BAM transaction allocated initially by
+	 * qcom_nandc_alloc(), and allocate a new one based on the
+	 * updated max_cwperpage value.
+	 */
+	qcom_free_bam_transaction(snandc);
+
+	snandc->max_cwperpage = cwperpage;
+
+	snandc->bam_txn = qcom_alloc_bam_transaction(snandc);
+	if (!snandc->bam_txn) {
+		dev_err(snandc->dev, "failed to allocate BAM transaction\n");
+		ret = -ENOMEM;
+		goto err_free_ecc_cfg;
+	}
 
 	ecc_cfg->cfg0 = FIELD_PREP(CW_PER_PAGE_MASK, (cwperpage - 1)) |
 			FIELD_PREP(UD_SIZE_BYTES_MASK, ecc_cfg->cw_data) |
@@ -339,6 +383,10 @@ static int qcom_spi_ecc_init_ctx_pipelined(struct nand_device *nand)
 		ecc_cfg->strength, ecc_cfg->step_size);
 
 	return 0;
+
+err_free_ecc_cfg:
+	kfree(ecc_cfg);
+	return ret;
 }
 
 static void qcom_spi_ecc_cleanup_ctx_pipelined(struct nand_device *nand)
@@ -1604,6 +1652,7 @@ static void qcom_spi_remove(struct platform_device *pdev)
 
 static const struct qcom_nandc_props ipq9574_snandc_props = {
 	.dev_cmd_reg_start = 0x7000,
+	.bam_offset = 0x30000,
 	.supports_bam = true,
 };
 

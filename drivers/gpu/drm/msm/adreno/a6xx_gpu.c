@@ -130,6 +130,20 @@ static void a6xx_set_pagetable(struct a6xx_gpu *a6xx_gpu,
 		OUT_RING(ring, lower_32_bits(rbmemptr(ring, fence)));
 		OUT_RING(ring, upper_32_bits(rbmemptr(ring, fence)));
 		OUT_RING(ring, submit->seqno - 1);
+
+		OUT_PKT7(ring, CP_THREAD_CONTROL, 1);
+		OUT_RING(ring, CP_SET_THREAD_BOTH);
+
+		/* Reset state used to synchronize BR and BV */
+		OUT_PKT7(ring, CP_RESET_CONTEXT_STATE, 1);
+		OUT_RING(ring,
+			 CP_RESET_CONTEXT_STATE_0_CLEAR_ON_CHIP_TS |
+			 CP_RESET_CONTEXT_STATE_0_CLEAR_RESOURCE_TABLE |
+			 CP_RESET_CONTEXT_STATE_0_CLEAR_BV_BR_COUNTER |
+			 CP_RESET_CONTEXT_STATE_0_RESET_GLOBAL_LOCAL_TS);
+
+		OUT_PKT7(ring, CP_THREAD_CONTROL, 1);
+		OUT_RING(ring, CP_SET_THREAD_BR);
 	}
 
 	if (!sysprof) {
@@ -655,7 +669,6 @@ static void a6xx_calc_ubwc_config(struct adreno_gpu *gpu)
 	if (adreno_is_7c3(gpu)) {
 		gpu->ubwc_config.highest_bank_bit = 14;
 		gpu->ubwc_config.amsbc = 1;
-		gpu->ubwc_config.rgb565_predicator = 1;
 		gpu->ubwc_config.uavflagprd_inv = 2;
 		gpu->ubwc_config.macrotile_mode = 1;
 	}

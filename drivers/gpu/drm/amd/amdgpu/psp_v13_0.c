@@ -42,7 +42,9 @@ MODULE_FIRMWARE("amdgpu/psp_13_0_5_ta.bin");
 MODULE_FIRMWARE("amdgpu/psp_13_0_8_toc.bin");
 MODULE_FIRMWARE("amdgpu/psp_13_0_8_ta.bin");
 MODULE_FIRMWARE("amdgpu/psp_13_0_0_sos.bin");
+MODULE_FIRMWARE("amdgpu/psp_13_0_0_sos_kicker.bin");
 MODULE_FIRMWARE("amdgpu/psp_13_0_0_ta.bin");
+MODULE_FIRMWARE("amdgpu/psp_13_0_0_ta_kicker.bin");
 MODULE_FIRMWARE("amdgpu/psp_13_0_7_sos.bin");
 MODULE_FIRMWARE("amdgpu/psp_13_0_7_ta.bin");
 MODULE_FIRMWARE("amdgpu/psp_13_0_10_sos.bin");
@@ -858,6 +860,25 @@ static bool psp_v13_0_is_reload_needed(struct psp_context *psp)
 	return false;
 }
 
+static int psp_v13_0_reg_program_no_ring(struct psp_context *psp, uint32_t val,
+					 enum psp_reg_prog_id id)
+{
+	struct amdgpu_device *adev = psp->adev;
+	int ret = -EOPNOTSUPP;
+
+	/* PSP will broadcast the value to all instances */
+	if (amdgpu_sriov_vf(adev)) {
+		WREG32_SOC15(MP0, 0, regMP0_SMN_C2PMSG_101, GFX_CTRL_CMD_ID_GBR_IH_SET);
+		WREG32_SOC15(MP0, 0, regMP0_SMN_C2PMSG_102, id);
+		WREG32_SOC15(MP0, 0, regMP0_SMN_C2PMSG_103, val);
+
+		ret = psp_wait_for(psp, SOC15_REG_OFFSET(MP0, 0, regMP0_SMN_C2PMSG_101),
+				   0x80000000, 0x80000000, false);
+	}
+
+	return ret;
+}
+
 static const struct psp_funcs psp_v13_0_funcs = {
 	.init_microcode = psp_v13_0_init_microcode,
 	.wait_for_bootloader = psp_v13_0_wait_for_bootloader_steady_state,
@@ -884,6 +905,7 @@ static const struct psp_funcs psp_v13_0_funcs = {
 	.get_ras_capability = psp_v13_0_get_ras_capability,
 	.is_aux_sos_load_required = psp_v13_0_is_aux_sos_load_required,
 	.is_reload_needed = psp_v13_0_is_reload_needed,
+	.reg_program_no_ring = psp_v13_0_reg_program_no_ring,
 };
 
 void psp_v13_0_set_psp_funcs(struct psp_context *psp)

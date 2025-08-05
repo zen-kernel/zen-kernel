@@ -106,6 +106,10 @@ static pci_ers_result_t zpci_event_do_error_state_clear(struct pci_dev *pdev,
 	struct zpci_dev *zdev = to_zpci(pdev);
 	int rc;
 
+	/* The underlying device may have been disabled by the event */
+	if (!zdev_enabled(zdev))
+		return PCI_ERS_RESULT_NEED_RESET;
+
 	pr_info("%s: Unblocking device access for examination\n", pci_name(pdev));
 	rc = zpci_reset_load_store_blocked(zdev);
 	if (rc) {
@@ -273,6 +277,8 @@ static void __zpci_event_error(struct zpci_ccdf_err *ccdf)
 	struct zpci_dev *zdev = get_zdev_by_fid(ccdf->fid);
 	struct pci_dev *pdev = NULL;
 	pci_ers_result_t ers_res;
+	u32 fh = 0;
+	int rc;
 
 	zpci_dbg(3, "err fid:%x, fh:%x, pec:%x\n",
 		 ccdf->fid, ccdf->fh, ccdf->pec);
@@ -281,6 +287,15 @@ static void __zpci_event_error(struct zpci_ccdf_err *ccdf)
 
 	if (zdev) {
 		mutex_lock(&zdev->state_lock);
+		rc = clp_refresh_fh(zdev->fid, &fh);
+		if (rc)
+			goto no_pdev;
+		if (!fh || ccdf->fh != fh) {
+			/* Ignore events with stale handles */
+			zpci_dbg(3, "err fid:%x, fh:%x (stale %x)\n",
+				 ccdf->fid, fh, ccdf->fh);
+			goto no_pdev;
+		}
 		zpci_update_fh(zdev, ccdf->fh);
 		if (zdev->zbus->bus)
 			pdev = pci_get_slot(zdev->zbus->bus, zdev->devfn);
@@ -335,6 +350,22 @@ static void zpci_event_hard_deconfigured(struct zpci_dev *zdev, u32 fh)
 	zdev->state = ZPCI_FN_STATE_STANDBY;
 }
 
+static void zpci_event_reappear(struct zpci_dev *zdev)
+{
+	lockdep_assert_held(&zdev->state_lock);
+	/*
+	 * The zdev is in the reserved state. This means that it was presumed to
+	 * go away but there are still undropped references. Now, the platform
+	 * announced its availability again. Bring back the lingering zdev
+	 * to standby. This is safe because we hold a temporary reference
+	 * now so that it won't go away. Account for the re-appearance of the
+	 * underlying device by incrementing the reference count.
+	 */
+	zdev->state = ZPCI_FN_STATE_STANDBY;
+	zpci_zdev_get(zdev);
+	zpci_dbg(1, "rea fid:%x, fh:%x\n", zdev->fid, zdev->fh);
+}
+
 static void __zpci_event_availability(struct zpci_ccdf_avail *ccdf)
 {
 	struct zpci_dev *zdev = get_zdev_by_fid(ccdf->fid);
@@ -358,8 +389,10 @@ static void __zpci_event_availability(struct zpci_ccdf_avail *ccdf)
 				break;
 			}
 		} else {
+			if (zdev->state == ZPCI_FN_STATE_RESERVED)
+				zpci_event_reappear(zdev);
 			/* the configuration request may be stale */
-			if (zdev->state != ZPCI_FN_STATE_STANDBY)
+			else if (zdev->state != ZPCI_FN_STATE_STANDBY)
 				break;
 			zdev->state = ZPCI_FN_STATE_CONFIGURED;
 		}
@@ -375,6 +408,8 @@ static void __zpci_event_availability(struct zpci_ccdf_avail *ccdf)
 				break;
 			}
 		} else {
+			if (zdev->state == ZPCI_FN_STATE_RESERVED)
+				zpci_event_reappear(zdev);
 			zpci_update_fh(zdev, ccdf->fh);
 		}
 		break;

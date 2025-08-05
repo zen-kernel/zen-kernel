@@ -90,13 +90,19 @@ int mlx5hws_bwc_matcher_create_simple(struct mlx5hws_bwc_matcher *bwc_matcher,
 	bwc_matcher->priority = priority;
 	bwc_matcher->size_log = MLX5HWS_BWC_MATCHER_INIT_SIZE_LOG;
 
+	bwc_matcher->size_of_at_array = MLX5HWS_BWC_MATCHER_ATTACH_AT_NUM;
+	bwc_matcher->at = kcalloc(bwc_matcher->size_of_at_array,
+				  sizeof(*bwc_matcher->at), GFP_KERNEL);
+	if (!bwc_matcher->at)
+		goto free_bwc_matcher_rules;
+
 	/* create dummy action template */
 	bwc_matcher->at[0] =
 		mlx5hws_action_template_create(action_types ?
 					       action_types : init_action_types);
 	if (!bwc_matcher->at[0]) {
 		mlx5hws_err(table->ctx, "BWC matcher: failed creating action template\n");
-		goto free_bwc_matcher_rules;
+		goto free_bwc_matcher_at_array;
 	}
 
 	bwc_matcher->num_of_at = 1;
@@ -126,6 +132,8 @@ free_mt:
 	mlx5hws_match_template_destroy(bwc_matcher->mt);
 free_at:
 	mlx5hws_action_template_destroy(bwc_matcher->at[0]);
+free_bwc_matcher_at_array:
+	kfree(bwc_matcher->at);
 free_bwc_matcher_rules:
 	kfree(bwc_matcher->rules);
 err:
@@ -192,6 +200,7 @@ int mlx5hws_bwc_matcher_destroy_simple(struct mlx5hws_bwc_matcher *bwc_matcher)
 
 	for (i = 0; i < bwc_matcher->num_of_at; i++)
 		mlx5hws_action_template_destroy(bwc_matcher->at[i]);
+	kfree(bwc_matcher->at);
 
 	mlx5hws_match_template_destroy(bwc_matcher->mt);
 	kfree(bwc_matcher->rules);
@@ -320,16 +329,12 @@ static void hws_bwc_rule_list_add(struct mlx5hws_bwc_rule *bwc_rule, u16 idx)
 {
 	struct mlx5hws_bwc_matcher *bwc_matcher = bwc_rule->bwc_matcher;
 
-	atomic_inc(&bwc_matcher->num_of_rules);
 	bwc_rule->bwc_queue_idx = idx;
 	list_add(&bwc_rule->list_node, &bwc_matcher->rules[idx]);
 }
 
 static void hws_bwc_rule_list_remove(struct mlx5hws_bwc_rule *bwc_rule)
 {
-	struct mlx5hws_bwc_matcher *bwc_matcher = bwc_rule->bwc_matcher;
-
-	atomic_dec(&bwc_matcher->num_of_rules);
 	list_del_init(&bwc_rule->list_node);
 }
 
@@ -382,6 +387,7 @@ int mlx5hws_bwc_rule_destroy_simple(struct mlx5hws_bwc_rule *bwc_rule)
 	mutex_lock(queue_lock);
 
 	ret = hws_bwc_rule_destroy_hws_sync(bwc_rule, &attr);
+	atomic_dec(&bwc_matcher->num_of_rules);
 	hws_bwc_rule_list_remove(bwc_rule);
 
 	mutex_unlock(queue_lock);
@@ -520,6 +526,23 @@ hws_bwc_matcher_extend_at(struct mlx5hws_bwc_matcher *bwc_matcher,
 			  struct mlx5hws_rule_action rule_actions[])
 {
 	enum mlx5hws_action_type action_types[MLX5HWS_BWC_MAX_ACTS];
+	void *p;
+
+	if (unlikely(bwc_matcher->num_of_at >= bwc_matcher->size_of_at_array)) {
+		if (bwc_matcher->size_of_at_array >= MLX5HWS_MATCHER_MAX_AT)
+			return -ENOMEM;
+		bwc_matcher->size_of_at_array *= 2;
+		p = krealloc(bwc_matcher->at,
+			     bwc_matcher->size_of_at_array *
+				     sizeof(*bwc_matcher->at),
+			     __GFP_ZERO | GFP_KERNEL);
+		if (!p) {
+			bwc_matcher->size_of_at_array /= 2;
+			return -ENOMEM;
+		}
+
+		bwc_matcher->at = p;
+	}
 
 	hws_bwc_rule_actions_to_action_types(rule_actions, action_types);
 
@@ -777,6 +800,7 @@ int mlx5hws_bwc_rule_create_simple(struct mlx5hws_bwc_rule *bwc_rule,
 	struct mlx5hws_rule_attr rule_attr;
 	struct mutex *queue_lock; /* Protect the queue */
 	u32 num_of_rules;
+	bool need_rehash;
 	int ret = 0;
 	int at_idx;
 
@@ -803,10 +827,14 @@ int mlx5hws_bwc_rule_create_simple(struct mlx5hws_bwc_rule *bwc_rule,
 		at_idx = bwc_matcher->num_of_at - 1;
 
 		ret = mlx5hws_matcher_attach_at(bwc_matcher->matcher,
-						bwc_matcher->at[at_idx]);
+						bwc_matcher->at[at_idx],
+						&need_rehash);
 		if (unlikely(ret)) {
-			/* Action template attach failed, possibly due to
-			 * requiring more action STEs.
+			hws_bwc_unlock_all_queues(ctx);
+			return ret;
+		}
+		if (unlikely(need_rehash)) {
+			/* The new action template requires more action STEs.
 			 * Need to attempt creating new matcher with all
 			 * the action templates, including the new one.
 			 */
@@ -829,7 +857,7 @@ int mlx5hws_bwc_rule_create_simple(struct mlx5hws_bwc_rule *bwc_rule,
 	}
 
 	/* check if number of rules require rehash */
-	num_of_rules = atomic_read(&bwc_matcher->num_of_rules);
+	num_of_rules = atomic_inc_return(&bwc_matcher->num_of_rules);
 
 	if (unlikely(hws_bwc_matcher_rehash_size_needed(bwc_matcher, num_of_rules))) {
 		mutex_unlock(queue_lock);
@@ -843,6 +871,7 @@ int mlx5hws_bwc_rule_create_simple(struct mlx5hws_bwc_rule *bwc_rule,
 				    bwc_matcher->size_log - MLX5HWS_BWC_MATCHER_SIZE_LOG_STEP,
 				    bwc_matcher->size_log,
 				    ret);
+			atomic_dec(&bwc_matcher->num_of_rules);
 			return ret;
 		}
 
@@ -875,6 +904,7 @@ int mlx5hws_bwc_rule_create_simple(struct mlx5hws_bwc_rule *bwc_rule,
 
 	if (ret) {
 		mlx5hws_err(ctx, "BWC rule insertion: rehash failed (%d)\n", ret);
+		atomic_dec(&bwc_matcher->num_of_rules);
 		return ret;
 	}
 
@@ -890,6 +920,7 @@ int mlx5hws_bwc_rule_create_simple(struct mlx5hws_bwc_rule *bwc_rule,
 	if (unlikely(ret)) {
 		mutex_unlock(queue_lock);
 		mlx5hws_err(ctx, "BWC rule insertion failed (%d)\n", ret);
+		atomic_dec(&bwc_matcher->num_of_rules);
 		return ret;
 	}
 
@@ -942,6 +973,7 @@ hws_bwc_rule_action_update(struct mlx5hws_bwc_rule *bwc_rule,
 	struct mlx5hws_context *ctx = bwc_matcher->matcher->tbl->ctx;
 	struct mlx5hws_rule_attr rule_attr;
 	struct mutex *queue_lock; /* Protect the queue */
+	bool need_rehash;
 	int at_idx, ret;
 	u16 idx;
 
@@ -973,12 +1005,17 @@ hws_bwc_rule_action_update(struct mlx5hws_bwc_rule *bwc_rule,
 			at_idx = bwc_matcher->num_of_at - 1;
 
 			ret = mlx5hws_matcher_attach_at(bwc_matcher->matcher,
-							bwc_matcher->at[at_idx]);
+							bwc_matcher->at[at_idx],
+							&need_rehash);
 			if (unlikely(ret)) {
-				/* Action template attach failed, possibly due to
-				 * requiring more action STEs.
-				 * Need to attempt creating new matcher with all
-				 * the action templates, including the new one.
+				hws_bwc_unlock_all_queues(ctx);
+				return ret;
+			}
+			if (unlikely(need_rehash)) {
+				/* The new action template requires more action
+				 * STEs. Need to attempt creating new matcher
+				 * with all the action templates, including the
+				 * new one.
 				 */
 				ret = hws_bwc_matcher_rehash_at(bwc_matcher);
 				if (unlikely(ret)) {

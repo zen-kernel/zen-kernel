@@ -600,7 +600,7 @@ static void cleanup_net(struct work_struct *work)
 	LIST_HEAD(net_exit_list);
 	LIST_HEAD(dev_kill_list);
 
-	cleanup_net_task = current;
+	WRITE_ONCE(cleanup_net_task, current);
 
 	/* Atomically snapshot the list of namespaces to cleanup */
 	net_kill_list = llist_del_all(&cleanup_list);
@@ -676,7 +676,7 @@ static void cleanup_net(struct work_struct *work)
 		put_user_ns(net->user_ns);
 		net_passive_dec(net);
 	}
-	cleanup_net_task = NULL;
+	WRITE_ONCE(cleanup_net_task, NULL);
 }
 
 /**

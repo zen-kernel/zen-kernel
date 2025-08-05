@@ -1351,6 +1351,10 @@ static ssize_t amdgpu_gfx_get_current_compute_partition(struct device *dev,
 	struct amdgpu_device *adev = drm_to_adev(ddev);
 	int mode;
 
+	/* Only minimal precaution taken to reject requests while in reset.*/
+	if (amdgpu_in_reset(adev))
+		return -EPERM;
+
 	mode = amdgpu_xcp_query_partition_mode(adev->xcp_mgr,
 					       AMDGPU_XCP_FL_NONE);
 
@@ -1394,7 +1398,13 @@ static ssize_t amdgpu_gfx_set_compute_partition(struct device *dev,
 		return -EINVAL;
 	}
 
+	/* Don't allow a switch while under reset */
+	if (!down_read_trylock(&adev->reset_domain->sem))
+		return -EPERM;
+
 	ret = amdgpu_xcp_switch_partition_mode(adev->xcp_mgr, mode);
+
+	up_read(&adev->reset_domain->sem);
 
 	if (ret)
 		return ret;
@@ -2182,6 +2192,9 @@ void amdgpu_gfx_profile_ring_begin_use(struct amdgpu_ring *ring)
 	enum PP_SMC_POWER_PROFILE profile;
 	int r;
 
+	if (amdgpu_dpm_is_overdrive_enabled(adev))
+		return;
+
 	if (adev->gfx.num_gfx_rings)
 		profile = PP_SMC_POWER_PROFILE_FULLSCREEN3D;
 	else
@@ -2212,6 +2225,11 @@ void amdgpu_gfx_profile_ring_begin_use(struct amdgpu_ring *ring)
 
 void amdgpu_gfx_profile_ring_end_use(struct amdgpu_ring *ring)
 {
+	struct amdgpu_device *adev = ring->adev;
+
+	if (amdgpu_dpm_is_overdrive_enabled(adev))
+		return;
+
 	atomic_dec(&ring->adev->gfx.total_submission_cnt);
 
 	schedule_delayed_work(&ring->adev->gfx.idle_work, GFX_PROFILE_IDLE_TIMEOUT);

@@ -14,13 +14,17 @@ static void netfs_cleanup_dio_write(struct netfs_io_request *wreq)
 	struct inode *inode = wreq->inode;
 	unsigned long long end = wreq->start + wreq->transferred;
 
-	if (!wreq->error &&
-	    i_size_read(inode) < end) {
+	if (wreq->error || end <= i_size_read(inode))
+		return;
+
+	spin_lock(&inode->i_lock);
+	if (end > i_size_read(inode)) {
 		if (wreq->netfs_ops->update_i_size)
 			wreq->netfs_ops->update_i_size(inode, end);
 		else
 			i_size_write(inode, end);
 	}
+	spin_unlock(&inode->i_lock);
 }
 
 /*
@@ -87,6 +91,8 @@ ssize_t netfs_unbuffered_write_iter_locked(struct kiocb *iocb, struct iov_iter *
 	}
 
 	__set_bit(NETFS_RREQ_USE_IO_ITER, &wreq->flags);
+	if (async)
+		__set_bit(NETFS_RREQ_OFFLOAD_COLLECTION, &wreq->flags);
 
 	/* Copy the data into the bounce buffer and encrypt it. */
 	// TODO
@@ -105,19 +111,15 @@ ssize_t netfs_unbuffered_write_iter_locked(struct kiocb *iocb, struct iov_iter *
 
 	if (!async) {
 		trace_netfs_rreq(wreq, netfs_rreq_trace_wait_ip);
-		wait_on_bit(&wreq->flags, NETFS_RREQ_IN_PROGRESS,
-			    TASK_UNINTERRUPTIBLE);
-		ret = wreq->error;
-		if (ret == 0) {
-			ret = wreq->transferred;
+		ret = netfs_wait_for_write(wreq);
+		if (ret > 0)
 			iocb->ki_pos += ret;
-		}
 	} else {
 		ret = -EIOCBQUEUED;
 	}
 
 out:
-	netfs_put_request(wreq, false, netfs_rreq_trace_put_return);
+	netfs_put_request(wreq, netfs_rreq_trace_put_return);
 	return ret;
 }
 EXPORT_SYMBOL(netfs_unbuffered_write_iter_locked);

@@ -475,8 +475,9 @@ iwl_op_mode_mld_stop(struct iwl_op_mode *op_mode)
 	iwl_mld_ptp_remove(mld);
 	iwl_mld_leds_exit(mld);
 
-	wiphy_lock(mld->wiphy);
 	iwl_mld_thermal_exit(mld);
+
+	wiphy_lock(mld->wiphy);
 	iwl_mld_low_latency_stop(mld);
 	iwl_mld_deinit_time_sync(mld);
 	wiphy_unlock(mld->wiphy);
@@ -638,7 +639,8 @@ iwl_mld_nic_error(struct iwl_op_mode *op_mode,
 	 * It might not actually be true that we'll restart, but the
 	 * setting doesn't matter if we're going to be unbound either.
 	 */
-	if (type != IWL_ERR_TYPE_RESET_HS_TIMEOUT)
+	if (type != IWL_ERR_TYPE_RESET_HS_TIMEOUT &&
+	    mld->fw_status.running)
 		mld->fw_status.in_hw_restart = true;
 }
 

@@ -31,6 +31,29 @@ typedef int (*nvkm_gsp_msg_ntfy_func)(void *priv, u32 fn, void *repv, u32 repc);
 struct nvkm_gsp_event;
 typedef void (*nvkm_gsp_event_func)(struct nvkm_gsp_event *, void *repv, u32 repc);
 
+/**
+ * DOC: GSP message handling policy
+ *
+ * When sending a GSP RPC command, there can be multiple cases of handling
+ * the GSP RPC messages, which are the reply of GSP RPC commands, according
+ * to the requirement of the callers and the nature of the GSP RPC commands.
+ *
+ * NVKM_GSP_RPC_REPLY_NOWAIT - If specified, immediately return to the
+ * caller after the GSP RPC command is issued.
+ *
+ * NVKM_GSP_RPC_REPLY_RECV - If specified, wait and receive the entire GSP
+ * RPC message after the GSP RPC command is issued.
+ *
+ * NVKM_GSP_RPC_REPLY_POLL - If specified, wait for the specific reply and
+ * discard the reply before returning to the caller.
+ *
+ */
+enum nvkm_gsp_rpc_reply_policy {
+	NVKM_GSP_RPC_REPLY_NOWAIT = 0,
+	NVKM_GSP_RPC_REPLY_RECV,
+	NVKM_GSP_RPC_REPLY_POLL,
+};
+
 struct nvkm_gsp {
 	const struct nvkm_gsp_func *func;
 	struct nvkm_subdev subdev;
@@ -187,9 +210,7 @@ struct nvkm_gsp {
 	} gr;
 
 	const struct nvkm_gsp_rm {
-		void *(*rpc_get)(struct nvkm_gsp *, u32 fn, u32 argc);
-		void *(*rpc_push)(struct nvkm_gsp *, void *argv, bool wait, u32 repc);
-		void (*rpc_done)(struct nvkm_gsp *gsp, void *repv);
+		const struct nvkm_rm_api *api;
 
 		void *(*rm_ctrl_get)(struct nvkm_gsp_object *, u32 cmd, u32 argc);
 		int (*rm_ctrl_push)(struct nvkm_gsp_object *, void **argv, u32 repc);
@@ -248,16 +269,19 @@ nvkm_gsp_rm(struct nvkm_gsp *gsp)
 	return gsp && (gsp->fws.rm || gsp->fw.img);
 }
 
+#include <rm/rm.h>
+
 static inline void *
 nvkm_gsp_rpc_get(struct nvkm_gsp *gsp, u32 fn, u32 argc)
 {
-	return gsp->rm->rpc_get(gsp, fn, argc);
+	return gsp->rm->api->rpc->get(gsp, fn, argc);
 }
 
 static inline void *
-nvkm_gsp_rpc_push(struct nvkm_gsp *gsp, void *argv, bool wait, u32 repc)
+nvkm_gsp_rpc_push(struct nvkm_gsp *gsp, void *argv,
+		  enum nvkm_gsp_rpc_reply_policy policy, u32 repc)
 {
-	return gsp->rm->rpc_push(gsp, argv, wait, repc);
+	return gsp->rm->api->rpc->push(gsp, argv, policy, repc);
 }
 
 static inline void *
@@ -268,13 +292,14 @@ nvkm_gsp_rpc_rd(struct nvkm_gsp *gsp, u32 fn, u32 argc)
 	if (IS_ERR_OR_NULL(argv))
 		return argv;
 
-	return nvkm_gsp_rpc_push(gsp, argv, true, argc);
+	return nvkm_gsp_rpc_push(gsp, argv, NVKM_GSP_RPC_REPLY_RECV, argc);
 }
 
 static inline int
-nvkm_gsp_rpc_wr(struct nvkm_gsp *gsp, void *argv, bool wait)
+nvkm_gsp_rpc_wr(struct nvkm_gsp *gsp, void *argv,
+		enum nvkm_gsp_rpc_reply_policy policy)
 {
-	void *repv = nvkm_gsp_rpc_push(gsp, argv, wait, 0);
+	void *repv = nvkm_gsp_rpc_push(gsp, argv, policy, 0);
 
 	if (IS_ERR(repv))
 		return PTR_ERR(repv);
@@ -285,7 +310,7 @@ nvkm_gsp_rpc_wr(struct nvkm_gsp *gsp, void *argv, bool wait)
 static inline void
 nvkm_gsp_rpc_done(struct nvkm_gsp *gsp, void *repv)
 {
-	gsp->rm->rpc_done(gsp, repv);
+	gsp->rm->api->rpc->done(gsp, repv);
 }
 
 static inline void *

@@ -637,8 +637,8 @@ __timerlat_dump_stack(struct trace_buffer *buffer, struct trace_stack *fstack, u
 
 	entry = ring_buffer_event_data(event);
 
-	memcpy(&entry->caller, fstack->calls, size);
 	entry->size = fstack->nr_entries;
+	memcpy(&entry->caller, fstack->calls, size);
 
 	trace_buffer_unlock_commit_nostack(buffer, event);
 }
@@ -1645,6 +1645,9 @@ static void osnoise_sleep(bool skip_period)
  */
 static inline int osnoise_migration_pending(void)
 {
+#ifdef CONFIG_SCHED_ALT
+	return 0;
+#else
 	if (!current->migration_pending)
 		return 0;
 
@@ -1666,6 +1669,7 @@ static inline int osnoise_migration_pending(void)
 	mutex_unlock(&interface_lock);
 
 	return 1;
+#endif
 }
 
 /*

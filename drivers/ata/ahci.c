@@ -1410,8 +1410,15 @@ static bool ahci_broken_suspend(struct pci_dev *pdev)
 
 static bool ahci_broken_lpm(struct pci_dev *pdev)
 {
+	/*
+	 * Platforms with LPM problems.
+	 * If driver_data is NULL, there is no existing BIOS version with
+	 * functioning LPM.
+	 * If driver_data is non-NULL, then driver_data contains the DMI BIOS
+	 * build date of the first BIOS version with functioning LPM (i.e. older
+	 * BIOS versions have broken LPM).
+	 */
 	static const struct dmi_system_id sysids[] = {
-		/* Various Lenovo 50 series have LPM issues with older BIOSen */
 		{
 			.matches = {
 				DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
@@ -1446,6 +1453,29 @@ static bool ahci_broken_lpm(struct pci_dev *pdev)
 			 */
 			.driver_data = "20180310", /* 2.35 */
 		},
+		{
+			.matches = {
+				DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
+				DMI_MATCH(DMI_PRODUCT_NAME, "ASUSPRO D840MB_M840SA"),
+			},
+			/* 320 is broken, there is no known good version. */
+		},
+		{
+			/*
+			 * AMD 500 Series Chipset SATA Controller [1022:43eb]
+			 * on this motherboard timeouts on ports 5 and 6 when
+			 * LPM is enabled, at least with WDC WD20EFAX-68FB5N0
+			 * hard drives. LPM with the same drive works fine on
+			 * all other ports on the same controller.
+			 */
+			.matches = {
+				DMI_MATCH(DMI_BOARD_VENDOR,
+					  "ASUSTeK COMPUTER INC."),
+				DMI_MATCH(DMI_BOARD_NAME,
+					  "ROG STRIX B550-F GAMING (WI-FI)"),
+			},
+			/* 3621 is broken, there is no known good version. */
+		},
 		{ }	/* terminate list */
 	};
 	const struct dmi_system_id *dmi = dmi_first_match(sysids);
@@ -1454,6 +1484,9 @@ static bool ahci_broken_lpm(struct pci_dev *pdev)
 
 	if (!dmi)
 		return false;
+
+	if (!dmi->driver_data)
+		return true;
 
 	dmi_get_date(DMI_BIOS_DATE, &year, &month, &date);
 	snprintf(buf, sizeof(buf), "%04d%02d%02d", year, month, date);
@@ -1629,7 +1662,7 @@ static irqreturn_t ahci_thunderx_irq_handler(int irq, void *dev_instance)
 }
 #endif
 
-static void ahci_remap_check(struct pci_dev *pdev, int bar,
+static int ahci_remap_check(struct pci_dev *pdev, int bar,
 		struct ahci_host_priv *hpriv)
 {
 	int i;
@@ -1642,7 +1675,7 @@ static void ahci_remap_check(struct pci_dev *pdev, int bar,
 	    pci_resource_len(pdev, bar) < SZ_512K ||
 	    bar != AHCI_PCI_BAR_STANDARD ||
 	    !(readl(hpriv->mmio + AHCI_VSCAP) & 1))
-		return;
+		return 0;
 
 	cap = readq(hpriv->mmio + AHCI_REMAP_CAP);
 	for (i = 0; i < AHCI_MAX_REMAP; i++) {
@@ -1657,18 +1690,11 @@ static void ahci_remap_check(struct pci_dev *pdev, int bar,
 	}
 
 	if (!hpriv->remapped_nvme)
-		return;
+		return 0;
 
-	dev_warn(&pdev->dev, "Found %u remapped NVMe devices.\n",
-		 hpriv->remapped_nvme);
-	dev_warn(&pdev->dev,
-		 "Switch your BIOS from RAID to AHCI mode to use them.\n");
-
-	/*
-	 * Don't rely on the msi-x capability in the remap case,
-	 * share the legacy interrupt across ahci and remapped devices.
-	 */
-	hpriv->flags |= AHCI_HFLAG_NO_MSI;
+	/* Abort probe, allowing intel-nvme-remap to step in when available */
+	dev_info(&pdev->dev, "Device will be handled by intel-nvme-remap.\n");
+	return -ENODEV;
 }
 
 static int ahci_get_irq_vector(struct ata_host *host, int port)
@@ -1912,7 +1938,9 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		return -ENOMEM;
 
 	/* detect remapped nvme devices */
-	ahci_remap_check(pdev, ahci_pci_bar, hpriv);
+	rc = ahci_remap_check(pdev, ahci_pci_bar, hpriv);
+	if (rc)
+		return rc;
 
 	sysfs_add_file_to_group(&pdev->dev.kobj,
 				&dev_attr_remapped_nvme.attr,

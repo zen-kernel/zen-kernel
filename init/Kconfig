@@ -163,6 +163,44 @@ config THREAD_INFO_IN_TASK
 
 menu "General setup"
 
+config ZEN_INTERACTIVE
+	bool "Tune kernel for interactivity"
+	default y
+	help
+	  Tunes the kernel for responsiveness at the cost of throughput and power usage.
+
+	  --- Block Layer ----------------------------------------
+
+	    Default scheduler for SQ..: mq-deadline ->   bfq
+	    Default scheduler for MQ..:        none ->   kyber
+	    DM-Crypt workqueues.......:        yes  ->   no
+
+	  --- Virtual Memory Subsystem ---------------------------
+
+	    Background-reclaim hugepages...:   no   ->   yes
+	    Compact unevictable............:   yes  ->   no
+	    Watermark boost factor.........:   1.5  ->   0
+	    Pageblock order................:  10    ->   3
+	    Swap-in readahead..............:   3    ->   0
+
+	  --- EEVDF CPU Scheduler --------------------------------
+
+	    Minimal granularity............:   0.7  ->   0.4  ms
+	    Migration cost.................:   0.5  ->   0.3  ms
+	    Bandwidth slice size...........:   5    ->   3    ms
+	    Task rebalancing threshold.....:  32    ->   8
+
+	  --- PDS/BMQ CPU Scheduler ------------------------------
+
+	    Scheduling timeslice...........:   4    ->   2    ms
+	    Yield type.....................:   1    ->   0
+
+	  --- CPUFreq Settings -----------------------------------
+
+	    Ondemand sampling down factor..:   1    ->   5
+	    Ondemand default up threshold..:  80    ->  55
+	    Ondemand micro up threshold....:  95    ->  60
+
 config BROKEN
 	bool
 
@@ -670,6 +708,7 @@ config TASK_IO_ACCOUNTING
 
 config PSI
 	bool "Pressure stall information tracking"
+	depends on !SCHED_ALT
 	select KERNFS
 	help
 	  Collect metrics that indicate how overcommitted the CPU, memory,
@@ -881,6 +920,35 @@ config UCLAMP_BUCKETS_COUNT
 
 	  If in doubt, use the default value.
 
+menuconfig SCHED_ALT
+	bool "Alternative CPU Schedulers"
+	default n
+	help
+	  This feature enables the ProjectC alternative CPU schedulers."
+
+if SCHED_ALT
+
+choice
+	prompt "Alternative CPU schedulers"
+	default SCHED_PDS
+
+config SCHED_BMQ
+	bool "BMQ CPU scheduler"
+	help
+	  The BitMap Queue CPU scheduler for excellent interactivity and
+	  responsiveness on the desktop and solid scalability on normal
+	  hardware and commodity servers.
+
+config SCHED_PDS
+	bool "PDS CPU scheduler"
+	help
+	  The Priority and Deadline based Skip list multiple queue CPU
+	  Scheduler.
+
+endchoice
+
+endif
+
 endmenu
 
 #
@@ -946,6 +1014,7 @@ config NUMA_BALANCING
 	depends on ARCH_SUPPORTS_NUMA_BALANCING
 	depends on !ARCH_WANT_NUMA_VARIABLE_LOCALITY
 	depends on SMP && NUMA && MIGRATION && !PREEMPT_RT
+	depends on !SCHED_ALT
 	help
 	  This option adds support for automatic NUMA aware memory/task placement.
 	  The mechanism is quite primitive and is based on migrating memory when
@@ -1330,6 +1399,22 @@ config USER_NS
 
 	  If unsure, say N.
 
+config USER_NS_UNPRIVILEGED
+	bool "Allow unprivileged users to create namespaces"
+	default y
+	depends on USER_NS
+	help
+	  When disabled, unprivileged users will not be able to create
+	  new namespaces. Allowing users to create their own namespaces
+	  has been part of several recent local privilege escalation
+	  exploits, so if you need user namespaces but are
+	  paranoid^Wsecurity-conscious you want to disable this.
+
+	  This setting can be overridden at runtime via the
+	  kernel.unprivileged_userns_clone sysctl.
+
+	  If unsure, say Y.
+
 config PID_NS
 	bool "PID Namespaces"
 	default y
@@ -1364,6 +1449,7 @@ config CHECKPOINT_RESTORE
 
 config SCHED_AUTOGROUP
 	bool "Automatic process group scheduling"
+	depends on !SCHED_ALT
 	select CGROUPS
 	select CGROUP_SCHED
 	select FAIR_GROUP_SCHED
@@ -1478,6 +1564,12 @@ config CC_OPTIMIZE_FOR_PERFORMANCE
 	  This is the default optimization level for the kernel, building
 	  with the "-O2" compiler flag for best performance and most
 	  helpful compile-time warnings.
+
+config CC_OPTIMIZE_FOR_PERFORMANCE_O3
+	bool "Optimize more for performance (-O3)"
+	help
+	  Choosing this option will pass "-O3" to your compiler to optimize
+	  the kernel yet more for performance.
 
 config CC_OPTIMIZE_FOR_SIZE
 	bool "Optimize for size (-Os)"

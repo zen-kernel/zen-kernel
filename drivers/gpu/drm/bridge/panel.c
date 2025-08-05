@@ -298,6 +298,7 @@ struct drm_bridge *drm_panel_bridge_add_typed(struct drm_panel *panel,
 	panel_bridge->bridge.of_node = panel->dev->of_node;
 	panel_bridge->bridge.ops = DRM_BRIDGE_OP_MODES;
 	panel_bridge->bridge.type = connector_type;
+	panel_bridge->bridge.pre_enable_prev_first = panel->prepare_prev_first;
 
 	drm_bridge_add(&panel_bridge->bridge);
 
@@ -412,8 +413,6 @@ struct drm_bridge *devm_drm_panel_bridge_add_typed(struct device *dev,
 		return bridge;
 	}
 
-	bridge->pre_enable_prev_first = panel->prepare_prev_first;
-
 	*ptr = bridge;
 	devres_add(dev, ptr);
 
@@ -454,8 +453,6 @@ struct drm_bridge *drmm_panel_bridge_add(struct drm_device *drm,
 				       bridge);
 	if (ret)
 		return ERR_PTR(ret);
-
-	bridge->pre_enable_prev_first = panel->prepare_prev_first;
 
 	return bridge;
 }

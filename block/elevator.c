@@ -558,9 +558,19 @@ static struct elevator_type *elevator_get_default(struct request_queue *q)
 
 	if (q->nr_hw_queues != 1 &&
 	    !blk_mq_is_shared_tags(q->tag_set->flags))
+#if defined(CONFIG_ZEN_INTERACTIVE) && defined(CONFIG_MQ_IOSCHED_KYBER)
+		return elevator_find_get("kyber");
+#elif defined(CONFIG_ZEN_INTERACTIVE)
+		return elevator_find_get("mq-deadline");
+#else
 		return NULL;
+#endif
 
+#if defined(CONFIG_ZEN_INTERACTIVE) && defined(CONFIG_IOSCHED_BFQ)
+	return elevator_find_get("bfq");
+#else
 	return elevator_find_get("mq-deadline");
+#endif
 }
 
 /*
@@ -744,7 +754,6 @@ ssize_t elv_iosched_store(struct gendisk *disk, const char *buf,
 ssize_t elv_iosched_show(struct gendisk *disk, char *name)
 {
 	struct request_queue *q = disk->queue;
-	struct elevator_queue *eq = q->elevator;
 	struct elevator_type *cur = NULL, *e;
 	int len = 0;
 
@@ -753,7 +762,7 @@ ssize_t elv_iosched_show(struct gendisk *disk, char *name)
 		len += sprintf(name+len, "[none] ");
 	} else {
 		len += sprintf(name+len, "none ");
-		cur = eq->type;
+		cur = q->elevator->type;
 	}
 
 	spin_lock(&elv_list_lock);
