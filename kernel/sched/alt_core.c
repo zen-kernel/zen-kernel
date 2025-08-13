@@ -95,7 +95,6 @@ unsigned int sysctl_sched_base_slice __read_mostly	= (4 << 20);
  */
 int sched_yield_type __read_mostly = 1;
 
-#ifdef CONFIG_SMP
 cpumask_t sched_rq_pending_mask ____cacheline_aligned_in_smp;
 
 DEFINE_PER_CPU_ALIGNED(cpumask_t [NR_CPU_AFFINITY_LEVELS], sched_cpu_topo_masks);
@@ -115,7 +114,6 @@ cpumask_t sched_smt_mask ____cacheline_aligned_in_smp;
  * domain, see cpus_share_cache().
  */
 DEFINE_PER_CPU(int, sd_llc_id);
-#endif /* CONFIG_SMP */
 
 DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 
@@ -571,12 +569,10 @@ unsigned long rq_load_util(struct rq *rq, unsigned long max)
 	return RQ_LOAD_HISTORY_TO_UTIL(rq->load_history) * (max >> RQ_UTIL_SHIFT);
 }
 
-#ifdef CONFIG_SMP
 unsigned long sched_cpu_util(int cpu)
 {
 	return rq_load_util(cpu_rq(cpu), arch_scale_cpu_capacity(cpu));
 }
-#endif /* CONFIG_SMP */
 
 #ifdef CONFIG_CPU_FREQ
 /**
@@ -605,9 +601,7 @@ static inline void cpufreq_update_util(struct rq *rq, unsigned int flags)
 {
 	struct update_util_data *data;
 
-#ifdef CONFIG_SMP
 	rq_load_update(rq);
-#endif
 	data = rcu_dereference_sched(*per_cpu_ptr(&cpufreq_update_util_data, cpu_of(rq)));
 	if (data)
 		data->func(data, rq_clock(rq), flags);
@@ -615,9 +609,7 @@ static inline void cpufreq_update_util(struct rq *rq, unsigned int flags)
 #else /* !CONFIG_CPU_FREQ: */
 static inline void cpufreq_update_util(struct rq *rq, unsigned int flags)
 {
-#ifdef CONFIG_SMP
 	rq_load_update(rq);
-#endif
 }
 #endif /* !CONFIG_CPU_FREQ */
 
@@ -646,12 +638,10 @@ static inline void sched_update_tick_dependency(struct rq *rq) { }
 static inline void add_nr_running(struct rq *rq, unsigned count)
 {
 	rq->nr_running += count;
-#ifdef CONFIG_SMP
 	if (rq->nr_running > 1) {
 		cpumask_set_cpu(cpu_of(rq), &sched_rq_pending_mask);
 		rq->prio_balance_time = rq->clock;
 	}
-#endif
 
 	sched_update_tick_dependency(rq);
 }
@@ -659,12 +649,10 @@ static inline void add_nr_running(struct rq *rq, unsigned count)
 static inline void sub_nr_running(struct rq *rq, unsigned count)
 {
 	rq->nr_running -= count;
-#ifdef CONFIG_SMP
 	if (rq->nr_running < 2) {
 		cpumask_clear_cpu(cpu_of(rq), &sched_rq_pending_mask);
 		rq->prio_balance_time = 0;
 	}
-#endif
 
 	sched_update_tick_dependency(rq);
 }
@@ -796,7 +784,7 @@ void requeue_task(struct task_struct *p, struct rq *rq)
 	_val;								\
 })
 
-#if defined(CONFIG_SMP) && defined(TIF_POLLING_NRFLAG)
+#ifdef TIF_POLLING_NRFLAG
 /*
  * Atomically set TIF_NEED_RESCHED and test for TIF_POLLING_NRFLAG,
  * this avoids any races wrt polling state changes and thereby avoids
@@ -835,12 +823,10 @@ static inline bool set_nr_and_not_polling(struct thread_info *ti, int tif)
 	return true;
 }
 
-#ifdef CONFIG_SMP
 static inline bool set_nr_if_polling(struct task_struct *p)
 {
 	return false;
 }
-#endif
 #endif /* !TIF_POLLING_NRFLAG */
 
 static bool __wake_q_add(struct wake_q_head *head, struct task_struct *task)
@@ -1020,7 +1006,6 @@ void resched_cpu(int cpu)
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
 }
 
-#ifdef CONFIG_SMP
 #ifdef CONFIG_NO_HZ_COMMON
 /*
  * This routine will record that the CPU is going idle with tick stopped.
@@ -1154,7 +1139,6 @@ static void nohz_csd_func(void *info)
 }
 
 #endif /* CONFIG_NO_HZ_COMMON */
-#endif /* CONFIG_SMP */
 
 static inline void wakeup_preempt(struct rq *rq)
 {
@@ -1341,8 +1325,6 @@ static inline int hrtick_enabled(struct rq *rq)
 	return hrtimer_is_hres_active(&rq->hrtick_timer);
 }
 
-#ifdef CONFIG_SMP
-
 static void __hrtick_restart(struct rq *rq)
 {
 	struct hrtimer *timer = &rq->hrtick_timer;
@@ -1387,30 +1369,9 @@ static inline void hrtick_start(struct rq *rq, u64 delay)
 		smp_call_function_single_async(cpu_of(rq), &rq->hrtick_csd);
 }
 
-#else /* !CONFIG_SMP: */
-/*
- * Called to set the hrtick timer state.
- *
- * called with rq->lock held and IRQs disabled
- */
-static inline void hrtick_start(struct rq *rq, u64 delay)
-{
-	/*
-	 * Don't schedule slices shorter than 10000ns, that just
-	 * doesn't make sense. Rely on vruntime for fairness.
-	 */
-	delay = max_t(u64, delay, 10000LL);
-	hrtimer_start(&rq->hrtick_timer, ns_to_ktime(delay),
-		      HRTIMER_MODE_REL_PINNED_HARD);
-}
-#endif /* !CONFIG_SMP */
-
 static void hrtick_rq_init(struct rq *rq)
 {
-#ifdef CONFIG_SMP
 	INIT_CSD(&rq->hrtick_csd, __hrtick_start, rq);
-#endif
-
 	hrtimer_setup(&rq->hrtick_timer, hrtick, CLOCK_MONOTONIC, HRTIMER_MODE_REL_HARD);
 }
 #else	/* !CONFIG_SCHED_HRTICK: */
@@ -1495,7 +1456,6 @@ static void block_task(struct rq *rq, struct task_struct *p)
 
 static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
 {
-#ifdef CONFIG_SMP
 	/*
 	 * After ->cpu is set up to a new value, task_access_lock(p, ...) can be
 	 * successfully executed on another CPU. We must ensure that updates of
@@ -1504,10 +1464,7 @@ static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
 	smp_wmb();
 
 	WRITE_ONCE(task_thread_info(p)->cpu, cpu);
-#endif
 }
-
-#ifdef CONFIG_SMP
 
 void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 {
@@ -1895,8 +1852,6 @@ void release_user_cpus_ptr(struct task_struct *p)
 	kfree(clear_user_cpus_ptr(p));
 }
 
-#endif
-
 /**
  * task_curr - is this task currently executing on a CPU?
  * @p: the task in question.
@@ -1908,7 +1863,6 @@ inline int task_curr(const struct task_struct *p)
 	return cpu_curr(task_cpu(p)) == p;
 }
 
-#ifdef CONFIG_SMP
 /***
  * kick_process - kick a running thread to enter/exit the kernel
  * @p: the to-be-kicked thread
@@ -2359,20 +2313,6 @@ void relax_compatible_cpus_allowed_ptr(struct task_struct *p)
 	WARN_ON_ONCE(ret);
 }
 
-#else /* !CONFIG_SMP: */
-
-static inline int select_task_rq(struct task_struct *p)
-{
-	return 0;
-}
-
-static inline bool rq_has_pinned_tasks(struct rq *rq)
-{
-	return false;
-}
-
-#endif /* !CONFIG_SMP */
-
 static void
 ttwu_stat(struct task_struct *p, int cpu, int wake_flags)
 {
@@ -2383,7 +2323,6 @@ ttwu_stat(struct task_struct *p, int cpu, int wake_flags)
 
 	rq = this_rq();
 
-#ifdef CONFIG_SMP
 	if (cpu == rq->cpu) {
 		__schedstat_inc(rq->ttwu_local);
 		__schedstat_inc(p->stats.nr_wakeups_local);
@@ -2392,7 +2331,6 @@ ttwu_stat(struct task_struct *p, int cpu, int wake_flags)
 		 * How to do ttwu_wake_remote
 		 */
 	}
-#endif /* CONFIG_SMP */
 
 	__schedstat_inc(rq->ttwu_count);
 	__schedstat_inc(p->stats.nr_wakeups);
@@ -2413,11 +2351,7 @@ ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags)
 	if (p->sched_contributes_to_load)
 		rq->nr_uninterruptible--;
 
-	if (
-#ifdef CONFIG_SMP
-	    !(wake_flags & WF_MIGRATED) &&
-#endif
-	    p->in_iowait) {
+	if (!(wake_flags & WF_MIGRATED) && p->in_iowait) {
 		delayacct_blkio_end(p);
 		atomic_dec(&task_rq(p)->nr_iowait);
 	}
@@ -2477,7 +2411,6 @@ static int ttwu_runnable(struct task_struct *p, int wake_flags)
 	return ret;
 }
 
-#ifdef CONFIG_SMP
 void sched_ttwu_pending(void *arg)
 {
 	struct llist_node *llist = arg;
@@ -2635,14 +2568,6 @@ bool cpus_share_cache(int this_cpu, int that_cpu)
 
 	return per_cpu(sd_llc_id, this_cpu) == per_cpu(sd_llc_id, that_cpu);
 }
-#else /* !CONFIG_SMP: */
-
-static inline bool ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags)
-{
-	return false;
-}
-
-#endif /* !CONFIG_SMP */
 
 static inline void ttwu_queue(struct task_struct *p, int cpu, int wake_flags)
 {
@@ -2899,7 +2824,6 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 		if (READ_ONCE(p->on_rq) && ttwu_runnable(p, wake_flags))
 			break;
 
-#ifdef CONFIG_SMP
 		/*
 		 * Ensure we load p->on_cpu _after_ p->on_rq, otherwise it would be
 		 * possible to, falsely, observe p->on_cpu == 0.
@@ -2984,11 +2908,6 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 			wake_flags |= WF_MIGRATED;
 			set_task_cpu(p, cpu);
 		}
-#else /* !CONFIG_SMP: */
-		sched_task_ttwu(p);
-
-		cpu = task_cpu(p);
-#endif /* !CONFIG_SMP */
 
 		ttwu_queue(p, cpu, wake_flags);
 	}
@@ -3021,14 +2940,12 @@ static bool __task_needs_rq_lock(struct task_struct *p)
 	if (p->on_rq)
 		return true;
 
-#ifdef CONFIG_SMP
 	/*
 	 * Ensure the task has finished __schedule() and will not be referenced
 	 * anymore. Again, see try_to_wake_up() for a longer comment.
 	 */
 	smp_rmb();
 	smp_cond_load_acquire(&p->on_cpu, !VAL);
-#endif
 
 	return false;
 }
@@ -3159,9 +3076,7 @@ static inline void __sched_fork(unsigned long clone_flags, struct task_struct *p
 #ifdef CONFIG_COMPACTION
 	p->capture_control = NULL;
 #endif
-#ifdef CONFIG_SMP
 	p->wake_entry.u_flags = CSD_TYPE_TTWU;
-#endif
 	init_sched_mm_cid(p);
 }
 
@@ -3363,7 +3278,6 @@ void wake_up_new_task(struct task_struct *p)
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
 	WRITE_ONCE(p->__state, TASK_RUNNING);
 	rq = cpu_rq(select_task_rq(p));
-#ifdef CONFIG_SMP
 	rseq_migrate(p);
 	/*
 	 * Fork balancing, do it here and not earlier because:
@@ -3374,7 +3288,6 @@ void wake_up_new_task(struct task_struct *p)
 	 * as we're not fully set-up yet.
 	 */
 	__set_task_cpu(p, cpu_of(rq));
-#endif
 
 	raw_spin_lock(&rq->lock);
 	update_rq_clock(rq);
@@ -3488,7 +3401,6 @@ static inline void prepare_task(struct task_struct *next)
 
 static inline void finish_task(struct task_struct *prev)
 {
-#ifdef CONFIG_SMP
 	/*
 	 * This must be the very last reference to @prev from this CPU. After
 	 * p->on_cpu is cleared, the task can be moved to a different CPU. We
@@ -3501,12 +3413,7 @@ static inline void finish_task(struct task_struct *prev)
 	 * Pairs with the smp_cond_load_acquire() in try_to_wake_up().
 	 */
 	smp_store_release(&prev->on_cpu, 0);
-#else /* !CONFIG_SMP: */
-	prev->on_cpu = 0;
-#endif /* CONFIG_SMP */
 }
-
-#ifdef CONFIG_SMP
 
 static void do_balance_callbacks(struct rq *rq, struct balance_callback *head)
 {
@@ -3588,13 +3495,6 @@ void balance_callbacks(struct rq *rq, struct balance_callback *head)
 		raw_spin_unlock_irqrestore(&rq->lock, flags);
 	}
 }
-
-#else /* !CONFIG_SMP: */
-
-static inline void __balance_callbacks(struct rq *rq)
-{
-}
-#endif /* !CONFIG_SMP */
 
 static inline void
 prepare_lock_switch(struct rq *rq, struct task_struct *next)
@@ -3978,8 +3878,6 @@ unsigned int nr_iowait(void)
 	return sum;
 }
 
-#ifdef CONFIG_SMP
-
 /*
  * sched_exec - execve() is a valuable balancing opportunity, because at
  * this point the task has the smallest effective memory and cache
@@ -3988,8 +3886,6 @@ unsigned int nr_iowait(void)
 void sched_exec(void)
 {
 }
-
-#endif
 
 DEFINE_PER_CPU(struct kernel_stat, kstat);
 DEFINE_PER_CPU(struct kernel_cpustat, kernel_cpustat);
@@ -4021,7 +3917,7 @@ unsigned long long task_sched_runtime(struct task_struct *p)
 	raw_spinlock_t *lock;
 	u64 ns;
 
-#if defined(CONFIG_64BIT) && defined(CONFIG_SMP)
+#ifdef CONFIG_64BIT
 	/*
 	 * 64-bit doesn't need locks to atomically read a 64-bit value.
 	 * So we have a optimization chance when the task's delta_exec is 0.
@@ -4454,7 +4350,6 @@ void alt_sched_debug(void)
 }
 #endif
 
-#ifdef	CONFIG_SMP
 
 #ifdef CONFIG_PREEMPT_RT
 #define SCHED_NR_MIGRATE_BREAK 8
@@ -4544,7 +4439,6 @@ static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 
 	return 0;
 }
-#endif
 
 static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 {
@@ -4657,19 +4551,15 @@ choose_next_task(struct rq *rq, int cpu)
 	struct task_struct *next = sched_rq_first_task(rq);
 
 	if (next == rq->idle) {
-#ifdef	CONFIG_SMP
 		if (!take_other_rq_tasks(rq, cpu)) {
 			if (likely(rq->balance_func && rq->online))
 				rq->balance_func(rq, cpu);
-#endif /* CONFIG_SMP */
 
 			schedstat_inc(rq->sched_goidle);
 			/*printk(KERN_INFO "sched: choose_next_task(%d) idle %px\n", cpu, next);*/
 			return next;
-#ifdef	CONFIG_SMP
 		}
 		next = sched_rq_first_task(rq);
-#endif
 	}
 #ifdef CONFIG_SCHED_HRTICK
 	hrtick_start(rq, next->time_slice);
@@ -5888,12 +5778,10 @@ void dump_cpu_task(int cpu)
  */
 void __init init_idle(struct task_struct *idle, int cpu)
 {
-#ifdef CONFIG_SMP
 	struct affinity_context ac = (struct affinity_context) {
 		.new_mask  = cpumask_of(cpu),
 		.flags     = 0,
 	};
-#endif /* CONFIG_SMP */
 	struct rq *rq = cpu_rq(cpu);
 	unsigned long flags;
 
@@ -5911,13 +5799,11 @@ void __init init_idle(struct task_struct *idle, int cpu)
 
 	sched_queue_init_idle(&rq->queue, idle);
 
-#ifdef CONFIG_SMP
 	/*
 	 * No validation and serialization required at boot time and for
 	 * setting up the idle tasks of not yet online CPUs.
 	 */
 	set_cpus_allowed_common(idle, &ac);
-#endif /* CONFIG_SMP */
 
 	/* Silence PROVE_RCU */
 	rcu_read_lock();
@@ -5936,12 +5822,8 @@ void __init init_idle(struct task_struct *idle, int cpu)
 
 	ftrace_graph_init_idle_task(idle, cpu);
 	vtime_init_idle(idle, cpu);
-#ifdef CONFIG_SMP
 	sprintf(idle->comm, "%s/%d", INIT_TASK_COMM, cpu);
-#endif /* CONFIG_SMP */
 }
-
-#ifdef CONFIG_SMP
 
 int cpuset_cpumask_can_shrink(const struct cpumask __maybe_unused *cur,
 			      const struct cpumask __maybe_unused *trial)
@@ -6402,7 +6284,6 @@ int sched_cpu_dying(unsigned int cpu)
 }
 #endif /* CONFIG_HOTPLUG_CPU */
 
-#ifdef CONFIG_SMP
 static void sched_init_topology_cpumask_early(void)
 {
 	int cpu;
@@ -6458,7 +6339,6 @@ static void sched_init_topology_cpumask(void)
 			      per_cpu(sched_cpu_topo_masks, cpu)));
 	}
 }
-#endif /* CONFIG_SMP */
 
 void __init sched_init_smp(void)
 {
@@ -6479,13 +6359,6 @@ static int __init migration_init(void)
 	return 0;
 }
 early_initcall(migration_init);
-
-#else /* !CONFIG_SMP: */
-void __init sched_init_smp(void)
-{
-	cpu_rq(0)->idle->time_slice = sysctl_sched_base_slice;
-}
-#endif /* !CONFIG_SMP */
 
 int in_sched_functions(unsigned long addr)
 {
@@ -6516,10 +6389,8 @@ void __init sched_init(void)
 
 	wait_bit_init();
 
-#ifdef CONFIG_SMP
 	for (i = 0; i < SCHED_QUEUE_BITS; i++)
 		cpumask_copy(sched_preempt_mask + i, cpu_present_mask);
-#endif /* CONFIG_SMP */
 
 #ifdef CONFIG_CGROUP_SCHED
 	task_group_cache = KMEM_CACHE(task_group, 0);
@@ -6542,7 +6413,6 @@ void __init sched_init(void)
 		rq->nr_running = rq->nr_uninterruptible = 0;
 		rq->calc_load_active = 0;
 		rq->calc_load_update = jiffies + LOAD_FREQ;
-#ifdef CONFIG_SMP
 		rq->online = false;
 		rq->cpu = i;
 
@@ -6558,7 +6428,6 @@ void __init sched_init(void)
 #ifdef CONFIG_HOTPLUG_CPU
 		rcuwait_init(&rq->hotplug_wait);
 #endif
-#endif /* CONFIG_SMP */
 		rq->nr_switches = 0;
 
 		hrtick_rq_init(rq);
@@ -6566,10 +6435,8 @@ void __init sched_init(void)
 
 		zalloc_cpumask_var_node(&rq->scratch_mask, GFP_KERNEL, cpu_to_node(i));
 	}
-#ifdef CONFIG_SMP
 	/* Set rq->online for cpu 0 */
 	cpu_rq(0)->online = true;
-#endif /* CONFIG_SMP */
 	/*
 	 * The boot idle thread does lazy MMU switching as well:
 	 */
@@ -6595,12 +6462,10 @@ void __init sched_init(void)
 
 	calc_load_update = jiffies + LOAD_FREQ;
 
-#ifdef CONFIG_SMP
 	idle_thread_set_boot_cpu();
 	balance_push_set(smp_processor_id(), false);
 
 	sched_init_topology_cpumask_early();
-#endif /* CONFIG_SMP */
 
 	preempt_dynamic_init();
 }
@@ -6724,7 +6589,6 @@ void __cant_sleep(const char *file, int line, int preempt_offset)
 }
 EXPORT_SYMBOL_GPL(__cant_sleep);
 
-# ifdef CONFIG_SMP
 void __cant_migrate(const char *file, int line)
 {
 	static unsigned long prev_jiffy;
@@ -6755,7 +6619,6 @@ void __cant_migrate(const char *file, int line)
 	add_taint(TAINT_WARN, LOCKDEP_STILL_OK);
 }
 EXPORT_SYMBOL_GPL(__cant_migrate);
-# endif /* CONFIG_SMP */
 #endif /* CONFIG_DEBUG_ATOMIC_SLEEP */
 
 #ifdef CONFIG_MAGIC_SYSRQ
