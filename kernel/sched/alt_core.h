@@ -11,11 +11,7 @@
  */
 static inline bool is_migration_disabled(struct task_struct *p)
 {
-#ifdef CONFIG_SMP
 	return p->migration_disabled;
-#else
-	return false;
-#endif
 }
 
 /* rt_prio(prio) defined in include/linux/sched/rt.h */
@@ -37,8 +33,6 @@ struct affinity_context {
 #define SCA_MIGRATE_ENABLE	0x04
 #define SCA_USER		0x08
 
-#ifdef CONFIG_SMP
-
 extern int __set_cpus_allowed_ptr(struct task_struct *p, struct affinity_context *ctx);
 
 static inline cpumask_t *alloc_user_cpus_ptr(int node)
@@ -50,21 +44,6 @@ static inline cpumask_t *alloc_user_cpus_ptr(int node)
 
 	return kmalloc_node(size, GFP_KERNEL, node);
 }
-
-#else /* !CONFIG_SMP: */
-
-static inline int __set_cpus_allowed_ptr(struct task_struct *p,
-					 struct affinity_context *ctx)
-{
-	return set_cpus_allowed_ptr(p, ctx->new_mask);
-}
-
-static inline cpumask_t *alloc_user_cpus_ptr(int node)
-{
-	return NULL;
-}
-
-#endif /* !CONFIG_SMP */
 
 #ifdef CONFIG_RT_MUTEXES
 
@@ -172,7 +151,6 @@ static inline void alt_sched_debug(void) {}
 
 extern int sched_yield_type;
 
-#ifdef CONFIG_SMP
 extern cpumask_t sched_rq_pending_mask ____cacheline_aligned_in_smp;
 
 DECLARE_STATIC_KEY_FALSE(sched_smt_present);
@@ -191,23 +169,9 @@ typedef bool (*idle_select_func_t)(struct cpumask *dstp, const struct cpumask *s
 				   const struct cpumask *src2p);
 
 extern idle_select_func_t idle_select_func;
-#endif
 
 /* balance callback */
-#ifdef CONFIG_SMP
 extern struct balance_callback *splice_balance_callbacks(struct rq *rq);
 extern void balance_callbacks(struct rq *rq, struct balance_callback *head);
-#else
-
-static inline struct balance_callback *splice_balance_callbacks(struct rq *rq)
-{
-	return NULL;
-}
-
-static inline void balance_callbacks(struct rq *rq, struct balance_callback *head)
-{
-}
-
-#endif
 
 #endif /* _KERNEL_SCHED_ALT_CORE_H */
