@@ -100,11 +100,9 @@ static inline int task_on_rq_migrating(struct task_struct *p)
 #define WF_MIGRATED     0x20 /* Internal use, task got migrated */
 #define WF_CURRENT_CPU  0x40 /* Prefer to move the wakee to the current CPU. */
 
-#ifdef CONFIG_SMP
 static_assert(WF_EXEC == SD_BALANCE_EXEC);
 static_assert(WF_FORK == SD_BALANCE_FORK);
 static_assert(WF_TTWU == SD_BALANCE_WAKE);
-#endif
 
 #define SCHED_QUEUE_BITS	(SCHED_LEVELS - 1)
 
@@ -167,7 +165,6 @@ struct rq {
 	set_idle_mask_func_t	set_idle_mask_func;
 	clear_idle_mask_func_t	clear_idle_mask_func;
 
-#ifdef CONFIG_SMP
 	int cpu;		/* cpu of this runqueue */
 	bool online;
 
@@ -190,7 +187,6 @@ struct rq {
 #endif
 	unsigned int		nr_pinned;
 
-#endif /* CONFIG_SMP */
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
 	u64 prev_irq_time;
 #endif /* CONFIG_IRQ_TIME_ACCOUNTING */
@@ -219,9 +215,7 @@ struct rq {
 	unsigned long nr_uninterruptible;
 
 #ifdef CONFIG_SCHED_HRTICK
-#ifdef CONFIG_SMP
 	call_single_data_t hrtick_csd;
-#endif
 	struct hrtimer		hrtick_timer;
 	ktime_t			hrtick_time;
 #endif
@@ -252,9 +246,7 @@ struct rq {
 #endif
 
 #ifdef CONFIG_NO_HZ_COMMON
-#ifdef CONFIG_SMP
 	call_single_data_t	nohz_csd;
-#endif
 	atomic_t		nohz_flags;
 #endif /* CONFIG_NO_HZ_COMMON */
 
@@ -279,7 +271,6 @@ DECLARE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 #define cpu_curr(cpu)		(cpu_rq(cpu)->curr)
 #define raw_rq()		raw_cpu_ptr(&runqueues)
 
-#ifdef CONFIG_SMP
 #ifdef CONFIG_SYSCTL
 void register_sched_domain_sysctl(void);
 void unregister_sched_domain_sysctl(void);
@@ -321,8 +312,6 @@ static inline int best_mask_cpu(int cpu, const cpumask_t *mask)
 {
 	return __best_mask_cpu(mask, per_cpu(sched_cpu_topo_masks, cpu));
 }
-
-#endif /* CONFIG_SMP */
 
 extern void resched_latency_warn(int cpu, u64 latency);
 
@@ -525,11 +514,7 @@ static inline struct cpuidle_state *idle_get_state(struct rq *rq)
 
 static inline int cpu_of(const struct rq *rq)
 {
-#ifdef CONFIG_SMP
 	return rq->cpu;
-#else
-	return 0;
-#endif
 }
 
 extern void resched_cpu(int cpu);
@@ -615,11 +600,9 @@ static inline int sched_tick_offload_init(void) { return 0; }
 #define arch_scale_freq_invariant()	(false)
 #endif
 
-#ifdef CONFIG_SMP
 unsigned long sugov_effective_cpu_perf(int cpu, unsigned long actual,
 				 unsigned long min,
 				 unsigned long max);
-#endif /* CONFIG_SMP */
 
 extern void schedule_idle(void);
 
@@ -1003,7 +986,6 @@ static inline void task_tick_mm_cid(struct rq *rq, struct task_struct *curr) { }
 static inline void init_sched_mm_cid(struct task_struct *t) { }
 #endif
 
-#ifdef CONFIG_SMP
 extern struct balance_callback balance_push_callback;
 
 static inline void
@@ -1025,7 +1007,6 @@ queue_balance_callback(struct rq *rq,
 	head->next = rq->balance_callback;
 	rq->balance_callback = head;
 }
-#endif /* CONFIG_SMP */
 
 #ifdef CONFIG_SCHED_BMQ
 #include "bmq.h"
