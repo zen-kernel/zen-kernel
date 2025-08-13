@@ -1,8 +1,6 @@
 #include "alt_core.h"
 #include "alt_topology.h"
 
-#ifdef CONFIG_SMP
-
 static cpumask_t sched_pcore_mask ____cacheline_aligned_in_smp;
 
 static int __init sched_pcore_mask_setup(char *str)
@@ -347,4 +345,3 @@ void sched_init_topology(void)
 		}
 	}
 }
-#endif /* CONFIG_SMP */
