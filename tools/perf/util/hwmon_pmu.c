@@ -344,7 +344,7 @@ err_out:
 
 struct perf_pmu *hwmon_pmu__new(struct list_head *pmus, int hwmon_dir, const char *sysfs_name, const char *name)
 {
-	char buf[32];
+	char buf[64];
 	struct hwmon_pmu *hwm;
 
 	hwm = zalloc(sizeof(*hwm));
