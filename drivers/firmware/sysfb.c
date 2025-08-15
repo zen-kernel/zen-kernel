@@ -35,22 +35,6 @@
 #include <linux/screen_info.h>
 #include <linux/sysfb.h>
 
-static int skip_simpledrm;
-
-static int __init simpledrm_disable(char *opt)
-{
-	if (!opt)
-                return -EINVAL;
-
-	get_option(&opt, &skip_simpledrm);
-
-	if (skip_simpledrm)
-		pr_info("The simpledrm driver will not be probed\n");
-
-	return 0;
-}
-early_param("nvidia-drm.modeset", simpledrm_disable);
-
 static struct platform_device *pd;
 static DEFINE_MUTEX(disable_lock);
 static bool disabled;
@@ -181,7 +165,7 @@ static __init int sysfb_init(void)
 
 	/* try to create a simple-framebuffer device */
 	compatible = sysfb_parse_mode(si, &mode);
-	if (compatible && !skip_simpledrm) {
+	if (compatible) {
 		pd = sysfb_create_simplefb(si, &mode, parent);
 		if (!IS_ERR(pd))
 			goto put_device;
