@@ -4794,10 +4794,16 @@ struct ib_ucontext *ib_uverbs_get_ucontext_file(struct ib_uverbs_file *ufile);
 
 #if IS_ENABLED(CONFIG_INFINIBAND_USER_ACCESS)
 int uverbs_destroy_def_handler(struct uverbs_attr_bundle *attrs);
+bool rdma_uattrs_has_raw_cap(const struct uverbs_attr_bundle *attrs);
 #else
 static inline int uverbs_destroy_def_handler(struct uverbs_attr_bundle *attrs)
 {
 	return 0;
+}
+static inline bool
+rdma_uattrs_has_raw_cap(const struct uverbs_attr_bundle *attrs)
+{
+	return false;
 }
 #endif
 
@@ -4854,6 +4860,12 @@ static inline int ibdev_to_node(struct ib_device *ibdev)
 
 bool rdma_dev_access_netns(const struct ib_device *device,
 			   const struct net *net);
+
+bool rdma_dev_has_raw_cap(const struct ib_device *dev);
+static inline struct net *rdma_dev_net(struct ib_device *device)
+{
+	return read_pnet(&device->coredev.rdma_net);
+}
 
 #define IB_ROCE_UDP_ENCAP_VALID_PORT_MIN (0xC000)
 #define IB_ROCE_UDP_ENCAP_VALID_PORT_MAX (0xFFFF)

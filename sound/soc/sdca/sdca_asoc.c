@@ -229,11 +229,11 @@ static int entity_early_parse_ge(struct device *dev,
 	if (!control_name)
 		return -ENOMEM;
 
-	kctl = devm_kmalloc(dev, sizeof(*kctl), GFP_KERNEL);
+	kctl = devm_kzalloc(dev, sizeof(*kctl), GFP_KERNEL);
 	if (!kctl)
 		return -ENOMEM;
 
-	soc_enum = devm_kmalloc(dev, sizeof(*soc_enum), GFP_KERNEL);
+	soc_enum = devm_kzalloc(dev, sizeof(*soc_enum), GFP_KERNEL);
 	if (!soc_enum)
 		return -ENOMEM;
 
@@ -397,6 +397,8 @@ static int entity_pde_event(struct snd_soc_dapm_widget *widget,
 		from = widget->off_val;
 		to = widget->on_val;
 		break;
+	default:
+		return 0;
 	}
 
 	for (i = 0; i < entity->pde.num_max_delay; i++) {
@@ -558,11 +560,11 @@ static int entity_parse_su_class(struct device *dev,
 	const char **texts;
 	int i;
 
-	kctl = devm_kmalloc(dev, sizeof(*kctl), GFP_KERNEL);
+	kctl = devm_kzalloc(dev, sizeof(*kctl), GFP_KERNEL);
 	if (!kctl)
 		return -ENOMEM;
 
-	soc_enum = devm_kmalloc(dev, sizeof(*soc_enum), GFP_KERNEL);
+	soc_enum = devm_kzalloc(dev, sizeof(*soc_enum), GFP_KERNEL);
 	if (!soc_enum)
 		return -ENOMEM;
 
@@ -669,7 +671,7 @@ static int entity_parse_mu(struct device *dev,
 		if (!control_name)
 			return -ENOMEM;
 
-		mc = devm_kmalloc(dev, sizeof(*mc), GFP_KERNEL);
+		mc = devm_kzalloc(dev, sizeof(*mc), GFP_KERNEL);
 		if (!mc)
 			return -ENOMEM;
 
@@ -923,7 +925,7 @@ static int populate_control(struct device *dev,
 	if (!control_name)
 		return -ENOMEM;
 
-	mc = devm_kmalloc(dev, sizeof(*mc), GFP_KERNEL);
+	mc = devm_kzalloc(dev, sizeof(*mc), GFP_KERNEL);
 	if (!mc)
 		return -ENOMEM;
 

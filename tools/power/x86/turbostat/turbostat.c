@@ -840,20 +840,21 @@ static const struct platform_features spr_features = {
 };
 
 static const struct platform_features dmr_features = {
-	.has_msr_misc_feature_control = spr_features.has_msr_misc_feature_control,
-	.has_msr_misc_pwr_mgmt = spr_features.has_msr_misc_pwr_mgmt,
-	.has_nhm_msrs = spr_features.has_nhm_msrs,
-	.has_config_tdp = spr_features.has_config_tdp,
-	.bclk_freq = spr_features.bclk_freq,
-	.supported_cstates = spr_features.supported_cstates,
-	.cst_limit = spr_features.cst_limit,
-	.has_msr_core_c1_res = spr_features.has_msr_core_c1_res,
-	.has_msr_module_c6_res_ms = 1,	/* DMR has Dual Core Module and MC6 MSR */
-	.has_irtl_msrs = spr_features.has_irtl_msrs,
-	.has_cst_prewake_bit = spr_features.has_cst_prewake_bit,
-	.has_fixed_rapl_psys_unit = spr_features.has_fixed_rapl_psys_unit,
-	.trl_msrs = spr_features.trl_msrs,
-	.rapl_msrs = 0,		/* DMR does not have RAPL MSRs */
+	.has_msr_misc_feature_control	= spr_features.has_msr_misc_feature_control,
+	.has_msr_misc_pwr_mgmt		= spr_features.has_msr_misc_pwr_mgmt,
+	.has_nhm_msrs			= spr_features.has_nhm_msrs,
+	.bclk_freq			= spr_features.bclk_freq,
+	.supported_cstates		= spr_features.supported_cstates,
+	.cst_limit			= spr_features.cst_limit,
+	.has_msr_core_c1_res		= spr_features.has_msr_core_c1_res,
+	.has_cst_prewake_bit		= spr_features.has_cst_prewake_bit,
+	.has_fixed_rapl_psys_unit	= spr_features.has_fixed_rapl_psys_unit,
+	.trl_msrs			= spr_features.trl_msrs,
+	.has_msr_module_c6_res_ms	= 1,	/* DMR has Dual-Core-Module and MC6 MSR */
+	.rapl_msrs			= 0,	/* DMR does not have RAPL MSRs */
+	.plr_msrs			= 0,	/* DMR does not have PLR  MSRs */
+	.has_irtl_msrs			= 0,	/* DMR does not have IRTL MSRs */
+	.has_config_tdp			= 0,	/* DMR does not have CTDP MSRs */
 };
 
 static const struct platform_features srf_features = {
@@ -2429,7 +2430,6 @@ unsigned long long bic_lookup(char *name_list, enum show_hide_mode mode)
 
 		}
 		if (i == MAX_BIC) {
-			fprintf(stderr, "deferred %s\n", name_list);
 			if (mode == SHOW_LIST) {
 				deferred_add_names[deferred_add_index++] = name_list;
 				if (deferred_add_index >= MAX_DEFERRED) {
@@ -9817,6 +9817,7 @@ int fork_it(char **argv)
 	timersub(&tv_odd, &tv_even, &tv_delta);
 	if (for_all_cpus_2(delta_cpu, ODD_COUNTERS, EVEN_COUNTERS))
 		fprintf(outf, "%s: Counter reset detected\n", progname);
+	delta_platform(&platform_counters_odd, &platform_counters_even);
 
 	compute_average(EVEN_COUNTERS);
 	format_all_counters(EVEN_COUNTERS);
@@ -10536,9 +10537,6 @@ void probe_cpuidle_residency(void)
 	int state;
 	int min_state = 1024, max_state = 0;
 	char *sp;
-
-	if (!DO_BIC(BIC_pct_idle))
-		return;
 
 	for (state = 10; state >= 0; --state) {
 
