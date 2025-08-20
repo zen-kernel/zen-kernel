@@ -5439,8 +5439,8 @@ bool dc_update_planes_and_stream(struct dc *dc,
 	else
 		ret = update_planes_and_stream_v2(dc, srf_updates,
 			surface_count, stream, stream_update);
-
-	if (ret)
+	if (ret && (dc->ctx->dce_version >= DCN_VERSION_3_2 ||
+		dc->ctx->dce_version == DCN_VERSION_3_01))
 		clear_update_flags(srf_updates, surface_count, stream);
 
 	return ret;
@@ -5471,7 +5471,7 @@ void dc_commit_updates_for_stream(struct dc *dc,
 		ret = update_planes_and_stream_v1(dc, srf_updates, surface_count, stream,
 				stream_update, state);
 
-	if (ret)
+	if (ret && dc->ctx->dce_version >= DCN_VERSION_3_2)
 		clear_update_flags(srf_updates, surface_count, stream);
 }
 
@@ -6395,10 +6395,12 @@ unsigned int dc_get_det_buffer_size_from_state(const struct dc_state *context)
  */
 bool dc_get_host_router_index(const struct dc_link *link, unsigned int *host_router_index)
 {
-	struct dc *dc = link->ctx->dc;
+	struct dc *dc;
 
-	if (link->ep_type != DISPLAY_ENDPOINT_USB4_DPIA)
+	if (!link || !host_router_index || link->ep_type != DISPLAY_ENDPOINT_USB4_DPIA)
 		return false;
+
+	dc = link->ctx->dc;
 
 	if (link->link_index < dc->lowest_dpia_link_index)
 		return false;

@@ -602,6 +602,33 @@ ath12k_mac_get_tx_arvif(struct ath12k_link_vif *arvif,
 	return NULL;
 }
 
+static const u8 *ath12k_mac_get_tx_bssid(struct ath12k_link_vif *arvif)
+{
+	struct ieee80211_bss_conf *link_conf;
+	struct ath12k_link_vif *tx_arvif;
+	struct ath12k *ar = arvif->ar;
+
+	lockdep_assert_wiphy(ath12k_ar_to_hw(ar)->wiphy);
+
+	link_conf = ath12k_mac_get_link_bss_conf(arvif);
+	if (!link_conf) {
+		ath12k_warn(ar->ab,
+			    "unable to access bss link conf for link %u required to retrieve transmitting link conf\n",
+			    arvif->link_id);
+		return NULL;
+	}
+	if (link_conf->vif->type == NL80211_IFTYPE_STATION) {
+		if (link_conf->nontransmitted)
+			return link_conf->transmitter_bssid;
+	} else {
+		tx_arvif = ath12k_mac_get_tx_arvif(arvif, link_conf);
+		if (tx_arvif)
+			return tx_arvif->bssid;
+	}
+
+	return NULL;
+}
+
 struct ieee80211_bss_conf *
 ath12k_mac_get_link_bss_conf(struct ath12k_link_vif *arvif)
 {
@@ -1691,8 +1718,6 @@ static void ath12k_control_beaconing(struct ath12k_link_vif *arvif,
 {
 	struct ath12k_wmi_vdev_up_params params = {};
 	struct ath12k_vif *ahvif = arvif->ahvif;
-	struct ieee80211_bss_conf *link_conf;
-	struct ath12k_link_vif *tx_arvif;
 	struct ath12k *ar = arvif->ar;
 	int ret;
 
@@ -1723,18 +1748,8 @@ static void ath12k_control_beaconing(struct ath12k_link_vif *arvif,
 	params.vdev_id = arvif->vdev_id;
 	params.aid = ahvif->aid;
 	params.bssid = arvif->bssid;
-
-	link_conf = ath12k_mac_get_link_bss_conf(arvif);
-	if (!link_conf) {
-		ath12k_warn(ar->ab,
-			    "unable to access bss link conf for link %u required to retrieve transmitting link conf\n",
-			    arvif->link_id);
-		return;
-	}
-
-	tx_arvif = ath12k_mac_get_tx_arvif(arvif, link_conf);
-	if (tx_arvif) {
-		params.tx_bssid = tx_arvif->bssid;
+	params.tx_bssid = ath12k_mac_get_tx_bssid(arvif);
+	if (params.tx_bssid) {
 		params.nontx_profile_idx = info->bssid_index;
 		params.nontx_profile_cnt = 1 << info->bssid_indicator;
 	}
@@ -3265,6 +3280,11 @@ static void ath12k_bss_assoc(struct ath12k *ar,
 	params.vdev_id = arvif->vdev_id;
 	params.aid = ahvif->aid;
 	params.bssid = arvif->bssid;
+	params.tx_bssid = ath12k_mac_get_tx_bssid(arvif);
+	if (params.tx_bssid) {
+		params.nontx_profile_idx = bss_conf->bssid_index;
+		params.nontx_profile_cnt = 1 << bss_conf->bssid_indicator;
+	}
 	ret = ath12k_wmi_vdev_up(ar, &params);
 	if (ret) {
 		ath12k_warn(ar->ab, "failed to set vdev %d up: %d\n",
@@ -10010,7 +10030,7 @@ ath12k_mac_update_vif_chan(struct ath12k *ar,
 			   int n_vifs)
 {
 	struct ath12k_wmi_vdev_up_params params = {};
-	struct ath12k_link_vif *arvif, *tx_arvif;
+	struct ath12k_link_vif *arvif;
 	struct ieee80211_bss_conf *link_conf;
 	struct ath12k_base *ab = ar->ab;
 	struct ieee80211_vif *vif;
@@ -10082,10 +10102,8 @@ ath12k_mac_update_vif_chan(struct ath12k *ar,
 		params.vdev_id = arvif->vdev_id;
 		params.aid = ahvif->aid;
 		params.bssid = arvif->bssid;
-
-		tx_arvif = ath12k_mac_get_tx_arvif(arvif, link_conf);
-		if (tx_arvif) {
-			params.tx_bssid = tx_arvif->bssid;
+		params.tx_bssid = ath12k_mac_get_tx_bssid(arvif);
+		if (params.tx_bssid) {
 			params.nontx_profile_idx = link_conf->bssid_index;
 			params.nontx_profile_cnt = 1 << link_conf->bssid_indicator;
 		}
@@ -12504,6 +12522,7 @@ static int ath12k_mac_hw_register(struct ath12k_hw *ah)
 
 	wiphy->mbssid_max_interfaces = mbssid_max_interfaces;
 	wiphy->ema_max_profile_periodicity = TARGET_EMA_MAX_PROFILE_PERIOD;
+	ieee80211_hw_set(hw, SUPPORTS_MULTI_BSSID);
 
 	if (is_6ghz) {
 		wiphy_ext_feature_set(wiphy,

@@ -152,12 +152,29 @@ static int io_zcrx_map_area_dmabuf(struct io_zcrx_ifq *ifq, struct io_zcrx_area 
 	return niov_idx;
 }
 
+static unsigned long io_count_account_pages(struct page **pages, unsigned nr_pages)
+{
+	struct folio *last_folio = NULL;
+	unsigned long res = 0;
+	int i;
+
+	for (i = 0; i < nr_pages; i++) {
+		struct folio *folio = page_folio(pages[i]);
+
+		if (folio == last_folio)
+			continue;
+		last_folio = folio;
+		res += 1UL << folio_order(folio);
+	}
+	return res;
+}
+
 static int io_import_umem(struct io_zcrx_ifq *ifq,
 			  struct io_zcrx_mem *mem,
 			  struct io_uring_zcrx_area_reg *area_reg)
 {
 	struct page **pages;
-	int nr_pages;
+	int nr_pages, ret;
 
 	if (area_reg->dmabuf_fd)
 		return -EINVAL;
@@ -168,10 +185,15 @@ static int io_import_umem(struct io_zcrx_ifq *ifq,
 	if (IS_ERR(pages))
 		return PTR_ERR(pages);
 
+	mem->account_pages = io_count_account_pages(pages, nr_pages);
+	ret = io_account_mem(ifq->ctx, mem->account_pages);
+	if (ret < 0)
+		mem->account_pages = 0;
+
 	mem->pages = pages;
 	mem->nr_folios = nr_pages;
 	mem->size = area_reg->len;
-	return 0;
+	return ret;
 }
 
 static void io_release_area_mem(struct io_zcrx_mem *mem)
@@ -370,9 +392,11 @@ static void io_free_rbuf_ring(struct io_zcrx_ifq *ifq)
 
 static void io_zcrx_free_area(struct io_zcrx_area *area)
 {
-	if (area->ifq)
-		io_zcrx_unmap_area(area->ifq, area);
+	io_zcrx_unmap_area(area->ifq, area);
 	io_release_area_mem(&area->mem);
+
+	if (area->mem.account_pages)
+		io_unaccount_mem(area->ifq->ctx, area->mem.account_pages);
 
 	kvfree(area->freelist);
 	kvfree(area->nia.niovs);
@@ -401,6 +425,7 @@ static int io_zcrx_create_area(struct io_zcrx_ifq *ifq,
 	area = kzalloc(sizeof(*area), GFP_KERNEL);
 	if (!area)
 		goto err;
+	area->ifq = ifq;
 
 	ret = io_import_area(ifq, &area->mem, area_reg);
 	if (ret)
@@ -435,7 +460,6 @@ static int io_zcrx_create_area(struct io_zcrx_ifq *ifq,
 	}
 
 	area->free_count = nr_iovs;
-	area->ifq = ifq;
 	/* we're only supporting one area per ifq for now */
 	area->area_id = 0;
 	area_reg->rq_area_token = (u64)area->area_id << IORING_ZCRX_AREA_SHIFT;

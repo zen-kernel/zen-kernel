@@ -14,6 +14,7 @@ struct io_zcrx_mem {
 
 	struct page			**pages;
 	unsigned long			nr_folios;
+	unsigned long			account_pages;
 
 	struct dma_buf_attachment	*attach;
 	struct dma_buf			*dmabuf;
