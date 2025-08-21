@@ -3779,7 +3779,6 @@ static int bnxt_alloc_rx_page_pool(struct bnxt *bp,
 	if (BNXT_RX_PAGE_MODE(bp))
 		pp.pool_size += bp->rx_ring_size;
 	pp.nid = numa_node;
-	pp.napi = &rxr->bnapi->napi;
 	pp.netdev = bp->dev;
 	pp.dev = &bp->pdev->dev;
 	pp.dma_dir = bp->rx_dir;
@@ -3805,6 +3804,12 @@ err_destroy_pp:
 	page_pool_destroy(rxr->page_pool);
 	rxr->page_pool = NULL;
 	return PTR_ERR(pool);
+}
+
+static void bnxt_enable_rx_page_pool(struct bnxt_rx_ring_info *rxr)
+{
+	page_pool_enable_direct_recycling(rxr->head_pool, &rxr->bnapi->napi);
+	page_pool_enable_direct_recycling(rxr->page_pool, &rxr->bnapi->napi);
 }
 
 static int bnxt_alloc_rx_agg_bmap(struct bnxt *bp, struct bnxt_rx_ring_info *rxr)
@@ -3845,6 +3850,7 @@ static int bnxt_alloc_rx_rings(struct bnxt *bp)
 		rc = bnxt_alloc_rx_page_pool(bp, rxr, cpu_node);
 		if (rc)
 			return rc;
+		bnxt_enable_rx_page_pool(rxr);
 
 		rc = xdp_rxq_info_reg(&rxr->xdp_rxq, bp->dev, i, 0);
 		if (rc < 0)
@@ -15998,6 +16004,7 @@ static int bnxt_queue_start(struct net_device *dev, void *qmem, int idx)
 			goto err_reset;
 	}
 
+	bnxt_enable_rx_page_pool(rxr);
 	napi_enable_locked(&bnapi->napi);
 	bnxt_db_nq_arm(bp, &cpr->cp_db, cpr->cp_raw_cons);
 
