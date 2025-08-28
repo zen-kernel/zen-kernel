@@ -165,10 +165,7 @@ extern cpumask_t *const sched_ecore_idle_mask;
 
 extern struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int new_cpu);
 
-typedef bool (*idle_select_func_t)(struct cpumask *dstp, const struct cpumask *src1p,
-				   const struct cpumask *src2p);
-
-extern idle_select_func_t idle_select_func;
+DECLARE_STATIC_CALL(sched_idle_select_func, cpumask_and);
 
 /* balance callback */
 extern struct balance_callback *splice_balance_callbacks(struct rq *rq);

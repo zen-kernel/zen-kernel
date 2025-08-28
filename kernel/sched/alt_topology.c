@@ -259,10 +259,10 @@ static void pcore_balance_func(struct rq *rq, const int cpu)
 #define SCHED_DEBUG_INFO(...)	do { } while(0)
 #endif
 
-#define SET_IDLE_SELECT_FUNC(func)						\
+#define IDLE_SELECT_FUNC_UPDATE(func)						\
 {										\
-	idle_select_func = func;						\
-	printk(KERN_INFO "sched: "#func);					\
+	static_call_update(sched_idle_select_func, &func);			\
+	printk(KERN_INFO "sched: idle select func -> "#func);			\
 }
 
 #define SET_RQ_BALANCE_FUNC(rq, cpu, func)					\
@@ -301,11 +301,11 @@ void sched_init_topology(void)
 #ifdef CONFIG_SCHED_SMT
 	/* idle select function */
 	if (cpumask_equal(&sched_smt_mask, cpu_online_mask)) {
-		SET_IDLE_SELECT_FUNC(p1_idle_select_func);
+		IDLE_SELECT_FUNC_UPDATE(p1_idle_select_func);
 	} else
 #endif
 	if (!cpumask_empty(&sched_pcore_mask)) {
-		SET_IDLE_SELECT_FUNC(p1p2_idle_select_func);
+		IDLE_SELECT_FUNC_UPDATE(p1p2_idle_select_func);
 	}
 
 	for_each_online_cpu(cpu) {

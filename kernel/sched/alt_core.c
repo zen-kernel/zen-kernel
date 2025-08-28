@@ -2012,7 +2012,7 @@ preempt_mask_check(cpumask_t *preempt_mask, const cpumask_t *allow_mask, int pri
 	return cpumask_and(preempt_mask, allow_mask, mask);
 }
 
-__read_mostly idle_select_func_t idle_select_func ____cacheline_aligned_in_smp = cpumask_and;
+DEFINE_STATIC_CALL(sched_idle_select_func, cpumask_and);
 
 static inline int select_task_rq(struct task_struct *p)
 {
@@ -2021,7 +2021,7 @@ static inline int select_task_rq(struct task_struct *p)
 	if (unlikely(!cpumask_and(&allow_mask, p->cpus_ptr, cpu_active_mask)))
 		return select_fallback_rq(task_cpu(p), p);
 
-	if (idle_select_func(&mask, &allow_mask, sched_idle_mask)	||
+	if (static_call(sched_idle_select_func)(&mask, &allow_mask, sched_idle_mask)	||
 	    preempt_mask_check(&mask, &allow_mask, task_sched_prio(p)))
 		return best_mask_cpu(task_cpu(p), &mask);
 
