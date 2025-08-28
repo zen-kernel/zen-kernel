@@ -265,7 +265,8 @@ static int iris_hfi_gen2_handle_system_error(struct iris_core *core,
 {
 	struct iris_inst *instance;
 
-	dev_err(core->dev, "received system error of type %#x\n", pkt->type);
+	if (pkt)
+		dev_err(core->dev, "received system error of type %#x\n", pkt->type);
 
 	core->state = IRIS_CORE_ERROR;
 
@@ -376,6 +377,11 @@ static int iris_hfi_gen2_handle_output_buffer(struct iris_inst *inst,
 	buf->attr |= BUF_ATTR_DEQUEUED;
 
 	buf->flags = iris_hfi_gen2_get_driver_buffer_flags(inst, hfi_buffer->flags);
+
+	if (!buf->data_size && inst->state == IRIS_INST_STREAMING &&
+	    !(hfi_buffer->flags & HFI_BUF_FW_FLAG_LAST)) {
+		buf->flags |= V4L2_BUF_FLAG_ERROR;
+	}
 
 	return 0;
 }
@@ -635,9 +641,6 @@ static int iris_hfi_gen2_handle_session_property(struct iris_inst *inst,
 						 struct iris_hfi_packet *pkt)
 {
 	struct iris_inst_hfi_gen2 *inst_hfi_gen2 = to_iris_inst_hfi_gen2(inst);
-
-	if (pkt->port != HFI_PORT_BITSTREAM)
-		return 0;
 
 	if (pkt->flags & HFI_FW_FLAGS_INFORMATION)
 		return 0;
