@@ -190,7 +190,7 @@ static inline void update_sched_preempt_mask(struct rq *rq)
 
 	if (prio < last_prio) {
 		if (IDLE_TASK_SCHED_PRIO == last_prio) {
-			rq->clear_idle_mask_func(cpu, sched_idle_mask);
+			sched_clear_idle_mask(cpu);
 			last_prio -= 2;
 		}
 		CLEAR_CACHED_PREEMPT_MASK(pr, prio, last_prio, cpu);
@@ -199,7 +199,7 @@ static inline void update_sched_preempt_mask(struct rq *rq)
 	}
 	/* last_prio < prio */
 	if (IDLE_TASK_SCHED_PRIO == prio) {
-		rq->set_idle_mask_func(cpu, sched_idle_mask);
+		sched_set_idle_mask(cpu);
 		prio -= 2;
 	}
 	SET_CACHED_PREEMPT_MASK(pr, last_prio, prio, cpu);
@@ -6416,8 +6416,6 @@ void __init sched_init(void)
 		rq->online = false;
 		rq->cpu = i;
 
-		rq->clear_idle_mask_func = cpumask_clear_cpu;
-		rq->set_idle_mask_func = cpumask_set_cpu;
 		rq->balance_func = NULL;
 		rq->active_balance_arg.active = 0;
 
