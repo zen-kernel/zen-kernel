@@ -12,47 +12,7 @@ static int __init sched_pcore_mask_setup(char *str)
 }
 __setup("pcore_cpus=", sched_pcore_mask_setup);
 
-/*
- * set/clear idle mask functions
- */
-#ifdef CONFIG_SCHED_SMT
-static void set_idle_mask_smt(unsigned int cpu, struct cpumask *dstp)
-{
-	cpumask_set_cpu(cpu, dstp);
-	if (cpumask_subset(cpu_smt_mask(cpu), sched_idle_mask))
-		cpumask_or(sched_sg_idle_mask, sched_sg_idle_mask, cpu_smt_mask(cpu));
-}
-
-static void clear_idle_mask_smt(int cpu, struct cpumask *dstp)
-{
-	cpumask_clear_cpu(cpu, dstp);
-	cpumask_andnot(sched_sg_idle_mask, sched_sg_idle_mask, cpu_smt_mask(cpu));
-}
-#endif
-
-static void set_idle_mask_pcore(unsigned int cpu, struct cpumask *dstp)
-{
-	cpumask_set_cpu(cpu, dstp);
-	cpumask_set_cpu(cpu, sched_pcore_idle_mask);
-}
-
-static void clear_idle_mask_pcore(int cpu, struct cpumask *dstp)
-{
-	cpumask_clear_cpu(cpu, dstp);
-	cpumask_clear_cpu(cpu, sched_pcore_idle_mask);
-}
-
-static void set_idle_mask_ecore(unsigned int cpu, struct cpumask *dstp)
-{
-	cpumask_set_cpu(cpu, dstp);
-	cpumask_set_cpu(cpu, sched_ecore_idle_mask);
-}
-
-static void clear_idle_mask_ecore(int cpu, struct cpumask *dstp)
-{
-	cpumask_clear_cpu(cpu, dstp);
-	cpumask_clear_cpu(cpu, sched_ecore_idle_mask);
-}
+DEFINE_PER_CPU_READ_MOSTLY(enum cpu_topo_type, sched_cpu_topo);
 
 /*
  * Idle cpu/rq selection functions
@@ -265,17 +225,16 @@ static void pcore_balance_func(struct rq *rq, const int cpu)
 	printk(KERN_INFO "sched: idle select func -> "#func);			\
 }
 
+#define SET_SCHED_CPU_TOPOLOGY(cpu, topo)					\
+{										\
+	per_cpu(sched_cpu_topo, (cpu)) = topo;					\
+	SCHED_DEBUG_INFO("sched: cpu#%02d -> "#topo, cpu);			\
+}
+
 #define SET_RQ_BALANCE_FUNC(rq, cpu, func)					\
 {										\
 	rq->balance_func = func;						\
 	SCHED_DEBUG_INFO("sched: cpu#%02d -> "#func, cpu);			\
-}
-
-#define SET_RQ_IDLE_MASK_FUNC(rq, cpu, set_func, clear_func)			\
-{										\
-	rq->set_idle_mask_func		= set_func;				\
-	rq->clear_idle_mask_func	= clear_func;				\
-	SCHED_DEBUG_INFO("sched: cpu#%02d -> "#set_func" "#clear_func, cpu);	\
 }
 
 void sched_init_topology(void)
@@ -298,8 +257,8 @@ void sched_init_topology(void)
 		ecore_present = !cpumask_empty(&sched_ecore_mask);
 	}
 
-#ifdef CONFIG_SCHED_SMT
 	/* idle select function */
+#ifdef CONFIG_SCHED_SMT
 	if (cpumask_equal(&sched_smt_mask, cpu_online_mask)) {
 		IDLE_SELECT_FUNC_UPDATE(p1_idle_select_func);
 	} else
@@ -315,7 +274,7 @@ void sched_init_topology(void)
 
 #ifdef CONFIG_SCHED_SMT
 		if (cpumask_weight(cpu_smt_mask(cpu)) > 1) {
-			SET_RQ_IDLE_MASK_FUNC(rq, cpu, set_idle_mask_smt, clear_idle_mask_smt);
+			SET_SCHED_CPU_TOPOLOGY(cpu, CPU_TOPOLOGY_SMT);
 
 			if (cpumask_test_cpu(cpu, &sched_pcore_mask) &&
 			    !cpumask_intersects(&sched_ecore_mask, &sched_smt_mask)) {
@@ -329,7 +288,7 @@ void sched_init_topology(void)
 #endif
 		/* !SMT or only one cpu in sg */
 		if (cpumask_test_cpu(cpu, &sched_pcore_mask)) {
-			SET_RQ_IDLE_MASK_FUNC(rq, cpu, set_idle_mask_pcore, clear_idle_mask_pcore);
+			SET_SCHED_CPU_TOPOLOGY(cpu, CPU_TOPOLOGY_PCORE);
 
 			if (ecore_present)
 				SET_RQ_BALANCE_FUNC(rq, cpu, pcore_balance_func);
@@ -337,7 +296,7 @@ void sched_init_topology(void)
 			continue;
 		}
 		if (cpumask_test_cpu(cpu, &sched_ecore_mask)) {
-			SET_RQ_IDLE_MASK_FUNC(rq, cpu, set_idle_mask_ecore, clear_idle_mask_ecore);
+			SET_SCHED_CPU_TOPOLOGY(cpu, CPU_TOPOLOGY_ECORE);
 #ifdef CONFIG_SCHED_SMT
 			if (cpumask_intersects(&sched_pcore_mask, &sched_smt_mask))
 				SET_RQ_BALANCE_FUNC(rq, cpu, ecore_balance_func);
