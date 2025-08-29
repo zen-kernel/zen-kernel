@@ -120,8 +120,6 @@ struct balance_callback {
 };
 
 typedef void (*balance_func_t)(struct rq *rq, int cpu);
-typedef void (*set_idle_mask_func_t)(unsigned int cpu, struct cpumask *dstp);
-typedef void (*clear_idle_mask_func_t)(int cpu, struct cpumask *dstp);
 
 struct balance_arg {
 	struct task_struct	*task;
@@ -161,9 +159,6 @@ struct rq {
 #ifdef CONFIG_MEMBARRIER
 	int membarrier_state;
 #endif
-
-	set_idle_mask_func_t	set_idle_mask_func;
-	clear_idle_mask_func_t	clear_idle_mask_func;
 
 	int cpu;		/* cpu of this runqueue */
 	bool online;
