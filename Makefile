@@ -2,7 +2,7 @@
 VERSION = 6
 PATCHLEVEL = 16
 SUBLEVEL = 4
-EXTRAVERSION = -zen
+EXTRAVERSION = -lqx1
 NAME = Channeling Inner Peace for Peak Performance
 
 # *DOCUMENTATION*
