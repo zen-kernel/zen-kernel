@@ -173,6 +173,7 @@ void ecore_balance(struct rq *rq)
 
 	if (cpumask_andnot(&single_task_mask, cpu_active_mask, sched_idle_mask) &&
 	    cpumask_andnot(&single_task_mask, &single_task_mask, &sched_rq_pending_mask) &&
+	    cpumask_empty(sched_pcore_idle_mask) &&
 	    /* smt occupied p core to idle e core balance */
 	    smt_pcore_source_balance(rq, &single_task_mask, sched_ecore_idle_mask))
 		return;
@@ -245,6 +246,7 @@ void sched_init_topology(void)
 		IDLE_SELECT_FUNC_UPDATE(p1p2_idle_select_func);
 	}
 
+	/* CPU topology setup */
 	for_each_online_cpu(cpu) {
 		rq = cpu_rq(cpu);
 		/* take chance to reset time slice for idle tasks */
