@@ -4552,8 +4552,7 @@ choose_next_task(struct rq *rq, int cpu)
 
 	if (next == rq->idle) {
 		if (!take_other_rq_tasks(rq, cpu)) {
-			if (likely(rq->balance_func && rq->online))
-				rq->balance_func(rq, cpu);
+			sched_cpu_topology_balance(cpu, rq);
 
 			schedstat_inc(rq->sched_goidle);
 			/*printk(KERN_INFO "sched: choose_next_task(%d) idle %px\n", cpu, next);*/
