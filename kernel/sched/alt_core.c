@@ -113,7 +113,7 @@ cpumask_t sched_smt_mask ____cacheline_aligned_in_smp;
  * the domain), this allows us to quickly tell if two cpus are in the same cache
  * domain, see cpus_share_cache().
  */
-DEFINE_PER_CPU(int, sd_llc_id);
+static DEFINE_PER_CPU_READ_MOSTLY(int, sd_llc_id);
 
 DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 
