@@ -13,6 +13,8 @@ static int __init sched_pcore_mask_setup(char *str)
 __setup("pcore_cpus=", sched_pcore_mask_setup);
 
 DEFINE_PER_CPU_READ_MOSTLY(enum cpu_topo_type, sched_cpu_topo);
+DEFINE_PER_CPU_READ_MOSTLY(enum cpu_topo_balance_type, sched_cpu_topo_balance);
+DEFINE_PER_CPU(struct balance_callback, active_balance_head);
 
 /*
  * Idle cpu/rq selection functions
@@ -117,8 +119,6 @@ ecore_source_balance(struct rq *rq, cpumask_t *single_task_mask, cpumask_t *targ
 	return 0;
 }
 
-static DEFINE_PER_CPU(struct balance_callback, active_balance_head);
-
 #ifdef CONFIG_SCHED_SMT
 static inline int
 smt_pcore_source_balance(struct rq *rq, cpumask_t *single_task_mask, cpumask_t *target_mask)
@@ -139,7 +139,7 @@ smt_pcore_source_balance(struct rq *rq, cpumask_t *single_task_mask, cpumask_t *
 }
 
 /* smt p core balance functions */
-static inline void smt_pcore_balance(struct rq *rq)
+void smt_pcore_balance(struct rq *rq)
 {
 	cpumask_t single_task_mask;
 
@@ -154,14 +154,8 @@ static inline void smt_pcore_balance(struct rq *rq)
 		return;
 }
 
-static void smt_pcore_balance_func(struct rq *rq, const int cpu)
-{
-	if (cpumask_test_cpu(cpu, sched_sg_idle_mask))
-		queue_balance_callback(rq, &per_cpu(active_balance_head, cpu), smt_pcore_balance);
-}
-
 /* smt balance functions */
-static inline void smt_balance(struct rq *rq)
+void smt_balance(struct rq *rq)
 {
 	cpumask_t single_task_mask;
 
@@ -172,14 +166,8 @@ static inline void smt_balance(struct rq *rq)
 		return;
 }
 
-static void smt_balance_func(struct rq *rq, const int cpu)
-{
-	if (cpumask_test_cpu(cpu, sched_sg_idle_mask))
-		queue_balance_callback(rq, &per_cpu(active_balance_head, cpu), smt_balance);
-}
-
 /* e core balance functions */
-static inline void ecore_balance(struct rq *rq)
+void ecore_balance(struct rq *rq)
 {
 	cpumask_t single_task_mask;
 
@@ -189,15 +177,10 @@ static inline void ecore_balance(struct rq *rq)
 	    smt_pcore_source_balance(rq, &single_task_mask, sched_ecore_idle_mask))
 		return;
 }
-
-static void ecore_balance_func(struct rq *rq, const int cpu)
-{
-	queue_balance_callback(rq, &per_cpu(active_balance_head, cpu), ecore_balance);
-}
 #endif /* CONFIG_SCHED_SMT */
 
 /* p core balance functions */
-static inline void pcore_balance(struct rq *rq)
+void pcore_balance(struct rq *rq)
 {
 	cpumask_t single_task_mask;
 
@@ -206,11 +189,6 @@ static inline void pcore_balance(struct rq *rq)
 	    /* idle e core to p core balance */
 	    ecore_source_balance(rq, &single_task_mask, sched_pcore_idle_mask))
 		return;
-}
-
-static void pcore_balance_func(struct rq *rq, const int cpu)
-{
-	queue_balance_callback(rq, &per_cpu(active_balance_head, cpu), pcore_balance);
 }
 
 #ifdef ALT_SCHED_DEBUG
@@ -231,10 +209,10 @@ static void pcore_balance_func(struct rq *rq, const int cpu)
 	SCHED_DEBUG_INFO("sched: cpu#%02d -> "#topo, cpu);			\
 }
 
-#define SET_RQ_BALANCE_FUNC(rq, cpu, func)					\
+#define SET_SCHED_CPU_TOPOLOGY_BALANCE(cpu, balance)				\
 {										\
-	rq->balance_func = func;						\
-	SCHED_DEBUG_INFO("sched: cpu#%02d -> "#func, cpu);			\
+	per_cpu(sched_cpu_topo_balance, (cpu)) = balance;			\
+	SCHED_DEBUG_INFO("sched: cpu#%02d -> "#balance, cpu);			\
 }
 
 void sched_init_topology(void)
@@ -278,9 +256,9 @@ void sched_init_topology(void)
 
 			if (cpumask_test_cpu(cpu, &sched_pcore_mask) &&
 			    !cpumask_intersects(&sched_ecore_mask, &sched_smt_mask)) {
-				SET_RQ_BALANCE_FUNC(rq, cpu, smt_pcore_balance_func);
+				SET_SCHED_CPU_TOPOLOGY_BALANCE(cpu, CPU_TOPOLOGY_BALANCE_SMT_PCORE);
 			} else {
-				SET_RQ_BALANCE_FUNC(rq, cpu, smt_balance_func);
+				SET_SCHED_CPU_TOPOLOGY_BALANCE(cpu, CPU_TOPOLOGY_BALANCE_SMT);
 			}
 
 			continue;
@@ -291,15 +269,16 @@ void sched_init_topology(void)
 			SET_SCHED_CPU_TOPOLOGY(cpu, CPU_TOPOLOGY_PCORE);
 
 			if (ecore_present)
-				SET_RQ_BALANCE_FUNC(rq, cpu, pcore_balance_func);
+				SET_SCHED_CPU_TOPOLOGY_BALANCE(cpu, CPU_TOPOLOGY_BALANCE_PCORE);
 
 			continue;
 		}
+
 		if (cpumask_test_cpu(cpu, &sched_ecore_mask)) {
 			SET_SCHED_CPU_TOPOLOGY(cpu, CPU_TOPOLOGY_ECORE);
 #ifdef CONFIG_SCHED_SMT
 			if (cpumask_intersects(&sched_pcore_mask, &sched_smt_mask))
-				SET_RQ_BALANCE_FUNC(rq, cpu, ecore_balance_func);
+				SET_SCHED_CPU_TOPOLOGY_BALANCE(cpu, CPU_TOPOLOGY_BALANCE_ECORE);
 #endif
 		}
 	}
