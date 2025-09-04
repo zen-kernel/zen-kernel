@@ -206,7 +206,8 @@ static int otx2_register_flr_me_intr(struct otx2_nic *pf, int numvfs)
 
 	/* Register ME interrupt handler*/
 	irq_name = &hw->irq_name[RVU_PF_INT_VEC_VFME0 * NAME_SIZE];
-	snprintf(irq_name, NAME_SIZE, "RVUPF%d_ME0", rvu_get_pf(pf->pcifunc));
+	snprintf(irq_name, NAME_SIZE, "RVUPF%d_ME0",
+		 rvu_get_pf(pf->pdev, pf->pcifunc));
 	ret = request_irq(pci_irq_vector(pf->pdev, RVU_PF_INT_VEC_VFME0),
 			  otx2_pf_me_intr_handler, 0, irq_name, pf);
 	if (ret) {
@@ -216,7 +217,8 @@ static int otx2_register_flr_me_intr(struct otx2_nic *pf, int numvfs)
 
 	/* Register FLR interrupt handler */
 	irq_name = &hw->irq_name[RVU_PF_INT_VEC_VFFLR0 * NAME_SIZE];
-	snprintf(irq_name, NAME_SIZE, "RVUPF%d_FLR0", rvu_get_pf(pf->pcifunc));
+	snprintf(irq_name, NAME_SIZE, "RVUPF%d_FLR0",
+		 rvu_get_pf(pf->pdev, pf->pcifunc));
 	ret = request_irq(pci_irq_vector(pf->pdev, RVU_PF_INT_VEC_VFFLR0),
 			  otx2_pf_flr_intr_handler, 0, irq_name, pf);
 	if (ret) {
@@ -228,7 +230,7 @@ static int otx2_register_flr_me_intr(struct otx2_nic *pf, int numvfs)
 	if (numvfs > 64) {
 		irq_name = &hw->irq_name[RVU_PF_INT_VEC_VFME1 * NAME_SIZE];
 		snprintf(irq_name, NAME_SIZE, "RVUPF%d_ME1",
-			 rvu_get_pf(pf->pcifunc));
+			 rvu_get_pf(pf->pdev, pf->pcifunc));
 		ret = request_irq(pci_irq_vector
 				  (pf->pdev, RVU_PF_INT_VEC_VFME1),
 				  otx2_pf_me_intr_handler, 0, irq_name, pf);
@@ -238,7 +240,7 @@ static int otx2_register_flr_me_intr(struct otx2_nic *pf, int numvfs)
 		}
 		irq_name = &hw->irq_name[RVU_PF_INT_VEC_VFFLR1 * NAME_SIZE];
 		snprintf(irq_name, NAME_SIZE, "RVUPF%d_FLR1",
-			 rvu_get_pf(pf->pcifunc));
+			 rvu_get_pf(pf->pdev, pf->pcifunc));
 		ret = request_irq(pci_irq_vector
 				  (pf->pdev, RVU_PF_INT_VEC_VFFLR1),
 				  otx2_pf_flr_intr_handler, 0, irq_name, pf);
@@ -701,7 +703,7 @@ static int otx2_register_pfvf_mbox_intr(struct otx2_nic *pf, int numvfs)
 	irq_name = &hw->irq_name[RVU_PF_INT_VEC_VFPF_MBOX0 * NAME_SIZE];
 	if (pf->pcifunc)
 		snprintf(irq_name, NAME_SIZE,
-			 "RVUPF%d_VF Mbox0", rvu_get_pf(pf->pcifunc));
+			 "RVUPF%d_VF Mbox0", rvu_get_pf(pf->pdev, pf->pcifunc));
 	else
 		snprintf(irq_name, NAME_SIZE, "RVUPF_VF Mbox0");
 	err = request_irq(pci_irq_vector(pf->pdev, RVU_PF_INT_VEC_VFPF_MBOX0),
@@ -717,7 +719,8 @@ static int otx2_register_pfvf_mbox_intr(struct otx2_nic *pf, int numvfs)
 		irq_name = &hw->irq_name[RVU_PF_INT_VEC_VFPF_MBOX1 * NAME_SIZE];
 		if (pf->pcifunc)
 			snprintf(irq_name, NAME_SIZE,
-				 "RVUPF%d_VF Mbox1", rvu_get_pf(pf->pcifunc));
+				 "RVUPF%d_VF Mbox1",
+				 rvu_get_pf(pf->pdev, pf->pcifunc));
 		else
 			snprintf(irq_name, NAME_SIZE, "RVUPF_VF Mbox1");
 		err = request_irq(pci_irq_vector(pf->pdev,
@@ -1972,7 +1975,7 @@ int otx2_open(struct net_device *netdev)
 	if (err) {
 		dev_err(pf->dev,
 			"RVUPF%d: IRQ registration failed for QERR\n",
-			rvu_get_pf(pf->pcifunc));
+			rvu_get_pf(pf->pdev, pf->pcifunc));
 		goto err_disable_napi;
 	}
 
@@ -1990,7 +1993,7 @@ int otx2_open(struct net_device *netdev)
 		if (name_len >= NAME_SIZE) {
 			dev_err(pf->dev,
 				"RVUPF%d: IRQ registration failed for CQ%d, irq name is too long\n",
-				rvu_get_pf(pf->pcifunc), qidx);
+				rvu_get_pf(pf->pdev, pf->pcifunc), qidx);
 			err = -EINVAL;
 			goto err_free_cints;
 		}
@@ -2001,7 +2004,7 @@ int otx2_open(struct net_device *netdev)
 		if (err) {
 			dev_err(pf->dev,
 				"RVUPF%d: IRQ registration failed for CQ%d\n",
-				rvu_get_pf(pf->pcifunc), qidx);
+				rvu_get_pf(pf->pdev, pf->pcifunc), qidx);
 			goto err_free_cints;
 		}
 		vec++;
@@ -2153,6 +2156,7 @@ static netdev_tx_t otx2_xmit(struct sk_buff *skb, struct net_device *netdev)
 {
 	struct otx2_nic *pf = netdev_priv(netdev);
 	int qidx = skb_get_queue_mapping(skb);
+	struct otx2_dev_stats *dev_stats;
 	struct otx2_snd_queue *sq;
 	struct netdev_queue *txq;
 	int sq_idx;
@@ -2165,6 +2169,8 @@ static netdev_tx_t otx2_xmit(struct sk_buff *skb, struct net_device *netdev)
 	/* Check for minimum and maximum packet length */
 	if (skb->len <= ETH_HLEN ||
 	    (!skb_shinfo(skb)->gso_size && skb->len > pf->tx_max_pktlen)) {
+		dev_stats = &pf->hw.dev_stats;
+		atomic_long_inc(&dev_stats->tx_discards);
 		dev_kfree_skb(skb);
 		return NETDEV_TX_OK;
 	}

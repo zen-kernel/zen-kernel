@@ -1539,7 +1539,7 @@ int thc_i2c_subip_regs_save(struct thc_device *dev)
 
 	for (int i = 0; i < ARRAY_SIZE(i2c_subip_regs); i++) {
 		ret = thc_i2c_subip_pio_read(dev, i2c_subip_regs[i],
-					     &read_size, (u32 *)&dev->i2c_subip_regs + i);
+					     &read_size, &dev->i2c_subip_regs[i]);
 		if (ret < 0)
 			return ret;
 	}
@@ -1562,7 +1562,7 @@ int thc_i2c_subip_regs_restore(struct thc_device *dev)
 
 	for (int i = 0; i < ARRAY_SIZE(i2c_subip_regs); i++) {
 		ret = thc_i2c_subip_pio_write(dev, i2c_subip_regs[i],
-					      write_size, (u32 *)&dev->i2c_subip_regs + i);
+					      write_size, &dev->i2c_subip_regs[i]);
 		if (ret < 0)
 			return ret;
 	}
