@@ -366,18 +366,20 @@ static const struct inode_operations proc_dir_inode_operations = {
 
 static void pde_set_flags(struct proc_dir_entry *pde)
 {
-	if (!pde->proc_ops)
+	const struct proc_ops *proc_ops = pde->proc_ops;
+
+	if (!proc_ops)
 		return;
 
-	if (pde->proc_ops->proc_flags & PROC_ENTRY_PERMANENT)
+	if (proc_ops->proc_flags & PROC_ENTRY_PERMANENT)
 		pde->flags |= PROC_ENTRY_PERMANENT;
-	if (pde->proc_ops->proc_read_iter)
+	if (proc_ops->proc_read_iter)
 		pde->flags |= PROC_ENTRY_proc_read_iter;
 #ifdef CONFIG_COMPAT
-	if (pde->proc_ops->proc_compat_ioctl)
+	if (proc_ops->proc_compat_ioctl)
 		pde->flags |= PROC_ENTRY_proc_compat_ioctl;
 #endif
-	if (pde->proc_ops->proc_lseek)
+	if (proc_ops->proc_lseek)
 		pde->flags |= PROC_ENTRY_proc_lseek;
 }
 
