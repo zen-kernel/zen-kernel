@@ -423,6 +423,7 @@ int hibernation_snapshot(int platform_mode)
 	}
 
 	console_suspend_all();
+	pm_restrict_gfp_mask();
 
 	error = dpm_suspend(PMSG_FREEZE);
 
