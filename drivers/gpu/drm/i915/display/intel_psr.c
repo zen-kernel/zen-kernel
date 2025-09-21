@@ -3359,12 +3359,18 @@ static void _psr_flush_handle(struct intel_dp *intel_dp)
 		intel_psr_configure_full_frame_update(intel_dp);
 
 		intel_psr_force_update(intel_dp);
+	} else if (!intel_dp->psr.psr2_sel_fetch_enabled) {
+		/*
+		 * PSR1 on all platforms
+		 * PSR2 HW tracking
+		 * PR FU
+		 */
+		intel_psr_force_update(intel_dp);
 	} else {
 		intel_psr_exit(intel_dp);
 	}
 
-	if ((!intel_dp->psr.psr2_sel_fetch_enabled || DISPLAY_VER(display) >= 20) &&
-	    !intel_dp->psr.busy_frontbuffer_bits)
+	if (!intel_dp->psr.active && !intel_dp->psr.busy_frontbuffer_bits)
 		queue_work(dev_priv->unordered_wq, &intel_dp->psr.work);
 }
 

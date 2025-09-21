@@ -654,10 +654,11 @@ int amdgpu_vm_validate(struct amdgpu_device *adev, struct amdgpu_vm *vm,
  * Check if all VM PDs/PTs are ready for updates
  *
  * Returns:
- * True if VM is not evicting and all VM entities are not stopped
+ * True if VM is not evicting.
  */
 bool amdgpu_vm_ready(struct amdgpu_vm *vm)
 {
+	bool empty;
 	bool ret;
 
 	amdgpu_vm_eviction_lock(vm);
@@ -665,18 +666,10 @@ bool amdgpu_vm_ready(struct amdgpu_vm *vm)
 	amdgpu_vm_eviction_unlock(vm);
 
 	spin_lock(&vm->status_lock);
-	ret &= list_empty(&vm->evicted);
+	empty = list_empty(&vm->evicted);
 	spin_unlock(&vm->status_lock);
 
-	spin_lock(&vm->immediate.lock);
-	ret &= !vm->immediate.stopped;
-	spin_unlock(&vm->immediate.lock);
-
-	spin_lock(&vm->delayed.lock);
-	ret &= !vm->delayed.stopped;
-	spin_unlock(&vm->delayed.lock);
-
-	return ret;
+	return ret && empty;
 }
 
 /**
