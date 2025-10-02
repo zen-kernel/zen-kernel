@@ -32,7 +32,6 @@
 #include "xe_guc_ct.h"
 #include "xe_guc_exec_queue_types.h"
 #include "xe_guc_id_mgr.h"
-#include "xe_guc_klv_helpers.h"
 #include "xe_guc_submit_types.h"
 #include "xe_hw_engine.h"
 #include "xe_hw_fence.h"
@@ -315,71 +314,6 @@ int xe_guc_submit_init(struct xe_guc *guc, unsigned int num_ids)
 	guc->submission_state.initialized = true;
 
 	return drmm_add_action_or_reset(&xe->drm, guc_submit_fini, guc);
-}
-
-/*
- * Given that we want to guarantee enough RCS throughput to avoid missing
- * frames, we set the yield policy to 20% of each 80ms interval.
- */
-#define RC_YIELD_DURATION	80	/* in ms */
-#define RC_YIELD_RATIO		20	/* in percent */
-static u32 *emit_render_compute_yield_klv(u32 *emit)
-{
-	*emit++ = PREP_GUC_KLV_TAG(SCHEDULING_POLICIES_RENDER_COMPUTE_YIELD);
-	*emit++ = RC_YIELD_DURATION;
-	*emit++ = RC_YIELD_RATIO;
-
-	return emit;
-}
-
-#define SCHEDULING_POLICY_MAX_DWORDS 16
-static int guc_init_global_schedule_policy(struct xe_guc *guc)
-{
-	u32 data[SCHEDULING_POLICY_MAX_DWORDS];
-	u32 *emit = data;
-	u32 count = 0;
-	int ret;
-
-	if (GUC_SUBMIT_VER(guc) < MAKE_GUC_VER(1, 1, 0))
-		return 0;
-
-	*emit++ = XE_GUC_ACTION_UPDATE_SCHEDULING_POLICIES_KLV;
-
-	if (CCS_MASK(guc_to_gt(guc)))
-		emit = emit_render_compute_yield_klv(emit);
-
-	count = emit - data;
-	if (count > 1) {
-		xe_assert(guc_to_xe(guc), count <= SCHEDULING_POLICY_MAX_DWORDS);
-
-		ret = xe_guc_ct_send_block(&guc->ct, data, count);
-		if (ret < 0) {
-			xe_gt_err(guc_to_gt(guc),
-				  "failed to enable GuC sheduling policies: %pe\n",
-				  ERR_PTR(ret));
-			return ret;
-		}
-	}
-
-	return 0;
-}
-
-int xe_guc_submit_enable(struct xe_guc *guc)
-{
-	int ret;
-
-	ret = guc_init_global_schedule_policy(guc);
-	if (ret)
-		return ret;
-
-	guc->submission_state.enabled = true;
-
-	return 0;
-}
-
-void xe_guc_submit_disable(struct xe_guc *guc)
-{
-	guc->submission_state.enabled = false;
 }
 
 static void __release_guc_id(struct xe_guc *guc, struct xe_exec_queue *q, u32 xa_count)
@@ -2154,15 +2088,11 @@ int xe_guc_exec_queue_memory_cat_error_handler(struct xe_guc *guc, u32 *msg,
 	struct xe_gt *gt = guc_to_gt(guc);
 	struct xe_exec_queue *q;
 	u32 guc_id;
-	u32 type = XE_GUC_CAT_ERR_TYPE_INVALID;
 
-	if (unlikely(!len || len > 2))
+	if (unlikely(len < 1))
 		return -EPROTO;
 
 	guc_id = msg[0];
-
-	if (len == 2)
-		type = msg[1];
 
 	if (guc_id == GUC_ID_UNKNOWN) {
 		/*
@@ -2177,19 +2107,8 @@ int xe_guc_exec_queue_memory_cat_error_handler(struct xe_guc *guc, u32 *msg,
 	if (unlikely(!q))
 		return -EPROTO;
 
-	/*
-	 * The type is HW-defined and changes based on platform, so we don't
-	 * decode it in the kernel and only check if it is valid.
-	 * See bspec 54047 and 72187 for details.
-	 */
-	if (type != XE_GUC_CAT_ERR_TYPE_INVALID)
-		xe_gt_dbg(gt,
-			  "Engine memory CAT error [%u]: class=%s, logical_mask: 0x%x, guc_id=%d",
-			  type, xe_hw_engine_class_to_str(q->class), q->logical_mask, guc_id);
-	else
-		xe_gt_dbg(gt,
-			  "Engine memory CAT error: class=%s, logical_mask: 0x%x, guc_id=%d",
-			  xe_hw_engine_class_to_str(q->class), q->logical_mask, guc_id);
+	xe_gt_dbg(gt, "Engine memory cat error: engine_class=%s, logical_mask: 0x%x, guc_id=%d",
+		  xe_hw_engine_class_to_str(q->class), q->logical_mask, guc_id);
 
 	trace_xe_exec_queue_memory_cat_error(q);
 
