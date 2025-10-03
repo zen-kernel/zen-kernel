@@ -123,6 +123,16 @@
 
 #include <kunit/visibility.h>
 
+#ifdef CONFIG_USER_NS
+# ifdef CONFIG_USER_NS_UNPRIVILEGED
+static int unprivileged_userns_clone = 1;
+# else
+static int unprivileged_userns_clone = 0;
+# endif
+#else
+#define unprivileged_userns_clone 1
+#endif
+
 /*
  * Minimum number of threads to boot the kernel
  */
@@ -1982,6 +1992,11 @@ __latent_entropy struct task_struct *copy_process(
 			return ERR_PTR(-EINVAL);
 	}
 
+	if ((clone_flags & CLONE_NEWUSER) && !unprivileged_userns_clone) {
+		if (!capable(CAP_SYS_ADMIN))
+			return ERR_PTR(-EPERM);
+	}
+
 	/*
 	 * Force any signals received before this point to be delivered
 	 * before the fork happens.  Collect up signals sent to multiple
@@ -3023,6 +3038,10 @@ static int check_unshare_flags(unsigned long unshare_flags)
 		if (!current_is_single_threaded())
 			return -EINVAL;
 	}
+	if ((unshare_flags & CLONE_NEWUSER) && !unprivileged_userns_clone) {
+		if (!capable(CAP_SYS_ADMIN))
+			return -EPERM;
+	}
 
 	return 0;
 }
@@ -3253,6 +3272,15 @@ static const struct ctl_table fork_sysctl_table[] = {
 		.mode		= 0644,
 		.proc_handler	= sysctl_max_threads,
 	},
+#ifdef CONFIG_USER_NS
+	{
+		.procname	= "unprivileged_userns_clone",
+		.data		= &unprivileged_userns_clone,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+#endif
 };
 
 static int __init init_fork_sysctl(void)
