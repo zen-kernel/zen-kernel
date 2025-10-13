@@ -3056,7 +3056,7 @@ int wake_up_state(struct task_struct *p, unsigned int state)
  * __sched_fork() is basic setup which is also used by sched_init() to
  * initialize the boot CPU's idle task.
  */
-static inline void __sched_fork(unsigned long clone_flags, struct task_struct *p)
+static inline void __sched_fork(u64 clone_flags, struct task_struct *p)
 {
 	p->on_rq			= 0;
 	p->on_cpu			= 0;
@@ -3083,7 +3083,7 @@ static inline void __sched_fork(unsigned long clone_flags, struct task_struct *p
 /*
  * fork()/clone()-time setup:
  */
-int sched_fork(unsigned long clone_flags, struct task_struct *p)
+int sched_fork(u64 clone_flags, struct task_struct *p)
 {
 	__sched_fork(clone_flags, p);
 	/*
