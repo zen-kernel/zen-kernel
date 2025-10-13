@@ -1361,7 +1361,7 @@ static inline void hrtick_start(struct rq *rq, u64 delay)
 	 */
 	delta = max_t(s64, delay, 10000LL);
 
-	rq->hrtick_time = ktime_add_ns(timer->base->get_time(), delta);
+	rq->hrtick_time = ktime_add_ns(hrtimer_cb_get_time(timer), delta);
 
 	if (rq == this_rq())
 		__hrtick_restart(rq);
