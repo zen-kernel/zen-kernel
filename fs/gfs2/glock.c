@@ -502,7 +502,7 @@ static bool do_promote(struct gfs2_glock *gl)
 			 */
 			if (list_is_first(&gh->gh_list, &gl->gl_holders))
 				return false;
-			do_error(gl, 0);
+			do_error(gl, 0); /* Fail queued try locks */
 			break;
 		}
 		set_bit(HIF_HOLDER, &gh->gh_iflags);
@@ -703,44 +703,25 @@ __acquires(&gl->gl_lockref.lock)
 	lck_flags &= (LM_FLAG_TRY | LM_FLAG_TRY_1CB | LM_FLAG_NOEXP);
 	GLOCK_BUG_ON(gl, gl->gl_state == target);
 	GLOCK_BUG_ON(gl, gl->gl_state == gl->gl_target);
-	if ((target == LM_ST_UNLOCKED || target == LM_ST_DEFERRED) &&
-	    glops->go_inval) {
-		/*
-		 * If another process is already doing the invalidate, let that
-		 * finish first.  The glock state machine will get back to this
-		 * holder again later.
-		 */
-		if (test_and_set_bit(GLF_INVALIDATE_IN_PROGRESS,
-				     &gl->gl_flags))
-			return;
-		do_error(gl, 0); /* Fail queued try locks */
-	}
-	gl->gl_req = target;
-	set_bit(GLF_BLOCKING, &gl->gl_flags);
-	if ((gl->gl_req == LM_ST_UNLOCKED) ||
-	    (gl->gl_state == LM_ST_EXCLUSIVE) ||
-	    (lck_flags & (LM_FLAG_TRY|LM_FLAG_TRY_1CB)))
-		clear_bit(GLF_BLOCKING, &gl->gl_flags);
-	if (!glops->go_inval && !glops->go_sync)
+	if (!glops->go_inval || !glops->go_sync)
 		goto skip_inval;
 
 	spin_unlock(&gl->gl_lockref.lock);
-	if (glops->go_sync) {
-		ret = glops->go_sync(gl);
-		/* If we had a problem syncing (due to io errors or whatever,
-		 * we should not invalidate the metadata or tell dlm to
-		 * release the glock to other nodes.
-		 */
-		if (ret) {
-			if (cmpxchg(&sdp->sd_log_error, 0, ret)) {
-				fs_err(sdp, "Error %d syncing glock \n", ret);
-				gfs2_dump_glock(NULL, gl, true);
-			}
-			spin_lock(&gl->gl_lockref.lock);
-			goto skip_inval;
+	ret = glops->go_sync(gl);
+	/* If we had a problem syncing (due to io errors or whatever,
+	 * we should not invalidate the metadata or tell dlm to
+	 * release the glock to other nodes.
+	 */
+	if (ret) {
+		if (cmpxchg(&sdp->sd_log_error, 0, ret)) {
+			fs_err(sdp, "Error %d syncing glock\n", ret);
+			gfs2_dump_glock(NULL, gl, true);
 		}
+		spin_lock(&gl->gl_lockref.lock);
+		goto skip_inval;
 	}
-	if (test_bit(GLF_INVALIDATE_IN_PROGRESS, &gl->gl_flags)) {
+
+	if (target == LM_ST_UNLOCKED || target == LM_ST_DEFERRED) {
 		/*
 		 * The call to go_sync should have cleared out the ail list.
 		 * If there are still items, we have a problem. We ought to
@@ -755,7 +736,6 @@ __acquires(&gl->gl_lockref.lock)
 			gfs2_dump_glock(NULL, gl, true);
 		}
 		glops->go_inval(gl, target == LM_ST_DEFERRED ? 0 : DIO_METADATA);
-		clear_bit(GLF_INVALIDATE_IN_PROGRESS, &gl->gl_flags);
 	}
 	spin_lock(&gl->gl_lockref.lock);
 
@@ -805,8 +785,6 @@ skip_inval:
 			clear_bit(GLF_DEMOTE_IN_PROGRESS, &gl->gl_flags);
 			gfs2_glock_queue_work(gl, GL_GLOCK_DFT_HOLD);
 			return;
-		} else {
-			clear_bit(GLF_INVALIDATE_IN_PROGRESS, &gl->gl_flags);
 		}
 	}
 
@@ -816,21 +794,22 @@ skip_inval:
 		ret = ls->ls_ops->lm_lock(gl, target, lck_flags);
 		spin_lock(&gl->gl_lockref.lock);
 
-		if (ret == -EINVAL && gl->gl_target == LM_ST_UNLOCKED &&
-		    target == LM_ST_UNLOCKED &&
-		    test_bit(DFL_UNMOUNT, &ls->ls_recover_flags)) {
-			/*
-			 * The lockspace has been released and the lock has
-			 * been unlocked implicitly.
-			 */
-		} else if (ret) {
-			fs_err(sdp, "lm_lock ret %d\n", ret);
-			target = gl->gl_state | LM_OUT_ERROR;
-		} else {
+		if (!ret) {
 			/* The operation will be completed asynchronously. */
 			return;
 		}
 		clear_bit(GLF_PENDING_REPLY, &gl->gl_flags);
+
+		if (ret == -ENODEV && gl->gl_target == LM_ST_UNLOCKED &&
+		    target == LM_ST_UNLOCKED) {
+			/*
+			 * The lockspace has been released and the lock has
+			 * been unlocked implicitly.
+			 */
+		} else {
+			fs_err(sdp, "lm_lock ret %d\n", ret);
+			target = gl->gl_state | LM_OUT_ERROR;
+		}
 	}
 
 	/* Complete the operation now. */
@@ -1462,6 +1441,24 @@ void gfs2_print_dbg(struct seq_file *seq, const char *fmt, ...)
 	va_end(args);
 }
 
+static bool gfs2_should_queue_trylock(struct gfs2_glock *gl,
+				      struct gfs2_holder *gh)
+{
+	struct gfs2_holder *current_gh, *gh2;
+
+	current_gh = find_first_holder(gl);
+	if (current_gh && !may_grant(gl, current_gh, gh))
+		return false;
+
+	list_for_each_entry(gh2, &gl->gl_holders, gh_list) {
+		if (test_bit(HIF_HOLDER, &gh2->gh_iflags))
+			continue;
+		if (!(gh2->gh_flags & (LM_FLAG_TRY | LM_FLAG_TRY_1CB)))
+			return false;
+	}
+	return true;
+}
+
 static inline bool pid_is_meaningful(const struct gfs2_holder *gh)
 {
         if (!(gh->gh_flags & GL_NOPID))
@@ -1480,27 +1477,20 @@ static inline bool pid_is_meaningful(const struct gfs2_holder *gh)
  */
 
 static inline void add_to_queue(struct gfs2_holder *gh)
-__releases(&gl->gl_lockref.lock)
-__acquires(&gl->gl_lockref.lock)
 {
 	struct gfs2_glock *gl = gh->gh_gl;
 	struct gfs2_sbd *sdp = gl->gl_name.ln_sbd;
 	struct gfs2_holder *gh2;
-	int try_futile = 0;
 
 	GLOCK_BUG_ON(gl, gh->gh_owner_pid == NULL);
 	if (test_and_set_bit(HIF_WAIT, &gh->gh_iflags))
 		GLOCK_BUG_ON(gl, true);
 
-	if (gh->gh_flags & (LM_FLAG_TRY | LM_FLAG_TRY_1CB)) {
-		if (test_bit(GLF_LOCK, &gl->gl_flags)) {
-			struct gfs2_holder *current_gh;
-
-			current_gh = find_first_holder(gl);
-			try_futile = !may_grant(gl, current_gh, gh);
-		}
-		if (test_bit(GLF_INVALIDATE_IN_PROGRESS, &gl->gl_flags))
-			goto fail;
+	if ((gh->gh_flags & (LM_FLAG_TRY | LM_FLAG_TRY_1CB)) &&
+	    !gfs2_should_queue_trylock(gl, gh)) {
+		gh->gh_error = GLR_TRYFAILED;
+		gfs2_holder_wake(gh);
+		return;
 	}
 
 	list_for_each_entry(gh2, &gl->gl_holders, gh_list) {
@@ -1511,15 +1501,6 @@ __acquires(&gl->gl_lockref.lock)
 		if (!pid_is_meaningful(gh2))
 			continue;
 		goto trap_recursive;
-	}
-	list_for_each_entry(gh2, &gl->gl_holders, gh_list) {
-		if (try_futile &&
-		    !(gh2->gh_flags & (LM_FLAG_TRY | LM_FLAG_TRY_1CB))) {
-fail:
-			gh->gh_error = GLR_TRYFAILED;
-			gfs2_holder_wake(gh);
-			return;
-		}
 	}
 	trace_gfs2_glock_queue(gh, 1);
 	gfs2_glstats_inc(gl, GFS2_LKS_QCOUNT);
@@ -2321,8 +2302,6 @@ static const char *gflags2str(char *buf, const struct gfs2_glock *gl)
 		*p++ = 'y';
 	if (test_bit(GLF_LFLUSH, gflags))
 		*p++ = 'f';
-	if (test_bit(GLF_INVALIDATE_IN_PROGRESS, gflags))
-		*p++ = 'i';
 	if (test_bit(GLF_PENDING_REPLY, gflags))
 		*p++ = 'R';
 	if (test_bit(GLF_HAVE_REPLY, gflags))
