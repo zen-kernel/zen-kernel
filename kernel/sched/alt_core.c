@@ -11,6 +11,8 @@
  *		scheduler by Alfred Chen.
  *  2019-02-20	BMQ(BitMap Queue) kernel scheduler by Alfred Chen.
  */
+#define INSTANTIATE_EXPORTED_MIGRATE_DISABLE
+#include <linux/sched.h>
 #include <linux/sched/clock.h>
 #include <linux/sched/cputime.h>
 #include <linux/sched/debug.h>
@@ -1505,92 +1507,22 @@ void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 	__set_task_cpu(p, new_cpu);
 }
 
-static void
-__do_set_cpus_ptr(struct task_struct *p, const struct cpumask *new_mask)
+void ___migrate_enable(void)
 {
-	/*
-	 * This here violates the locking rules for affinity, since we're only
-	 * supposed to change these variables while holding both rq->lock and
-	 * p->pi_lock.
-	 *
-	 * HOWEVER, it magically works, because ttwu() is the only code that
-	 * accesses these variables under p->pi_lock and only does so after
-	 * smp_cond_load_acquire(&p->on_cpu, !VAL), and we're in __schedule()
-	 * before finish_task().
-	 *
-	 * XXX do further audits, this smells like something putrid.
-	 */
-	WARN_ON_ONCE(!p->on_cpu);
-	p->cpus_ptr = new_mask;
+	struct task_struct *p = current;
+	__do_set_cpus_ptr(p, &p->cpus_mask);
 }
+EXPORT_SYMBOL_GPL(___migrate_enable);
 
 void migrate_disable(void)
 {
-	struct task_struct *p = current;
-	int cpu;
-
-	if (p->migration_disabled) {
-#ifdef CONFIG_DEBUG_PREEMPT
-		/*
-		 * Warn about overflow half-way through the range.
-		 */
-		WARN_ON_ONCE((s16)p->migration_disabled < 0);
-#endif
-		p->migration_disabled++;
-		return;
-	}
-
-	guard(preempt)();
-	cpu = smp_processor_id();
-	if (cpumask_test_cpu(cpu, &p->cpus_mask)) {
-		cpu_rq(cpu)->nr_pinned++;
-		p->migration_disabled = 1;
-		/*
-		 * Violates locking rules! see comment in __do_set_cpus_ptr().
-		 */
-		if (p->cpus_ptr == &p->cpus_mask)
-			__do_set_cpus_ptr(p, cpumask_of(cpu));
-	}
+	__migrate_disable();
 }
 EXPORT_SYMBOL_GPL(migrate_disable);
 
 void migrate_enable(void)
 {
-	struct task_struct *p = current;
-
-#ifdef CONFIG_DEBUG_PREEMPT
-	/*
-	 * Check both overflow from migrate_disable() and superfluous
-	 * migrate_enable().
-	 */
-	if (WARN_ON_ONCE((s16)p->migration_disabled <= 0))
-		return;
-#endif
-
-	if (p->migration_disabled > 1) {
-		p->migration_disabled--;
-		return;
-	}
-
-	/*
-	 * Ensure stop_task runs either before or after this, and that
-	 * __set_cpus_allowed_ptr(SCA_MIGRATE_ENABLE) doesn't schedule().
-	 */
-	guard(preempt)();
-	/*
-	 * Assumption: current should be running on allowed cpu
-	 */
-	WARN_ON_ONCE(!cpumask_test_cpu(smp_processor_id(), &p->cpus_mask));
-	if (p->cpus_ptr != &p->cpus_mask)
-		__do_set_cpus_ptr(p, &p->cpus_mask);
-	/*
-	 * Mustn't clear migration_disabled() until cpus_ptr points back at the
-	 * regular cpus_mask, otherwise things that race (eg.
-	 * select_fallback_rq) get confused.
-	 */
-	barrier();
-	p->migration_disabled = 0;
-	this_rq()->nr_pinned--;
+	__migrate_enable();
 }
 EXPORT_SYMBOL_GPL(migrate_enable);
 

@@ -2377,6 +2377,25 @@ DECLARE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 #endif
 #define this_rq_pinned() (*(unsigned int *)((void *)this_rq_raw() + RQ_nr_pinned))
 
+static inline void
+__do_set_cpus_ptr(struct task_struct *p, const struct cpumask *new_mask)
+{
+	/*
+	 * This here violates the locking rules for affinity, since we're only
+	 * supposed to change these variables while holding both rq->lock and
+	 * p->pi_lock.
+	 *
+	 * HOWEVER, it magically works, because ttwu() is the only code that
+	 * accesses these variables under p->pi_lock and only does so after
+	 * smp_cond_load_acquire(&p->on_cpu, !VAL), and we're in __schedule()
+	 * before finish_task().
+	 *
+	 * XXX do further audits, this smells like something putrid.
+	 */
+	WARN_ON_ONCE(!p->on_cpu);
+	p->cpus_ptr = new_mask;
+}
+
 static inline void __migrate_enable(void)
 {
 	struct task_struct *p = current;
@@ -2400,8 +2419,17 @@ static inline void __migrate_enable(void)
 	 * __set_cpus_allowed_ptr(SCA_MIGRATE_ENABLE) doesn't schedule().
 	 */
 	guard(preempt)();
+#ifdef CONFIG_SCHED_ALT
+	/*
+	 * Assumption: current should be running on allowed cpu
+	 */
+	WARN_ON_ONCE(!cpumask_test_cpu(smp_processor_id(), &p->cpus_mask));
+	if (p->cpus_ptr != &p->cpus_mask)
+		__do_set_cpus_ptr(p, &p->cpus_mask);
+#else
 	if (unlikely(p->cpus_ptr != &p->cpus_mask))
 		___migrate_enable();
+#endif
 	/*
 	 * Mustn't clear migration_disabled() until cpus_ptr points back at the
 	 * regular cpus_mask, otherwise things that race (eg.
@@ -2428,8 +2456,20 @@ static inline void __migrate_disable(void)
 	}
 
 	guard(preempt)();
+#ifdef CONFIG_SCHED_ALT
+	int cpu = smp_processor_id();
+	if (cpumask_test_cpu(cpu, &p->cpus_mask)) {
+#endif
 	this_rq_pinned()++;
 	p->migration_disabled = 1;
+#ifdef CONFIG_SCHED_ALT
+		/*
+		 * Violates locking rules! see comment in __do_set_cpus_ptr().
+		 */
+		if (p->cpus_ptr == &p->cpus_mask)
+				__do_set_cpus_ptr(p, cpumask_of(cpu));
+	}
+#endif
 }
 #else /* !COMPILE_OFFSETS */
 static inline void __migrate_disable(void) { }
