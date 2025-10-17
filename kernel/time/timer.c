@@ -2453,7 +2453,11 @@ static void run_local_timers(void)
 		 */
 		if (time_after_eq(jiffies, READ_ONCE(base->next_expiry)) ||
 		    (i == BASE_DEF && tmigr_requires_handle_remote())) {
+#ifdef CONFIG_SCHED_BMQ
+			__raise_softirq_irqoff(TIMER_SOFTIRQ);
+#else
 			raise_timer_softirq(TIMER_SOFTIRQ);
+#endif
 			return;
 		}
 	}
