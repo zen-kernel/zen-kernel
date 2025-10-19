@@ -238,6 +238,7 @@ typedef int (dio_iodone_t)(struct kiocb *iocb, loff_t offset,
 #define ATTR_ATIME_SET	(1 << 7)
 #define ATTR_MTIME_SET	(1 << 8)
 #define ATTR_FORCE	(1 << 9) /* Not a change, but a change it */
+#define ATTR_CTIME_SET	(1 << 10)
 #define ATTR_KILL_SUID	(1 << 11)
 #define ATTR_KILL_SGID	(1 << 12)
 #define ATTR_FILE	(1 << 13)
@@ -4023,5 +4024,19 @@ static inline bool vfs_empty_path(int dfd, const char __user *path)
 }
 
 int generic_atomic_write_valid(struct kiocb *iocb, struct iov_iter *iter);
+
+static inline bool extensible_ioctl_valid(unsigned int cmd_a,
+					  unsigned int cmd_b, size_t min_size)
+{
+	if (_IOC_DIR(cmd_a) != _IOC_DIR(cmd_b))
+		return false;
+	if (_IOC_TYPE(cmd_a) != _IOC_TYPE(cmd_b))
+		return false;
+	if (_IOC_NR(cmd_a) != _IOC_NR(cmd_b))
+		return false;
+	if (_IOC_SIZE(cmd_a) < min_size)
+		return false;
+	return true;
+}
 
 #endif /* _LINUX_FS_H */

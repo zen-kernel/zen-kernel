@@ -695,12 +695,16 @@ static void power_down(void)
 
 #ifdef CONFIG_SUSPEND
 	if (hibernation_mode == HIBERNATION_SUSPEND) {
+		pm_restore_gfp_mask();
 		error = suspend_devices_and_enter(mem_sleep_current);
 		if (error) {
 			hibernation_mode = hibernation_ops ?
 						HIBERNATION_PLATFORM :
 						HIBERNATION_SHUTDOWN;
 		} else {
+			/* Match pm_restore_gfp_mask() call in hibernate() */
+			pm_restrict_gfp_mask();
+
 			/* Restore swap signature. */
 			error = swsusp_unmark();
 			if (error)
@@ -718,6 +722,8 @@ static void power_down(void)
 	case HIBERNATION_PLATFORM:
 		error = hibernation_platform_enter();
 		if (error == -EAGAIN || error == -EBUSY) {
+			/* Match pm_restore_gfp_mask() in hibernate(). */
+			pm_restrict_gfp_mask();
 			swsusp_unmark();
 			events_check_enabled = false;
 			pr_info("Wakeup event detected during hibernation, rolling back.\n");

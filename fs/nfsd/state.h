@@ -224,6 +224,11 @@ struct nfs4_delegation {
 
 	/* for CB_GETATTR */
 	struct nfs4_cb_fattr    dl_cb_fattr;
+
+	/* For delegated timestamps */
+	struct timespec64	dl_atime;
+	struct timespec64	dl_mtime;
+	struct timespec64	dl_ctime;
 };
 
 static inline bool deleg_is_read(u32 dl_type)
@@ -241,6 +246,9 @@ static inline bool deleg_attrs_deleg(u32 dl_type)
 	return dl_type == OPEN_DELEGATE_READ_ATTRS_DELEG ||
 	       dl_type == OPEN_DELEGATE_WRITE_ATTRS_DELEG;
 }
+
+bool nfsd4_vet_deleg_time(struct timespec64 *cb, const struct timespec64 *orig,
+			  const struct timespec64 *now);
 
 #define cb_to_delegation(cb) \
 	container_of(cb, struct nfs4_delegation, dl_recall)
