@@ -3,14 +3,14 @@
 
 static cpumask_t sched_pcore_mask ____cacheline_aligned_in_smp;
 
-static int __init sched_pcore_mask_setup(char *str)
+static int __init pcore_cpus_setup(char *str)
 {
 	if (cpulist_parse(str, &sched_pcore_mask))
 		pr_warn("sched/alt: pcore_cpus= incorrect CPU range\n");
 
-	return 0;
+	return 1;
 }
-__setup("pcore_cpus=", sched_pcore_mask_setup);
+__setup("pcore_cpus=", pcore_cpus_setup);
 
 DEFINE_PER_CPU_READ_MOSTLY(enum cpu_topo_type, sched_cpu_topo);
 DEFINE_PER_CPU_READ_MOSTLY(enum cpu_topo_balance_type, sched_cpu_topo_balance);
