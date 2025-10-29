@@ -63,7 +63,7 @@ struct smbd_connection {
 	int protocol;
 	atomic_t send_credits;
 	atomic_t receive_credits;
-	int receive_credit_target;
+	u16 receive_credit_target;
 
 	/* Memory registrations */
 	/* Maximum number of RDMA read/write outstanding on this connection */
