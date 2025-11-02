@@ -62,6 +62,7 @@
 #endif
 
 #ifdef CONFIG_SCHED_CLASS_EXT
+# include "ext_internal.h"
 # include "ext.c"
 # include "ext_idle.c"
 #endif
