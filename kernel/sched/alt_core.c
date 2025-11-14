@@ -128,12 +128,9 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 # define finish_arch_post_lock_switch()	do { } while (0)
 #endif
 
-static cpumask_t sched_preempt_mask[SCHED_QUEUE_BITS + 2] ____cacheline_aligned_in_smp;
+static cpumask_t sched_preempt_mask[SCHED_QUEUE_BITS] ____cacheline_aligned_in_smp;
 
-cpumask_t *const sched_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS - 1];
-cpumask_t *const sched_sg_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS];
-cpumask_t *const sched_pcore_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS];
-cpumask_t *const sched_ecore_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS + 1];
+cpumask_t sched_idle_mask[3] ____cacheline_aligned_in_smp;
 
 /* task function */
 static inline const struct cpumask *task_user_cpus(struct task_struct *p)
@@ -165,14 +162,6 @@ static inline void sched_queue_init_idle(struct sched_queue *q,
 	idle->on_rq = TASK_ON_RQ_QUEUED;
 }
 
-#define CLEAR_CACHED_PREEMPT_MASK(pr, low, high, cpu)		\
-	if (low < pr && pr <= high)				\
-		cpumask_clear_cpu(cpu, sched_preempt_mask + pr);
-
-#define SET_CACHED_PREEMPT_MASK(pr, low, high, cpu)		\
-	if (low < pr && pr <= high)				\
-		cpumask_set_cpu(cpu, sched_preempt_mask + pr);
-
 static atomic_t sched_prio_record = ATOMIC_INIT(0);
 
 /* water mark related functions */
@@ -180,7 +169,6 @@ static inline void update_sched_preempt_mask(struct rq *rq)
 {
 	int prio = find_first_bit(rq->queue.bitmap, SCHED_QUEUE_BITS);
 	int last_prio = rq->prio;
-	int cpu, pr;
 
 	if (prio == last_prio)
 		return;
@@ -189,24 +177,26 @@ static inline void update_sched_preempt_mask(struct rq *rq)
 #ifdef CONFIG_SCHED_PDS
 	rq->prio_idx = sched_prio2idx(rq->prio, rq);
 #endif
-	cpu = cpu_of(rq);
-	pr = atomic_read(&sched_prio_record);
 
-	if (prio < last_prio) {
-		if (IDLE_TASK_SCHED_PRIO == last_prio) {
+	int cpu = cpu_of(rq);
+	bool set = prio > last_prio;
+	int low = set ? last_prio : prio;
+	int high = set ? prio : last_prio;
+
+	if (IDLE_TASK_SCHED_PRIO == high) {
+		high -= 2;
+		if (set)
+			sched_set_idle_mask(cpu);
+		else
 			sched_clear_idle_mask(cpu);
-			last_prio -= 2;
-		}
-		CLEAR_CACHED_PREEMPT_MASK(pr, prio, last_prio, cpu);
-
-		return;
 	}
-	/* last_prio < prio */
-	if (IDLE_TASK_SCHED_PRIO == prio) {
-		sched_set_idle_mask(cpu);
-		prio -= 2;
+	int pr = atomic_read(&sched_prio_record);
+	if (low < pr && pr <= high) {
+		if (set)
+			cpumask_set_cpu(cpu, sched_preempt_mask + pr);
+		else
+			cpumask_clear_cpu(cpu, sched_preempt_mask + pr);
 	}
-	SET_CACHED_PREEMPT_MASK(pr, last_prio, prio, cpu);
 }
 
 /* need a wrapper since we may need to trace from modules */
@@ -2025,7 +2015,8 @@ static inline int select_task_rq(struct task_struct *p)
 	if (unlikely(!cpumask_and(&allow_mask, p->cpus_ptr, cpu_active_mask)))
 		return select_fallback_rq(task_cpu(p), p);
 
-	if (static_call(sched_idle_select_func)(&mask, &allow_mask, sched_idle_mask)	||
+	if ((cpumask_intersects(&mask, sched_idle_mask) &&
+	     static_call(sched_idle_select_func)(&mask, &allow_mask, sched_idle_mask)) ||
 	    preempt_mask_check(&mask, &allow_mask, task_sched_prio(p)))
 		return best_mask_cpu(task_cpu(p), &mask);
 
