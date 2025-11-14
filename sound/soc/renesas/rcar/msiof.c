@@ -24,12 +24,25 @@
  * Clock/Frame Consumer Mode.
  */
 
+/*
+ * [NOTE-RESET]
+ *
+ * MSIOF has TXRST/RXRST to reset FIFO, but it shouldn't be used during SYNC signal was asserted,
+ * because it will be cause of HW issue.
+ *
+ * When MSIOF is used as Sound driver, this driver is assuming it is used as clock consumer mode
+ * (= Codec is clock provider). This means, it can't control SYNC signal by itself.
+ *
+ * We need to use SW reset (= reset_control_xxx()) instead of TXRST/RXRST.
+ */
+
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_dma.h>
 #include <linux/of_graph.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
+#include <linux/reset.h>
 #include <linux/spi/sh_msiof.h>
 #include <sound/dmaengine_pcm.h>
 #include <sound/soc.h>
@@ -61,9 +74,12 @@
 struct msiof_priv {
 	struct device *dev;
 	struct snd_pcm_substream *substream[SNDRV_PCM_STREAM_LAST + 1];
+	struct reset_control *reset;
 	spinlock_t lock;
 	void __iomem *base;
 	resource_size_t phy_addr;
+
+	int count;
 
 	/* for error */
 	int err_syc[SNDRV_PCM_STREAM_LAST + 1];
@@ -126,6 +142,16 @@ static int msiof_hw_start(struct snd_soc_component *component,
 	 *	RX: Fig 109.15
 	 */
 
+	/*
+	 * Use reset_control_xx() instead of TXRST/RXRST.
+	 * see
+	 *	[NOTE-RESET]
+	 */
+	if (!priv->count)
+		reset_control_deassert(priv->reset);
+
+	priv->count++;
+
 	/* reset errors */
 	priv->err_syc[substream->stream] =
 	priv->err_ovf[substream->stream] =
@@ -144,7 +170,6 @@ static int msiof_hw_start(struct snd_soc_component *component,
 		val = FIELD_PREP(SIMDR2_BITLEN1, width - 1);
 		msiof_write(priv, SITMDR2, val | FIELD_PREP(SIMDR2_GRP, 1));
 		msiof_write(priv, SITMDR3, val);
-
 	}
 	/* SIRMDRx */
 	else {
@@ -159,6 +184,12 @@ static int msiof_hw_start(struct snd_soc_component *component,
 		msiof_write(priv, SIRMDR2, val | FIELD_PREP(SIMDR2_GRP, 1));
 		msiof_write(priv, SIRMDR3, val);
 	}
+
+	/* SIFCTR */
+	if (is_play)
+		msiof_update(priv, SIFCTR, SIFCTR_TFWM, FIELD_PREP(SIFCTR_TFWM, SIFCTR_TFWM_1));
+	else
+		msiof_update(priv, SIFCTR, SIFCTR_RFWM, FIELD_PREP(SIFCTR_RFWM, SIFCTR_RFWM_1));
 
 	/* SIIER */
 	if (is_play)
@@ -197,15 +228,15 @@ static int msiof_hw_stop(struct snd_soc_component *component,
 		val = SIIER_RDREQE | SIIER_RDMAE | SISTR_ERR_RX;
 	msiof_update(priv, SIIER, val, 0);
 
-	/* Stop DMAC */
-	snd_dmaengine_pcm_trigger(substream, cmd);
-
 	/* SICTR */
 	if (is_play)
 		val = SICTR_TXE;
 	else
 		val = SICTR_RXE;
 	msiof_update_and_wait(priv, SICTR, val, 0, 0);
+
+	/* Stop DMAC */
+	snd_dmaengine_pcm_trigger(substream, cmd);
 
 	/* indicate error status if exist */
 	if (priv->err_syc[substream->stream] ||
@@ -216,6 +247,11 @@ static int msiof_hw_stop(struct snd_soc_component *component,
 			 priv->err_syc[substream->stream],
 			 priv->err_ovf[substream->stream],
 			 priv->err_udf[substream->stream]);
+
+	priv->count--;
+
+	if (!priv->count)
+		reset_control_assert(priv->reset);
 
 	return 0;
 }
@@ -292,6 +328,9 @@ static struct snd_soc_dai_driver msiof_dai_driver = {
 		.channels_max	= 2,
 	},
 	.ops = &msiof_dai_ops,
+	.symmetric_rate		= 1,
+	.symmetric_channels	= 1,
+	.symmetric_sample_bits	= 1,
 };
 
 static struct snd_pcm_hardware msiof_pcm_hardware = {
@@ -490,12 +529,19 @@ static int msiof_probe(struct platform_device *pdev)
 	if (IS_ERR(priv->base))
 		return PTR_ERR(priv->base);
 
+	priv->reset = devm_reset_control_get_exclusive(dev, NULL);
+	if (IS_ERR(priv->reset))
+		return PTR_ERR(priv->reset);
+
+	reset_control_assert(priv->reset);
+
 	ret = devm_request_irq(dev, irq, msiof_interrupt, 0, dev_name(dev), priv);
 	if (ret)
 		return ret;
 
 	priv->dev	= dev;
 	priv->phy_addr	= res->start;
+	priv->count	= 0;
 
 	spin_lock_init(&priv->lock);
 	platform_set_drvdata(pdev, priv);

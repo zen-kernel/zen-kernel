@@ -1968,10 +1968,11 @@ struct bnxt_ctx_mem_type {
 #define BNXT_CTX_CA1	FUNC_BACKING_STORE_QCAPS_V2_REQ_TYPE_CA1_TRACE
 #define BNXT_CTX_CA2	FUNC_BACKING_STORE_QCAPS_V2_REQ_TYPE_CA2_TRACE
 #define BNXT_CTX_RIGP1	FUNC_BACKING_STORE_QCAPS_V2_REQ_TYPE_RIGP1_TRACE
+#define BNXT_CTX_KONG	FUNC_BACKING_STORE_QCAPS_V2_REQ_TYPE_AFM_KONG_HWRM_TRACE
 
 #define BNXT_CTX_MAX	(BNXT_CTX_TIM + 1)
 #define BNXT_CTX_L2_MAX	(BNXT_CTX_FTQM + 1)
-#define BNXT_CTX_V2_MAX	(BNXT_CTX_RIGP1 + 1)
+#define BNXT_CTX_V2_MAX	(BNXT_CTX_KONG + 1)
 #define BNXT_CTX_INV	((u16)-1)
 
 struct bnxt_ctx_mem_info {
@@ -2130,6 +2131,7 @@ enum board_idx {
 	NETXTREME_E_P5_VF,
 	NETXTREME_E_P5_VF_HV,
 	NETXTREME_E_P7_VF,
+	NETXTREME_E_P7_VF_HV,
 };
 
 #define BNXT_TRACE_BUF_MAGIC_BYTE ((u8)0xbc)
@@ -2146,7 +2148,7 @@ struct bnxt_bs_trace_info {
 static inline void bnxt_bs_trace_check_wrap(struct bnxt_bs_trace_info *bs_trace,
 					    u32 offset)
 {
-	if (!bs_trace->wrapped &&
+	if (!bs_trace->wrapped && bs_trace->magic_byte &&
 	    *bs_trace->magic_byte != BNXT_TRACE_BUF_MAGIC_BYTE)
 		bs_trace->wrapped = 1;
 	bs_trace->last_offset = offset;
@@ -2928,6 +2930,7 @@ void bnxt_report_link(struct bnxt *bp);
 int bnxt_update_link(struct bnxt *bp, bool chng_link_state);
 int bnxt_hwrm_set_pause(struct bnxt *);
 int bnxt_hwrm_set_link_setting(struct bnxt *, bool, bool);
+void bnxt_clear_reservations(struct bnxt *bp, bool fw_reset);
 int bnxt_cancel_reservations(struct bnxt *bp, bool fw_reset);
 int bnxt_hwrm_alloc_wol_fltr(struct bnxt *bp);
 int bnxt_hwrm_free_wol_fltr(struct bnxt *bp);

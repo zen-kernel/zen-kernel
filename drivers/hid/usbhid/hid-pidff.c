@@ -205,6 +205,14 @@ struct pidff_device {
 	u8 effect_count;
 };
 
+static int pidff_is_effect_conditional(struct ff_effect *effect)
+{
+	return effect->type == FF_SPRING  ||
+	       effect->type == FF_DAMPER  ||
+	       effect->type == FF_INERTIA ||
+	       effect->type == FF_FRICTION;
+}
+
 /*
  * Clamp value for a given field
  */
@@ -292,6 +300,20 @@ static void pidff_set_duration(struct pidff_usage *usage, u16 duration)
 	}
 
 	pidff_set_time(usage, duration);
+}
+
+static void pidff_set_effect_direction(struct pidff_device *pidff,
+				       struct ff_effect *effect)
+{
+	u16 direction = effect->direction;
+
+	/* Use fixed direction if needed */
+	if (pidff->quirks & HID_PIDFF_QUIRK_FIX_CONDITIONAL_DIRECTION &&
+	    pidff_is_effect_conditional(effect))
+		direction = PIDFF_FIXED_WHEEL_DIRECTION;
+
+	pidff->effect_direction->value[0] =
+		pidff_rescale(direction, U16_MAX, pidff->effect_direction);
 }
 
 /*
@@ -395,11 +417,7 @@ static void pidff_set_effect_report(struct pidff_device *pidff,
 		pidff->set_effect[PID_GAIN].field->logical_maximum;
 	pidff->set_effect[PID_DIRECTION_ENABLE].value[0] = 1;
 
-	/* Use fixed direction if needed */
-	pidff->effect_direction->value[0] = pidff_rescale(
-		pidff->quirks & HID_PIDFF_QUIRK_FIX_WHEEL_DIRECTION ?
-		PIDFF_FIXED_WHEEL_DIRECTION : effect->direction,
-		U16_MAX, pidff->effect_direction);
+	pidff_set_effect_direction(pidff, effect);
 
 	/* Omit setting delay field if it's missing */
 	if (!(pidff->quirks & HID_PIDFF_QUIRK_MISSING_DELAY))
@@ -1133,8 +1151,16 @@ static int pidff_find_special_fields(struct pidff_device *pidff)
 					 PID_DIRECTION, 0);
 	pidff->device_control =
 		pidff_find_special_field(pidff->reports[PID_DEVICE_CONTROL],
-			PID_DEVICE_CONTROL_ARRAY,
-			!(pidff->quirks & HID_PIDFF_QUIRK_PERMISSIVE_CONTROL));
+			PID_DEVICE_CONTROL_ARRAY, 1);
+
+	/* Detect and set permissive control quirk */
+	if (!pidff->device_control) {
+		pr_debug("Setting PERMISSIVE_CONTROL quirk\n");
+		pidff->quirks |= HID_PIDFF_QUIRK_PERMISSIVE_CONTROL;
+		pidff->device_control = pidff_find_special_field(
+			pidff->reports[PID_DEVICE_CONTROL],
+			PID_DEVICE_CONTROL_ARRAY, 0);
+	}
 
 	pidff->block_load_status =
 		pidff_find_special_field(pidff->reports[PID_BLOCK_LOAD],
@@ -1474,7 +1500,7 @@ int hid_pidff_init_with_quirks(struct hid_device *hid, u32 initial_quirks)
 	ff->playback = pidff_playback;
 
 	hid_info(dev, "Force feedback for USB HID PID devices by Anssi Hannula <anssi.hannula@gmail.com>\n");
-	hid_dbg(dev, "Active quirks mask: 0x%x\n", pidff->quirks);
+	hid_dbg(dev, "Active quirks mask: 0x%08x\n", pidff->quirks);
 
 	hid_device_io_stop(hid);
 
