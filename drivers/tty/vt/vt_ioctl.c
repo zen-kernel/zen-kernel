@@ -924,8 +924,10 @@ int vt_ioctl(struct tty_struct *tty,
 			if (vc) {
 				/* FIXME: review v tty lock */
 				ret = __vc_resize(vc_cons[i].d, cc, ll, true);
-				if (ret)
+				if (ret) {
+					console_unlock();
 					return ret;
+				}
 			}
 		}
 		console_unlock();
