@@ -583,10 +583,9 @@ static inline void tcp_ecn_send_syn(struct sock *sk, struct sk_buff *skb)
 	use_ecn = tcp_ecn == TCP_ECN_IN_ECN_OUT_ECN ||
 		  tcp_ecn == TCP_ECN_IN_ACCECN_OUT_ECN ||
 		  tcp_ca_needs_ecn(sk) || bpf_needs_ecn || use_accecn;
+	const struct dst_entry *dst = __sk_dst_get(sk);
 
 	if (!use_ecn) {
-		const struct dst_entry *dst = __sk_dst_get(sk);
-
 		if (dst && dst_feature(dst, RTAX_FEATURE_ECN))
 			use_ecn = true;
 	}
@@ -604,6 +603,9 @@ static inline void tcp_ecn_send_syn(struct sock *sk, struct sk_buff *skb)
 			tp->syn_ect_snt = inet_sk(sk)->tos & INET_ECN_MASK;
 		} else {
 			tcp_ecn_mode_set(tp, TCP_ECN_MODE_RFC3168);
+
+			if (dst)
+				tcp_set_ecn_low_from_dst(sk, dst);
 		}
 	}
 }
