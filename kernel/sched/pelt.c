@@ -267,6 +267,7 @@ ___update_load_avg(struct sched_avg *sa, unsigned long load)
 	WRITE_ONCE(sa->util_avg, sa->util_sum / divider);
 }
 
+#ifndef CONFIG_SCHED_ALT
 /*
  * sched_entity:
  *
@@ -384,8 +385,9 @@ int update_dl_rq_load_avg(u64 now, struct rq *rq, int running)
 
 	return 0;
 }
+#endif
 
-#ifdef CONFIG_SCHED_HW_PRESSURE
+#if defined(CONFIG_SCHED_HW_PRESSURE) && !defined(CONFIG_SCHED_ALT)
 /*
  * hardware:
  *
@@ -469,6 +471,7 @@ int update_irq_load_avg(struct rq *rq, u64 running)
 }
 #endif /* CONFIG_HAVE_SCHED_AVG_IRQ */
 
+#ifndef CONFIG_SCHED_ALT
 /*
  * Load avg and utiliztion metrics need to be updated periodically and before
  * consumption. This function updates the metrics for all subsystems except for
@@ -488,3 +491,4 @@ bool update_other_load_avgs(struct rq *rq)
 		update_hw_load_avg(rq_clock_task(rq), rq, hw_pressure) |
 		update_irq_load_avg(rq, 0);
 }
+#endif /* !CONFIG_SCHED_ALT */

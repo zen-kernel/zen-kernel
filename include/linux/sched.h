@@ -846,7 +846,9 @@ struct task_struct {
 #endif
 
 	int				on_cpu;
+
 	struct __call_single_node	wake_entry;
+#ifndef CONFIG_SCHED_ALT
 	unsigned int			wakee_flips;
 	unsigned long			wakee_flip_decay_ts;
 	struct task_struct		*last_wakee;
@@ -860,6 +862,7 @@ struct task_struct {
 	 */
 	int				recent_used_cpu;
 	int				wake_cpu;
+#endif /* !CONFIG_SCHED_ALT */
 	int				on_rq;
 
 	int				prio;
@@ -867,6 +870,19 @@ struct task_struct {
 	int				normal_prio;
 	unsigned int			rt_priority;
 
+#ifdef CONFIG_SCHED_ALT
+	u64				last_ran;
+	s64				time_slice;
+	struct list_head		sq_node;
+#ifdef CONFIG_SCHED_BMQ
+	int				boost_prio;
+#endif /* CONFIG_SCHED_BMQ */
+#ifdef CONFIG_SCHED_PDS
+	u64				deadline;
+#endif /* CONFIG_SCHED_PDS */
+	/* sched_clock time spent running */
+	u64				sched_time;
+#else /* !CONFIG_SCHED_ALT */
 	struct sched_entity		se;
 	struct sched_rt_entity		rt;
 	struct sched_dl_entity		dl;
@@ -881,6 +897,7 @@ struct task_struct {
 	unsigned long			core_cookie;
 	unsigned int			core_occupation;
 #endif
+#endif /* !CONFIG_SCHED_ALT */
 
 #ifdef CONFIG_CGROUP_SCHED
 	struct task_group		*sched_task_group;
@@ -922,9 +939,13 @@ struct task_struct {
 	const cpumask_t			*cpus_ptr;
 	cpumask_t			*user_cpus_ptr;
 	cpumask_t			cpus_mask;
+#ifndef CONFIG_SCHED_ALT
 	void				*migration_pending;
+#endif
 	unsigned short			migration_disabled;
+#ifndef CONFIG_SCHED_ALT
 	unsigned short			migration_flags;
+#endif
 
 #ifdef CONFIG_PREEMPT_RCU
 	int				rcu_read_lock_nesting;
@@ -955,8 +976,10 @@ struct task_struct {
 	struct sched_info		sched_info;
 
 	struct list_head		tasks;
+#ifndef CONFIG_SCHED_ALT
 	struct plist_node		pushable_tasks;
 	struct rb_node			pushable_dl_tasks;
+#endif
 
 	struct mm_struct		*mm;
 	struct mm_struct		*active_mm;
@@ -1680,6 +1703,15 @@ static inline bool sched_proxy_exec(void)
 }
 #endif
 
+#ifdef CONFIG_SCHED_ALT
+#define tsk_seruntime(t)		((t)->sched_time)
+/* replace the uncertian rt_timeout with 0UL */
+#define tsk_rttimeout(t)		(0UL)
+#else /* !CONFIG_SCHED_ALT: */
+#define tsk_seruntime(t)	((t)->se.sum_exec_runtime)
+#define tsk_rttimeout(t)	((t)->rt.timeout)
+#endif /* !CONFIG_SCHED_ALT */
+
 #define TASK_REPORT_IDLE	(TASK_REPORT + 1)
 #define TASK_REPORT_MAX		(TASK_REPORT_IDLE << 1)
 
@@ -2244,7 +2276,11 @@ static inline void set_task_cpu(struct task_struct *p, unsigned int cpu)
 
 static inline bool task_is_runnable(struct task_struct *p)
 {
+#ifdef CONFIG_SCHED_ALT
+	return p->on_rq;
+#else
 	return p->on_rq && !p->se.sched_delayed;
+#endif /* !CONFIG_SCHED_ALT */
 }
 
 extern bool sched_task_on_rq(struct task_struct *p);
@@ -2341,6 +2377,25 @@ DECLARE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 #endif
 #define this_rq_pinned() (*(unsigned int *)((void *)this_rq_raw() + RQ_nr_pinned))
 
+static inline void
+__do_set_cpus_ptr(struct task_struct *p, const struct cpumask *new_mask)
+{
+	/*
+	 * This here violates the locking rules for affinity, since we're only
+	 * supposed to change these variables while holding both rq->lock and
+	 * p->pi_lock.
+	 *
+	 * HOWEVER, it magically works, because ttwu() is the only code that
+	 * accesses these variables under p->pi_lock and only does so after
+	 * smp_cond_load_acquire(&p->on_cpu, !VAL), and we're in __schedule()
+	 * before finish_task().
+	 *
+	 * XXX do further audits, this smells like something putrid.
+	 */
+	WARN_ON_ONCE(!p->on_cpu);
+	p->cpus_ptr = new_mask;
+}
+
 static inline void __migrate_enable(void)
 {
 	struct task_struct *p = current;
@@ -2364,8 +2419,17 @@ static inline void __migrate_enable(void)
 	 * __set_cpus_allowed_ptr(SCA_MIGRATE_ENABLE) doesn't schedule().
 	 */
 	guard(preempt)();
+#ifdef CONFIG_SCHED_ALT
+	/*
+	 * Assumption: current should be running on allowed cpu
+	 */
+	WARN_ON_ONCE(!cpumask_test_cpu(smp_processor_id(), &p->cpus_mask));
+	if (p->cpus_ptr != &p->cpus_mask)
+		__do_set_cpus_ptr(p, &p->cpus_mask);
+#else
 	if (unlikely(p->cpus_ptr != &p->cpus_mask))
 		___migrate_enable();
+#endif
 	/*
 	 * Mustn't clear migration_disabled() until cpus_ptr points back at the
 	 * regular cpus_mask, otherwise things that race (eg.
@@ -2392,8 +2456,20 @@ static inline void __migrate_disable(void)
 	}
 
 	guard(preempt)();
+#ifdef CONFIG_SCHED_ALT
+	int cpu = smp_processor_id();
+	if (cpumask_test_cpu(cpu, &p->cpus_mask)) {
+#endif
 	this_rq_pinned()++;
 	p->migration_disabled = 1;
+#ifdef CONFIG_SCHED_ALT
+		/*
+		 * Violates locking rules! see comment in __do_set_cpus_ptr().
+		 */
+		if (p->cpus_ptr == &p->cpus_mask)
+				__do_set_cpus_ptr(p, cpumask_of(cpu));
+	}
+#endif
 }
 #else /* !COMPILE_OFFSETS */
 static inline void __migrate_disable(void) { }

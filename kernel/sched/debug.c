@@ -10,6 +10,7 @@
 #include <linux/nmi.h>
 #include "sched.h"
 
+#ifndef CONFIG_SCHED_ALT
 /*
  * This allows printing both to /sys/kernel/debug/sched/debug and
  * to the console
@@ -215,6 +216,8 @@ static const struct file_operations sched_scaling_fops = {
 	.release	= single_release,
 };
 
+#endif /* !CONFIG_SCHED_ALT */
+
 #ifdef CONFIG_PREEMPT_DYNAMIC
 
 static ssize_t sched_dynamic_write(struct file *filp, const char __user *ubuf,
@@ -280,6 +283,7 @@ static const struct file_operations sched_dynamic_fops = {
 
 #endif /* CONFIG_PREEMPT_DYNAMIC */
 
+#ifndef CONFIG_SCHED_ALT
 __read_mostly bool sched_debug_verbose;
 
 static struct dentry           *sd_dentry;
@@ -464,9 +468,11 @@ static const struct file_operations fair_server_period_fops = {
 	.llseek		= seq_lseek,
 	.release	= single_release,
 };
+#endif /* !CONFIG_SCHED_ALT */
 
 static struct dentry *debugfs_sched;
 
+#ifndef CONFIG_SCHED_ALT
 static void debugfs_fair_server_init(void)
 {
 	struct dentry *d_fair;
@@ -487,6 +493,7 @@ static void debugfs_fair_server_init(void)
 		debugfs_create_file("period", 0644, d_cpu, (void *) cpu, &fair_server_period_fops);
 	}
 }
+#endif /* !CONFIG_SCHED_ALT */
 
 static __init int sched_init_debug(void)
 {
@@ -494,14 +501,17 @@ static __init int sched_init_debug(void)
 
 	debugfs_sched = debugfs_create_dir("sched", NULL);
 
+#ifndef CONFIG_SCHED_ALT
 	debugfs_create_file("features", 0644, debugfs_sched, NULL, &sched_feat_fops);
 	debugfs_create_file_unsafe("verbose", 0644, debugfs_sched, &sched_debug_verbose, &sched_verbose_fops);
+#endif /* !CONFIG_SCHED_ALT */
 #ifdef CONFIG_PREEMPT_DYNAMIC
 	debugfs_create_file("preempt", 0644, debugfs_sched, NULL, &sched_dynamic_fops);
 #endif
 
 	debugfs_create_u32("base_slice_ns", 0644, debugfs_sched, &sysctl_sched_base_slice);
 
+#ifndef CONFIG_SCHED_ALT
 	debugfs_create_u32("latency_warn_ms", 0644, debugfs_sched, &sysctl_resched_latency_warn_ms);
 	debugfs_create_u32("latency_warn_once", 0644, debugfs_sched, &sysctl_resched_latency_warn_once);
 
@@ -524,12 +534,17 @@ static __init int sched_init_debug(void)
 #endif /* CONFIG_NUMA_BALANCING */
 
 	debugfs_create_file("debug", 0444, debugfs_sched, NULL, &sched_debug_fops);
+#endif /* !CONFIG_SCHED_ALT */
 
+#ifndef CONFIG_SCHED_ALT
 	debugfs_fair_server_init();
+#endif /* !CONFIG_SCHED_ALT */
 
 	return 0;
 }
 late_initcall(sched_init_debug);
+
+#ifndef CONFIG_SCHED_ALT
 
 static cpumask_var_t		sd_sysctl_cpus;
 
@@ -1263,6 +1278,11 @@ void proc_sched_show_task(struct task_struct *p, struct pid_namespace *ns,
 
 	sched_show_numa(p, m);
 }
+#else
+void proc_sched_show_task(struct task_struct *p, struct pid_namespace *ns,
+						  struct seq_file *m)
+{ }
+#endif /* !CONFIG_SCHED_ALT */
 
 void proc_sched_set_task(struct task_struct *p)
 {

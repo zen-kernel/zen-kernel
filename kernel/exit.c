@@ -207,7 +207,7 @@ static void __exit_signal(struct release_task_post *post, struct task_struct *ts
 	sig->inblock += task_io_get_inblock(tsk);
 	sig->oublock += task_io_get_oublock(tsk);
 	task_io_accounting_add(&sig->ioac, &tsk->ioac);
-	sig->sum_sched_runtime += tsk->se.sum_exec_runtime;
+	sig->sum_sched_runtime += tsk_seruntime(tsk);
 	sig->nr_threads--;
 	__unhash_process(post, tsk, group_dead);
 	write_sequnlock(&sig->stats_lock);
@@ -291,8 +291,8 @@ repeat:
 	write_unlock_irq(&tasklist_lock);
 	/* @thread_pid can't go away until free_pids() below */
 	proc_flush_pid(thread_pid);
-	add_device_randomness(&p->se.sum_exec_runtime,
-			      sizeof(p->se.sum_exec_runtime));
+	add_device_randomness((const void*) &tsk_seruntime(p),
+			      sizeof(unsigned long long));
 	free_pids(post.pids);
 	release_thread(p);
 	/*
