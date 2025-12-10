@@ -151,17 +151,18 @@ static inline void alt_sched_debug(void) {}
 
 extern int sched_yield_type;
 
-extern cpumask_t sched_rq_pending_mask ____cacheline_aligned_in_smp;
+extern cpumask_t sched_rq_pending_mask;
 
 DECLARE_STATIC_KEY_FALSE(sched_smt_present);
 DECLARE_PER_CPU_ALIGNED(cpumask_t *, sched_cpu_llc_mask);
 
-extern cpumask_t sched_smt_mask ____cacheline_aligned_in_smp;
+extern cpumask_t sched_smt_mask;
 
-extern cpumask_t *const sched_idle_mask;
-extern cpumask_t *const sched_sg_idle_mask;
-extern cpumask_t *const sched_pcore_idle_mask;
-extern cpumask_t *const sched_ecore_idle_mask;
+extern cpumask_t sched_idle_mask[3];
+
+#define sched_sg_idle_mask	(sched_idle_mask + 1)
+#define sched_pcore_idle_mask	(sched_idle_mask + 1)
+#define sched_ecore_idle_mask	(sched_idle_mask + 2)
 
 extern struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int new_cpu);
 
