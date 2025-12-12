@@ -1066,7 +1066,9 @@ amdgpu_vm_tlb_flush(struct amdgpu_vm_update_params *params,
 	}
 
 	/* Prepare a TLB flush fence to be attached to PTs */
-	if (!params->unlocked) {
+	if (!params->unlocked &&
+	    /* SI doesn't support pasid or KIQ/MES */
+	    params->adev->family > AMDGPU_FAMILY_SI) {
 		amdgpu_vm_tlb_fence_create(params->adev, vm, fence);
 
 		/* Makes sure no PD/PT is freed before the flush */
@@ -2828,8 +2830,6 @@ void amdgpu_vm_fini(struct amdgpu_device *adev, struct amdgpu_vm *vm)
  */
 void amdgpu_vm_manager_init(struct amdgpu_device *adev)
 {
-	unsigned i;
-
 	/* Concurrent flushes are only possible starting with Vega10 and
 	 * are broken on Navi10 and Navi14.
 	 */
@@ -2837,11 +2837,6 @@ void amdgpu_vm_manager_init(struct amdgpu_device *adev)
 					      adev->asic_type == CHIP_NAVI10 ||
 					      adev->asic_type == CHIP_NAVI14);
 	amdgpu_vmid_mgr_init(adev);
-
-	adev->vm_manager.fence_context =
-		dma_fence_context_alloc(AMDGPU_MAX_RINGS);
-	for (i = 0; i < AMDGPU_MAX_RINGS; ++i)
-		adev->vm_manager.seqno[i] = 0;
 
 	spin_lock_init(&adev->vm_manager.prt_lock);
 	atomic_set(&adev->vm_manager.num_prt_users, 0);
