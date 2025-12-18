@@ -246,15 +246,20 @@ struct mt7996_vif_link {
 	struct mt7996_sta_link msta_link;
 	struct mt7996_phy *phy;
 
-	struct ieee80211_tx_queue_params queue_params[IEEE80211_NUM_ACS];
 	struct cfg80211_bitrate_mask bitrate_mask;
 
 	u8 mld_idx;
 };
 
+struct mt7996_vif_link_info {
+	struct ieee80211_tx_queue_params queue_params[IEEE80211_NUM_ACS];
+};
+
 struct mt7996_vif {
 	struct mt7996_vif_link deflink; /* must be first */
 	struct mt76_vif_data mt76;
+
+	struct mt7996_vif_link_info link_info[IEEE80211_MLD_MAX_NUM_LINKS];
 
 	u8 mld_group_idx;
 	u8 mld_remap_idx;
@@ -715,7 +720,7 @@ void mt7996_memcpy_fromio(struct mt7996_dev *dev, void *buf, u32 offset,
 
 static inline u16 mt7996_rx_chainmask(struct mt7996_phy *phy)
 {
-	int max_nss = hweight8(phy->mt76->hw->wiphy->available_antennas_tx);
+	int max_nss = hweight16(phy->orig_antenna_mask);
 	int cur_nss = hweight8(phy->mt76->antenna_mask);
 	u16 tx_chainmask = phy->mt76->chainmask;
 

@@ -105,6 +105,7 @@ struct amdxdna_sched_job {
 	/* user can wait on this fence */
 	struct dma_fence	*out_fence;
 	bool			job_done;
+	bool			job_timeout;
 	u64			seq;
 	struct amdxdna_gem_obj	*cmd_bo;
 	size_t			bo_cnt;

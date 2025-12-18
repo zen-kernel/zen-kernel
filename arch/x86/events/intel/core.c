@@ -3249,6 +3249,9 @@ static int handle_pmi_common(struct pt_regs *regs, u64 status)
 
 		if (!test_bit(bit, cpuc->active_mask))
 			continue;
+		/* Event may have already been cleared: */
+		if (!event)
+			continue;
 
 		/*
 		 * There may be unprocessed PEBS records in the PEBS buffer,
@@ -4029,7 +4032,9 @@ static unsigned long intel_pmu_large_pebs_flags(struct perf_event *event)
 	if (!event->attr.exclude_kernel)
 		flags &= ~PERF_SAMPLE_REGS_USER;
 	if (event->attr.sample_regs_user & ~PEBS_GP_REGS)
-		flags &= ~(PERF_SAMPLE_REGS_USER | PERF_SAMPLE_REGS_INTR);
+		flags &= ~PERF_SAMPLE_REGS_USER;
+	if (event->attr.sample_regs_intr & ~PEBS_GP_REGS)
+		flags &= ~PERF_SAMPLE_REGS_INTR;
 	return flags;
 }
 

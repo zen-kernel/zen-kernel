@@ -232,14 +232,13 @@ err_put:
 	return ret;
 }
 
-static int __init mip_of_msi_init(struct device_node *node, struct device_node *parent)
+static int mip_of_msi_init(struct device_node *node, struct device_node *parent)
 {
 	struct platform_device *pdev;
 	struct mip_priv *mip;
 	int ret;
 
 	pdev = of_find_device_by_node(node);
-	of_node_put(node);
 	if (!pdev)
 		return -EPROBE_DEFER;
 

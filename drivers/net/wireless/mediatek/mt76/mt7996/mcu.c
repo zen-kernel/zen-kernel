@@ -1010,7 +1010,6 @@ mt7996_mcu_bss_basic_tlv(struct sk_buff *skb,
 	struct mt76_connac_bss_basic_tlv *bss;
 	u32 type = CONNECTION_INFRA_AP;
 	u16 sta_wlan_idx = wlan_idx;
-	struct ieee80211_sta *sta;
 	struct tlv *tlv;
 	int idx;
 
@@ -1021,14 +1020,18 @@ mt7996_mcu_bss_basic_tlv(struct sk_buff *skb,
 		break;
 	case NL80211_IFTYPE_STATION:
 		if (enable) {
-			rcu_read_lock();
-			sta = ieee80211_find_sta(vif, vif->bss_conf.bssid);
-			/* TODO: enable BSS_INFO_UAPSD & BSS_INFO_PM */
-			if (sta) {
-				struct mt76_wcid *wcid;
+			struct ieee80211_sta *sta;
 
-				wcid = (struct mt76_wcid *)sta->drv_priv;
-				sta_wlan_idx = wcid->idx;
+			rcu_read_lock();
+			sta = ieee80211_find_sta(vif, link_conf->bssid);
+			if (sta) {
+				struct mt7996_sta *msta = (void *)sta->drv_priv;
+				struct mt7996_sta_link *msta_link;
+				int link_id = link_conf->link_id;
+
+				msta_link = rcu_dereference(msta->link[link_id]);
+				if (msta_link)
+					sta_wlan_idx = msta_link->wcid.idx;
 			}
 			rcu_read_unlock();
 		}
@@ -1045,8 +1048,6 @@ mt7996_mcu_bss_basic_tlv(struct sk_buff *skb,
 	tlv = mt7996_mcu_add_uni_tlv(skb, UNI_BSS_INFO_BASIC, sizeof(*bss));
 
 	bss = (struct mt76_connac_bss_basic_tlv *)tlv;
-	bss->bcn_interval = cpu_to_le16(link_conf->beacon_int);
-	bss->dtim_period = link_conf->dtim_period;
 	bss->bmc_tx_wlan_idx = cpu_to_le16(wlan_idx);
 	bss->sta_idx = cpu_to_le16(sta_wlan_idx);
 	bss->conn_type = cpu_to_le32(type);
@@ -1066,10 +1067,10 @@ mt7996_mcu_bss_basic_tlv(struct sk_buff *skb,
 
 	memcpy(bss->bssid, link_conf->bssid, ETH_ALEN);
 	bss->bcn_interval = cpu_to_le16(link_conf->beacon_int);
-	bss->dtim_period = vif->bss_conf.dtim_period;
+	bss->dtim_period = link_conf->dtim_period;
 	bss->phymode = mt76_connac_get_phy_mode(phy, vif,
 						chandef->chan->band, NULL);
-	bss->phymode_ext = mt76_connac_get_phy_mode_ext(phy, &vif->bss_conf,
+	bss->phymode_ext = mt76_connac_get_phy_mode_ext(phy, link_conf,
 							chandef->chan->band);
 
 	return 0;
@@ -1754,8 +1755,8 @@ mt7996_mcu_sta_bfer_tlv(struct mt7996_dev *dev, struct sk_buff *skb,
 	bf->ibf_nrow = tx_ant;
 
 	if (link_sta->eht_cap.has_eht || link_sta->he_cap.has_he)
-		bf->ibf_timeout = is_mt7996(&dev->mt76) ? MT7996_IBF_TIMEOUT :
-							  MT7992_IBF_TIMEOUT;
+		bf->ibf_timeout = is_mt7992(&dev->mt76) ? MT7992_IBF_TIMEOUT :
+							  MT7996_IBF_TIMEOUT;
 	else if (!ebf && link_sta->bandwidth <= IEEE80211_STA_RX_BW_40 && !bf->ncol)
 		bf->ibf_timeout = MT7996_IBF_TIMEOUT_LEGACY;
 	else
@@ -3438,6 +3439,9 @@ int mt7996_mcu_set_tx(struct mt7996_dev *dev, struct ieee80211_vif *vif,
 #define WMM_PARAM_SET		(WMM_AIFS_SET | WMM_CW_MIN_SET | \
 				 WMM_CW_MAX_SET | WMM_TXOP_SET)
 	struct mt7996_vif_link *link = mt7996_vif_conf_link(dev, vif, link_conf);
+	struct mt7996_vif *mvif = (struct mt7996_vif *)vif->drv_priv;
+	unsigned int link_id = link_conf->link_id;
+	struct mt7996_vif_link_info *link_info = &mvif->link_info[link_id];
 	struct {
 		u8 bss_idx;
 		u8 __rsv[3];
@@ -3455,7 +3459,7 @@ int mt7996_mcu_set_tx(struct mt7996_dev *dev, struct ieee80211_vif *vif,
 	skb_put_data(skb, &hdr, sizeof(hdr));
 
 	for (ac = 0; ac < IEEE80211_NUM_ACS; ac++) {
-		struct ieee80211_tx_queue_params *q = &link->queue_params[ac];
+		struct ieee80211_tx_queue_params *q = &link_info->queue_params[ac];
 		struct edca *e;
 		struct tlv *tlv;
 

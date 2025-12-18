@@ -973,6 +973,8 @@ static int spacemit_ccu_register(struct device *dev,
 	if (!clk_data)
 		return -ENOMEM;
 
+	clk_data->num = data->num;
+
 	for (i = 0; i < data->num; i++) {
 		struct clk_hw *hw = data->hws[i];
 		struct ccu_common *common;
@@ -998,8 +1000,6 @@ static int spacemit_ccu_register(struct device *dev,
 
 		clk_data->hws[i] = hw;
 	}
-
-	clk_data->num = data->num;
 
 	ret = devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get, clk_data);
 	if (ret)
