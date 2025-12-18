@@ -257,6 +257,7 @@ struct qcom_battmgr_info {
 	unsigned int capacity_warning;
 	unsigned int cycle_count;
 	unsigned int charge_count;
+	bool charge_ctrl_enable;
 	unsigned int charge_ctrl_start;
 	unsigned int charge_ctrl_end;
 	char model_number[BATTMGR_STRING_LEN];
@@ -659,13 +660,13 @@ static int qcom_battmgr_bat_get_property(struct power_supply *psy,
 }
 
 static int qcom_battmgr_set_charge_control(struct qcom_battmgr *battmgr,
-					   u32 target_soc, u32 delta_soc)
+					   bool enable, u32 target_soc, u32 delta_soc)
 {
 	struct qcom_battmgr_charge_ctrl_request request = {
 		.hdr.owner = cpu_to_le32(PMIC_GLINK_OWNER_BATTMGR),
 		.hdr.type = cpu_to_le32(PMIC_GLINK_REQ_RESP),
 		.hdr.opcode = cpu_to_le32(BATTMGR_CHG_CTRL_LIMIT_EN),
-		.enable = cpu_to_le32(1),
+		.enable = cpu_to_le32(enable),
 		.target_soc = cpu_to_le32(target_soc),
 		.delta_soc = cpu_to_le32(delta_soc),
 	};
@@ -677,13 +678,9 @@ static int qcom_battmgr_set_charge_start_threshold(struct qcom_battmgr *battmgr,
 {
 	u32 target_soc, delta_soc;
 	int ret;
+	bool enable = start_soc != 0;
 
-	if (start_soc < CHARGE_CTRL_START_THR_MIN ||
-	    start_soc > CHARGE_CTRL_START_THR_MAX) {
-		dev_err(battmgr->dev, "charge control start threshold exceed range: [%u - %u]\n",
-			CHARGE_CTRL_START_THR_MIN, CHARGE_CTRL_START_THR_MAX);
-		return -EINVAL;
-	}
+	start_soc = clamp(start_soc, CHARGE_CTRL_START_THR_MIN, CHARGE_CTRL_START_THR_MAX);
 
 	/*
 	 * If the new start threshold is larger than the old end threshold,
@@ -701,9 +698,10 @@ static int qcom_battmgr_set_charge_start_threshold(struct qcom_battmgr *battmgr,
 	}
 
 	mutex_lock(&battmgr->lock);
-	ret = qcom_battmgr_set_charge_control(battmgr, target_soc, delta_soc);
+	ret = qcom_battmgr_set_charge_control(battmgr, enable, target_soc, delta_soc);
 	mutex_unlock(&battmgr->lock);
 	if (!ret) {
+		battmgr->info.charge_ctrl_enable = enable;
 		battmgr->info.charge_ctrl_start = start_soc;
 		battmgr->info.charge_ctrl_end = target_soc;
 	}
@@ -715,19 +713,15 @@ static int qcom_battmgr_set_charge_end_threshold(struct qcom_battmgr *battmgr, i
 {
 	u32 delta_soc = CHARGE_CTRL_DELTA_SOC;
 	int ret;
+	bool enable = battmgr->info.charge_ctrl_enable;
 
-	if (end_soc < CHARGE_CTRL_END_THR_MIN ||
-	    end_soc > CHARGE_CTRL_END_THR_MAX) {
-		dev_err(battmgr->dev, "charge control end threshold exceed range: [%u - %u]\n",
-			CHARGE_CTRL_END_THR_MIN, CHARGE_CTRL_END_THR_MAX);
-		return -EINVAL;
-	}
+	end_soc = clamp(end_soc, CHARGE_CTRL_END_THR_MIN, CHARGE_CTRL_END_THR_MAX);
 
 	if (battmgr->info.charge_ctrl_start && end_soc > battmgr->info.charge_ctrl_start)
 		delta_soc = end_soc - battmgr->info.charge_ctrl_start;
 
 	mutex_lock(&battmgr->lock);
-	ret = qcom_battmgr_set_charge_control(battmgr, end_soc, delta_soc);
+	ret = qcom_battmgr_set_charge_control(battmgr, enable, end_soc, delta_soc);
 	mutex_unlock(&battmgr->lock);
 	if (!ret) {
 		battmgr->info.charge_ctrl_start = end_soc - delta_soc;
