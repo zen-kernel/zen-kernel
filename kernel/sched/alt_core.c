@@ -1491,10 +1491,7 @@ void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 	trace_sched_migrate_task(p, new_cpu);
 
 	if (task_cpu(p) != new_cpu)
-	{
-		sched_mm_cid_migrate_from(p);
 		perf_event_task_migrate(p);
-	}
 
 	__set_task_cpu(p, new_cpu);
 }
@@ -1594,8 +1591,6 @@ struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int new_cpu)
 
 	raw_spin_lock(&rq->lock);
 	WARN_ON_ONCE(task_cpu(p) != new_cpu);
-
-	sched_mm_cid_migrate_to(rq, p);
 
 	sched_task_sanity_check(p, rq);
 	enqueue_task(p, rq, 0);
@@ -3652,9 +3647,6 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	 *
 	 * kernel ->   user   switch + mmdrop_lazy_tlb() active
 	 *   user ->   user   switch
-	 *
-	 * switch_mm_cid() needs to be updated if the barriers provided
-	 * by context_switch() are modified.
 	 */
 	if (!next->mm) {                                // to kernel
 		enter_lazy_tlb(prev->active_mm, next);
@@ -3684,8 +3676,7 @@ context_switch(struct rq *rq, struct task_struct *prev,
 		}
 	}
 
-	/* switch_mm_cid() requires the memory barriers above. */
-	switch_mm_cid(rq, prev, next);
+	switch_mm_cid(prev, next);
 
 	/*
 	 * Tell rseq that the task was scheduled in. Must be after
@@ -3968,8 +3959,6 @@ void sched_tick(void)
 	if (sched_feat(LATENCY_WARN))
 		resched_latency = cpu_resched_latency(rq);
 	calc_global_load_tick(rq);
-
-	task_tick_mm_cid(rq, rq->curr);
 
 	raw_spin_unlock(&rq->lock);
 
@@ -4307,7 +4296,6 @@ migrate_pending_tasks(struct rq *rq, struct rq *dest_rq, const int dest_cpu)
 			__SCHED_DEQUEUE_TASK(p, rq, 0, );
 			set_task_cpu(p, dest_cpu);
 			sched_task_sanity_check(p, dest_rq);
-			sched_mm_cid_migrate_to(dest_rq, p);
 			__SCHED_ENQUEUE_TASK(p, dest_rq, 0, );
 			nr_migrated++;
 		}
@@ -4396,8 +4384,6 @@ __move_queued_task(struct rq *rq, struct task_struct *p, struct rq *dest_rq, int
 	WRITE_ONCE(p->on_rq, TASK_ON_RQ_MIGRATING);
 	dequeue_task(p, rq, 0);
 	set_task_cpu(p, dest_cpu);
-
-	sched_mm_cid_migrate_to(dest_rq, p);
 
 	sched_task_sanity_check(p, dest_rq);
 	enqueue_task(p, dest_rq, 0);
