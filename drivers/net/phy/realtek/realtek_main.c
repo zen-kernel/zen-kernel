@@ -89,6 +89,14 @@
 #define RTL8211F_LEDCR_MASK			GENMASK(4, 0)
 #define RTL8211F_LEDCR_SHIFT			5
 
+/* RTL8211F(D)(I)-VD-CG CLKOUT configuration is specified via magic values
+ * to undocumented register pages. The names here do not reflect the datasheet.
+ * Unlike other PHY models, CLKOUT configuration does not go through PHYCR2.
+ */
+#define RTL8211FVD_CLKOUT_PAGE			0xd05
+#define RTL8211FVD_CLKOUT_REG			0x11
+#define RTL8211FVD_CLKOUT_EN			BIT(8)
+
 /* RTL8211F RGMII configuration */
 #define RTL8211F_RGMII_PAGE			0xd08
 
@@ -166,9 +174,8 @@ MODULE_AUTHOR("Johnson Leung");
 MODULE_LICENSE("GPL");
 
 struct rtl821x_priv {
-	u16 phycr1;
-	u16 phycr2;
-	bool has_phycr2;
+	bool enable_aldps;
+	bool disable_clk_out;
 	struct clk *clk;
 	/* rtl8211f */
 	u16 iner;
@@ -218,8 +225,6 @@ static int rtl821x_probe(struct phy_device *phydev)
 {
 	struct device *dev = &phydev->mdio.dev;
 	struct rtl821x_priv *priv;
-	u32 phy_id = phydev->drv->phy_id;
-	int ret;
 
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
@@ -230,24 +235,10 @@ static int rtl821x_probe(struct phy_device *phydev)
 		return dev_err_probe(dev, PTR_ERR(priv->clk),
 				     "failed to get phy clock\n");
 
-	ret = phy_read_paged(phydev, RTL8211F_PHYCR_PAGE, RTL8211F_PHYCR1);
-	if (ret < 0)
-		return ret;
-
-	priv->phycr1 = ret & (RTL8211F_ALDPS_PLL_OFF | RTL8211F_ALDPS_ENABLE | RTL8211F_ALDPS_XTAL_OFF);
-	if (of_property_read_bool(dev->of_node, "realtek,aldps-enable"))
-		priv->phycr1 |= RTL8211F_ALDPS_PLL_OFF | RTL8211F_ALDPS_ENABLE | RTL8211F_ALDPS_XTAL_OFF;
-
-	priv->has_phycr2 = !(phy_id == RTL_8211FVD_PHYID);
-	if (priv->has_phycr2) {
-		ret = phy_read_paged(phydev, RTL8211F_PHYCR_PAGE, RTL8211F_PHYCR2);
-		if (ret < 0)
-			return ret;
-
-		priv->phycr2 = ret & RTL8211F_CLKOUT_EN;
-		if (of_property_read_bool(dev->of_node, "realtek,clkout-disable"))
-			priv->phycr2 &= ~RTL8211F_CLKOUT_EN;
-	}
+	priv->enable_aldps = of_property_read_bool(dev->of_node,
+						   "realtek,aldps-enable");
+	priv->disable_clk_out = of_property_read_bool(dev->of_node,
+						      "realtek,clkout-disable");
 
 	phydev->priv = priv;
 
@@ -627,17 +618,65 @@ static int rtl8211f_config_rgmii_delay(struct phy_device *phydev)
 	return 0;
 }
 
-static int rtl8211f_config_init(struct phy_device *phydev)
+static int rtl8211f_config_clk_out(struct phy_device *phydev)
 {
 	struct rtl821x_priv *priv = phydev->priv;
+	int ret;
+
+	/* The value is preserved if the device tree property is absent */
+	if (!priv->disable_clk_out)
+		return 0;
+
+	if (phydev->drv->phy_id == RTL_8211FVD_PHYID)
+		ret = phy_modify_paged(phydev, RTL8211FVD_CLKOUT_PAGE,
+				       RTL8211FVD_CLKOUT_REG,
+				       RTL8211FVD_CLKOUT_EN, 0);
+	else
+		ret = phy_modify_paged(phydev, RTL8211F_PHYCR_PAGE,
+				       RTL8211F_PHYCR2, RTL8211F_CLKOUT_EN, 0);
+	if (ret)
+		return ret;
+
+	return genphy_soft_reset(phydev);
+}
+
+/* Advance Link Down Power Saving (ALDPS) mode changes crystal/clock behaviour,
+ * which causes the RXC clock signal to stop for tens to hundreds of
+ * milliseconds.
+ *
+ * Some MACs need the RXC clock to support their internal RX logic, so ALDPS is
+ * only enabled based on an opt-in device tree property.
+ */
+static int rtl8211f_config_aldps(struct phy_device *phydev)
+{
+	struct rtl821x_priv *priv = phydev->priv;
+	u16 mask = RTL8211F_ALDPS_PLL_OFF |
+		   RTL8211F_ALDPS_ENABLE |
+		   RTL8211F_ALDPS_XTAL_OFF;
+
+	/* The value is preserved if the device tree property is absent */
+	if (!priv->enable_aldps)
+		return 0;
+
+	return phy_modify_paged(phydev, RTL8211F_PHYCR_PAGE, RTL8211F_PHYCR1,
+				mask, mask);
+}
+
+static int rtl8211f_config_phy_eee(struct phy_device *phydev)
+{
+	/* Disable PHY-mode EEE so LPI is passed to the MAC */
+	return phy_modify_paged(phydev, RTL8211F_PHYCR_PAGE, RTL8211F_PHYCR2,
+				RTL8211F_PHYCR2_PHY_EEE_ENABLE, 0);
+}
+
+static int rtl8211f_config_init(struct phy_device *phydev)
+{
 	struct device *dev = &phydev->mdio.dev;
 	int ret;
 
-	ret = phy_modify_paged_changed(phydev, RTL8211F_PHYCR_PAGE, RTL8211F_PHYCR1,
-				       RTL8211F_ALDPS_PLL_OFF | RTL8211F_ALDPS_ENABLE | RTL8211F_ALDPS_XTAL_OFF,
-				       priv->phycr1);
-	if (ret < 0) {
-		dev_err(dev, "aldps mode  configuration failed: %pe\n",
+	ret = rtl8211f_config_aldps(phydev);
+	if (ret) {
+		dev_err(dev, "aldps mode configuration failed: %pe\n",
 			ERR_PTR(ret));
 		return ret;
 	}
@@ -646,25 +685,14 @@ static int rtl8211f_config_init(struct phy_device *phydev)
 	if (ret)
 		return ret;
 
-	if (!priv->has_phycr2)
-		return 0;
-
-	/* Disable PHY-mode EEE so LPI is passed to the MAC */
-	ret = phy_modify_paged(phydev, RTL8211F_PHYCR_PAGE, RTL8211F_PHYCR2,
-			       RTL8211F_PHYCR2_PHY_EEE_ENABLE, 0);
-	if (ret)
-		return ret;
-
-	ret = phy_modify_paged(phydev, RTL8211F_PHYCR_PAGE,
-			       RTL8211F_PHYCR2, RTL8211F_CLKOUT_EN,
-			       priv->phycr2);
-	if (ret < 0) {
+	ret = rtl8211f_config_clk_out(phydev);
+	if (ret) {
 		dev_err(dev, "clkout configuration failed: %pe\n",
 			ERR_PTR(ret));
 		return ret;
 	}
 
-	return genphy_soft_reset(phydev);
+	return rtl8211f_config_phy_eee(phydev);
 }
 
 static int rtl821x_suspend(struct phy_device *phydev)

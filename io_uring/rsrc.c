@@ -1057,6 +1057,7 @@ static int io_import_kbuf(int ddir, struct iov_iter *iter,
 	if (count < imu->len) {
 		const struct bio_vec *bvec = iter->bvec;
 
+		len += iter->iov_offset;
 		while (len > bvec->bv_len) {
 			len -= bvec->bv_len;
 			bvec++;
@@ -1199,7 +1200,7 @@ static int io_clone_buffers(struct io_ring_ctx *ctx, struct io_ring_ctx *src_ctx
 	if (ret)
 		return ret;
 
-	/* Fill entries in data from dst that won't overlap with src */
+	/* Copy original dst nodes from before the cloned range */
 	for (i = 0; i < min(arg->dst_off, ctx->buf_table.nr); i++) {
 		struct io_rsrc_node *src_node = ctx->buf_table.nodes[i];
 
@@ -1245,6 +1246,16 @@ static int io_clone_buffers(struct io_ring_ctx *ctx, struct io_ring_ctx *src_ctx
 		}
 		data.nodes[off++] = dst_node;
 		i++;
+	}
+
+	/* Copy original dst nodes from after the cloned range */
+	for (i = nbufs; i < ctx->buf_table.nr; i++) {
+		struct io_rsrc_node *node = ctx->buf_table.nodes[i];
+
+		if (node) {
+			data.nodes[i] = node;
+			node->refs++;
+		}
 	}
 
 	/*

@@ -2085,7 +2085,7 @@ static int kvm_set_memory_region(struct kvm *kvm,
 			return -EINVAL;
 		if ((mem->userspace_addr != old->userspace_addr) ||
 		    (npages != old->npages) ||
-		    ((mem->flags ^ old->flags) & KVM_MEM_READONLY))
+		    ((mem->flags ^ old->flags) & (KVM_MEM_READONLY | KVM_MEM_GUEST_MEMFD)))
 			return -EINVAL;
 
 		if (base_gfn != old->base_gfn)
@@ -4026,7 +4026,7 @@ void kvm_vcpu_on_spin(struct kvm_vcpu *me, bool yield_to_kernel_mode)
 
 		yielded = kvm_vcpu_yield_to(vcpu);
 		if (yielded > 0) {
-			WRITE_ONCE(kvm->last_boosted_vcpu, i);
+			WRITE_ONCE(kvm->last_boosted_vcpu, idx);
 			break;
 		} else if (yielded < 0 && !--try) {
 			break;
