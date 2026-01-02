@@ -1664,11 +1664,14 @@ static int migration_cpu_stop(void *data)
 	return 0;
 }
 
+static inline void mm_update_cpus_allowed(struct mm_struct *mm, const cpumask_t *affmask);
+
 static inline void
 set_cpus_allowed_common(struct task_struct *p, struct affinity_context *ctx)
 {
 	cpumask_copy(&p->cpus_mask, ctx->new_mask);
 	p->nr_cpus_allowed = cpumask_weight(ctx->new_mask);
+	mm_update_cpus_allowed(p->mm, ctx->new_mask);
 
 	/*
 	 * Swap in a new user_cpus_ptr if SCA_USER flag set
@@ -1677,14 +1680,11 @@ set_cpus_allowed_common(struct task_struct *p, struct affinity_context *ctx)
 		swap(p->user_cpus_ptr, ctx->user_mask);
 }
 
-static inline void mm_update_cpus_allowed(struct mm_struct *mm, const cpumask_t *affmask);
-
 static void
 __do_set_cpus_allowed(struct task_struct *p, struct affinity_context *ctx)
 {
 	lockdep_assert_held(&p->pi_lock);
 	set_cpus_allowed_common(p, ctx);
-	mm_update_cpus_allowed(p->mm, ctx->new_mask);
 }
 
 /*
