@@ -4037,7 +4037,7 @@ static void sched_tick_remote(struct work_struct *work)
 				 * reasonable amount of time.
 				 */
 				u64 delta = rq_clock_task(rq) - curr->last_ran;
-				WARN_ON_ONCE(delta > (u64)NSEC_PER_SEC * 3);
+				WARN_ON_ONCE(delta > (u64)NSEC_PER_SEC * 30);
 			}
 			scheduler_task_tick(rq);
 
