@@ -3586,6 +3586,8 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 		mmdrop_lazy_tlb_sched(mm);
 	}
 	if (unlikely(prev_state == TASK_DEAD)) {
+		cgroup_task_dead(prev);
+
 		/* Task is done with its stack. */
 		put_task_stack(prev);
 
