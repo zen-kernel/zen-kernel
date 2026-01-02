@@ -1492,7 +1492,6 @@ void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 
 	if (task_cpu(p) != new_cpu)
 	{
-		rseq_migrate(p);
 		sched_mm_cid_migrate_from(p);
 		perf_event_task_migrate(p);
 	}
@@ -3083,7 +3082,6 @@ int sched_cgroup_fork(struct task_struct *p, struct kernel_clone_args *kargs)
 	sched_task_fork(p, rq);
 	raw_spin_unlock(&rq->lock);
 
-	rseq_migrate(p);
 	/*
 	 * We're setting the CPU for the first time, we don't migrate,
 	 * so use __set_task_cpu().
@@ -3203,7 +3201,6 @@ void wake_up_new_task(struct task_struct *p)
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
 	WRITE_ONCE(p->__state, TASK_RUNNING);
 	rq = cpu_rq(select_task_rq(p));
-	rseq_migrate(p);
 	/*
 	 * Fork balancing, do it here and not earlier because:
 	 * - cpus_ptr can change in the fork path
@@ -3496,7 +3493,7 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
 	kcov_prepare_switch(prev);
 	sched_info_switch(rq, prev, next);
 	perf_event_task_sched_out(prev, next);
-	rseq_preempt(prev);
+	rseq_sched_switch_event(prev);
 	fire_sched_out_preempt_notifiers(prev, next);
 	kmap_local_sched_out();
 	prepare_task(next);
