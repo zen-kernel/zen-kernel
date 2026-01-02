@@ -1681,7 +1681,7 @@ set_cpus_allowed_common(struct task_struct *p, struct affinity_context *ctx)
 }
 
 static void
-__do_set_cpus_allowed(struct task_struct *p, struct affinity_context *ctx)
+do_set_cpus_allowed(struct task_struct *p, struct affinity_context *ctx)
 {
 	lockdep_assert_held(&p->pi_lock);
 	set_cpus_allowed_common(p, ctx);
@@ -1691,7 +1691,7 @@ __do_set_cpus_allowed(struct task_struct *p, struct affinity_context *ctx)
  * Used for kthread_bind() and select_fallback_rq(), in both cases the user
  * affinity (if any) should be destroyed too.
  */
-void do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask)
+void set_cpus_allowed_force(struct task_struct *p, const struct cpumask *new_mask)
 {
 	struct affinity_context ac = {
 		.new_mask  = new_mask,
@@ -1703,7 +1703,7 @@ void do_set_cpus_allowed(struct task_struct *p, const struct cpumask *new_mask)
 		struct rcu_head rcu;
 	};
 
-	__do_set_cpus_allowed(p, &ac);
+	do_set_cpus_allowed(p, &ac);
 
 	if (is_migration_disabled(p) && !cpumask_test_cpu(task_cpu(p), &p->cpus_mask))
 		__migrate_force_enable(p, task_rq(p));
@@ -1874,7 +1874,7 @@ static int select_fallback_rq(int cpu, struct task_struct *p)
 			 *
 			 * More yuck to audit.
 			 */
-			do_set_cpus_allowed(p, task_cpu_fallback_mask(p));
+			set_cpus_allowed_force(p, task_cpu_fallback_mask(p));
 			state = fail;
 			break;
 
@@ -2076,7 +2076,7 @@ static int __set_cpus_allowed_ptr_locked(struct task_struct *p,
 		goto out;
 	}
 
-	__do_set_cpus_allowed(p, ctx);
+	do_set_cpus_allowed(p, ctx);
 
 	return affine_move_task(rq, p, dest_cpu, lock, irq_flags);
 
