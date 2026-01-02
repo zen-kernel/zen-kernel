@@ -2998,7 +2998,6 @@ static inline void __sched_fork(u64 clone_flags, struct task_struct *p)
 	p->capture_control = NULL;
 #endif
 	p->wake_entry.u_flags = CSD_TYPE_TTWU;
-	init_sched_mm_cid(p);
 }
 
 /*
