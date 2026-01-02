@@ -3677,7 +3677,7 @@ context_switch(struct rq *rq, struct task_struct *prev,
 		}
 	}
 
-	switch_mm_cid(prev, next);
+	mm_cid_switch_to(prev, next);
 
 	/*
 	 * Tell rseq that the task was scheduled in. Must be after
