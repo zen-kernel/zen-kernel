@@ -5142,14 +5142,10 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
 
 	check_task_changed(p, rq);
 out_unlock:
-	/* Avoid rq from going away on us: */
-	preempt_disable();
+	/* Caller holds task_struct::pi_lock, IRQs are still disabled */
 
-	if (task_on_rq_queued(p))
-		__balance_callbacks(rq);
+	__balance_callbacks(rq);
 	__task_access_unlock(p, lock);
-
-	preempt_enable();
 }
 #endif /* CONFIG_RT_MUTEXES */
 
