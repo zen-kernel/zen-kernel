@@ -70,7 +70,7 @@ struct pm4125_priv {
 	struct wcd_mbhc_config mbhc_cfg;
 	struct wcd_mbhc_intr intr_ids;
 	struct irq_domain *virq;
-	const struct regmap_irq_chip *pm4125_regmap_irq_chip;
+	const struct regmap_irq_chip *chip_desc;
 	struct regmap_irq_chip_data *irq_chip;
 	struct snd_soc_jack *jack;
 	unsigned long status_mask;
@@ -179,7 +179,7 @@ static const u32 pm4125_config_regs[] = {
 	PM4125_DIG_SWR_INTR_LEVEL_0,
 };
 
-static struct regmap_irq_chip pm4125_regmap_irq_chip = {
+static const struct regmap_irq_chip pm4125_regmap_irq_chip = {
 	.name = "pm4125",
 	.irqs = pm4125_irqs,
 	.num_irqs = ARRAY_SIZE(pm4125_irqs),
@@ -1320,10 +1320,8 @@ static int pm4125_irq_init(struct pm4125_priv *pm4125, struct device *dev)
 		return -EINVAL;
 	}
 
-	pm4125_regmap_irq_chip.irq_drv_data = pm4125;
-
 	return devm_regmap_add_irq_chip(dev, pm4125->regmap, irq_create_mapping(pm4125->virq, 0),
-					IRQF_ONESHOT, 0, &pm4125_regmap_irq_chip,
+					IRQF_ONESHOT, 0, pm4125->chip_desc,
 					&pm4125->irq_chip);
 }
 
@@ -1551,6 +1549,10 @@ static int pm4125_bind(struct device *dev)
 	struct device_link *devlink;
 	int ret;
 
+	/* Initialize device pointers to NULL for safe cleanup */
+	pm4125->rxdev = NULL;
+	pm4125->txdev = NULL;
+
 	/* Give the soundwire subdevices some more time to settle */
 	usleep_range(15000, 15010);
 
@@ -1574,7 +1576,7 @@ static int pm4125_bind(struct device *dev)
 	if (!pm4125->txdev) {
 		dev_err(dev, "could not find txslave with matching of node\n");
 		ret = -EINVAL;
-		goto error_unbind_all;
+		goto error_put_rx;
 	}
 
 	pm4125->sdw_priv[AIF1_CAP] = dev_get_drvdata(pm4125->txdev);
@@ -1584,7 +1586,7 @@ static int pm4125_bind(struct device *dev)
 	if (!pm4125->tx_sdw_dev) {
 		dev_err(dev, "could not get txslave with matching of dev\n");
 		ret = -EINVAL;
-		goto error_unbind_all;
+		goto error_put_tx;
 	}
 
 	/*
@@ -1596,7 +1598,7 @@ static int pm4125_bind(struct device *dev)
 	if (!devlink) {
 		dev_err(dev, "Could not devlink TX and RX\n");
 		ret = -EINVAL;
-		goto error_unbind_all;
+		goto error_put_tx;
 	}
 
 	devlink = device_link_add(dev, pm4125->txdev,
@@ -1650,6 +1652,10 @@ link_remove_dev_tx:
 	device_link_remove(dev, pm4125->txdev);
 link_remove_rx_tx:
 	device_link_remove(pm4125->rxdev, pm4125->txdev);
+error_put_tx:
+	put_device(pm4125->txdev);
+error_put_rx:
+	put_device(pm4125->rxdev);
 error_unbind_all:
 	component_unbind_all(dev, pm4125);
 	return ret;
@@ -1660,9 +1666,18 @@ static void pm4125_unbind(struct device *dev)
 	struct pm4125_priv *pm4125 = dev_get_drvdata(dev);
 
 	snd_soc_unregister_component(dev);
+	devm_regmap_del_irq_chip(dev, irq_find_mapping(pm4125->virq, 0),
+				 pm4125->irq_chip);
 	device_link_remove(dev, pm4125->txdev);
 	device_link_remove(dev, pm4125->rxdev);
 	device_link_remove(pm4125->rxdev, pm4125->txdev);
+
+	/* Release device references acquired in bind */
+	if (pm4125->txdev)
+		put_device(pm4125->txdev);
+	if (pm4125->rxdev)
+		put_device(pm4125->rxdev);
+
 	component_unbind_all(dev, pm4125);
 }
 
@@ -1695,6 +1710,7 @@ static int pm4125_probe(struct platform_device *pdev)
 {
 	struct component_match *match = NULL;
 	struct device *dev = &pdev->dev;
+	struct regmap_irq_chip *chip_desc;
 	struct pm4125_priv *pm4125;
 	struct wcd_mbhc_config *cfg;
 	int ret;
@@ -1704,6 +1720,14 @@ static int pm4125_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	dev_set_drvdata(dev, pm4125);
+
+	chip_desc = devm_kmemdup(dev, &pm4125_regmap_irq_chip,
+				 sizeof(pm4125_regmap_irq_chip),
+				 GFP_KERNEL);
+	if (!chip_desc)
+		return -ENOMEM;
+	chip_desc->irq_drv_data = pm4125;
+	pm4125->chip_desc = chip_desc;
 
 	ret = devm_regulator_bulk_get_enable(dev, ARRAY_SIZE(pm4125_power_supplies),
 					     pm4125_power_supplies);
