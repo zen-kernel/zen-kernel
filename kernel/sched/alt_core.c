@@ -1459,6 +1459,7 @@ static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
 	smp_wmb();
 
 	WRITE_ONCE(task_thread_info(p)->cpu, cpu);
+	rseq_sched_set_ids_changed(p);
 }
 
 void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
