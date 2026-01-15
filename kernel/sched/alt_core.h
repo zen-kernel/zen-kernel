@@ -19,6 +19,12 @@ static inline bool is_migration_disabled(struct task_struct *p)
 #define rt_policy(policy)	((policy) == SCHED_FIFO || (policy) == SCHED_RR)
 #define task_has_rt_policy(p)	(rt_policy((p)->policy))
 
+#define fair_policy(policy)	((policy) == SCHED_NORMAL || (policy) == SCHED_BATCH)
+
+#define valid_policy(policy)	((policy) <= SCHED_IDLE)
+
+#define task_has_dl_policy(p)	(false)
+
 struct affinity_context {
 	const struct cpumask	*new_mask;
 	struct cpumask		*user_mask;
@@ -73,7 +79,6 @@ static inline int rt_effective_prio(struct task_struct *p, int prio)
 
 extern int __sched_setscheduler(struct task_struct *p, const struct sched_attr *attr, bool user, bool pi);
 extern int __sched_setaffinity(struct task_struct *p, struct affinity_context *ctx);
-extern void __setscheduler_prio(struct task_struct *p, int prio);
 
 /*
  * Context API
@@ -106,6 +111,23 @@ static inline void __task_access_unlock(struct task_struct *p, raw_spinlock_t *l
 	if (NULL != lock)
 		raw_spin_unlock(lock);
 }
+
+static inline struct rq *task_access_lock(struct task_struct *p, struct rq_flags *rf)
+{
+	raw_spin_lock_irqsave(&p->pi_lock, rf->flags);
+	return __task_access_lock(p, &rf->lock);
+}
+
+static inline void task_access_unlock(struct task_struct *p, struct rq_flags *rf)
+{
+	__task_access_unlock(p, rf->lock);
+	raw_spin_unlock_irqrestore(&p->pi_lock, rf->flags);
+}
+
+DEFINE_LOCK_GUARD_1(task_access_lock, struct task_struct,
+		    _T->rq = task_access_lock(_T->lock, &_T->rf),
+		    task_access_unlock(_T->lock, &_T->rf),
+		    struct rq *rq; struct rq_flags rf)
 
 void check_task_changed(struct task_struct *p, struct rq *rq);
 

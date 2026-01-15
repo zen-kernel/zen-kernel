@@ -5031,21 +5031,6 @@ int default_wake_function(wait_queue_entry_t *curr, unsigned mode, int wake_flag
 }
 EXPORT_SYMBOL(default_wake_function);
 
-void check_task_changed(struct task_struct *p, struct rq *rq)
-{
-	/* Trigger resched if task sched_prio has been modified. */
-	if (task_on_rq_queued(p)) {
-		update_rq_clock(rq);
-		requeue_task(p, rq);
-		wakeup_preempt(rq);
-	}
-}
-
-void __setscheduler_prio(struct task_struct *p, int prio)
-{
-	p->prio = prio;
-}
-
 #ifdef CONFIG_RT_MUTEXES
 
 /*
@@ -5087,7 +5072,7 @@ void rt_mutex_post_schedule(void)
  */
 void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
 {
-	int prio;
+	int prio, queue_flag = DEQUEUE_SAVE | DEQUEUE_MOVE | DEQUEUE_NOCLOCK;
 	struct rq *rq;
 	raw_spinlock_t *lock;
 
@@ -5139,9 +5124,10 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
 
 	trace_sched_pi_setprio(p, pi_task);
 
-	__setscheduler_prio(p, prio);
+	scoped_guard (sched_change, p, queue_flag) {
+		p->prio = prio;
+	}
 
-	check_task_changed(p, rq);
 out_unlock:
 	/* Caller holds task_struct::pi_lock, IRQs are still disabled */
 
@@ -7530,3 +7516,37 @@ void mm_init_cid(struct mm_struct *mm, struct task_struct *p)
 #else /* CONFIG_SCHED_MM_CID */
 static inline void mm_update_cpus_allowed(struct mm_struct *mm, const struct cpumask *affmsk) { }
 #endif /* !CONFIG_SCHED_MM_CID */
+
+static DEFINE_PER_CPU(struct sched_change_ctx, sched_change_ctx);
+
+struct sched_change_ctx *sched_change_begin(struct task_struct *p, unsigned int flags)
+{
+	struct sched_change_ctx *ctx = this_cpu_ptr(&sched_change_ctx);
+
+	/*
+	 * Must exclusively use matched flags since this is both dequeue and
+	 * enqueue.
+	 */
+	WARN_ON_ONCE(flags & 0xFFFF0000);
+
+	*ctx = (struct sched_change_ctx){
+		.p = p,
+		.flags = flags,
+		.queued = task_on_rq_queued(p),
+	};
+
+	return ctx;
+}
+
+void sched_change_end(struct sched_change_ctx *ctx)
+{
+	struct task_struct *p = ctx->p;
+	struct rq *rq = task_rq(ctx->p);
+
+	/* Trigger resched if task sched_prio has been modified. */
+	if (ctx->queued) {
+		update_rq_clock(rq);
+		requeue_task(p, rq);
+		wakeup_preempt(rq);
+	}
+}
