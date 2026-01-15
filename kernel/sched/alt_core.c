@@ -1869,12 +1869,6 @@ static int select_fallback_rq(int cpu, struct task_struct *p)
 			}
 			fallthrough;
 		case possible:
-			/*
-			 * XXX When called from select_task_rq() we only
-			 * hold p->pi_lock and again violate locking order.
-			 *
-			 * More yuck to audit.
-			 */
 			set_cpus_allowed_force(p, task_cpu_fallback_mask(p));
 			state = fail;
 			break;
