@@ -255,20 +255,6 @@ static inline struct request *__ublk_check_and_get_req(struct ublk_device *ub,
 		u16 q_id, u16 tag, struct ublk_io *io, size_t offset);
 static inline unsigned int ublk_req_build_flags(struct request *req);
 
-static void ublk_partition_scan_work(struct work_struct *work)
-{
-	struct ublk_device *ub =
-		container_of(work, struct ublk_device, partition_scan_work);
-
-	if (WARN_ON_ONCE(!test_and_clear_bit(GD_SUPPRESS_PART_SCAN,
-					     &ub->ub_disk->state)))
-		return;
-
-	mutex_lock(&ub->ub_disk->open_mutex);
-	bdev_disk_changed(ub->ub_disk, false);
-	mutex_unlock(&ub->ub_disk->open_mutex);
-}
-
 static inline struct ublksrv_io_desc *
 ublk_get_iod(const struct ublk_queue *ubq, unsigned tag)
 {
@@ -1663,6 +1649,27 @@ static void ublk_put_disk(struct gendisk *disk)
 		put_device(disk_to_dev(disk));
 }
 
+static void ublk_partition_scan_work(struct work_struct *work)
+{
+	struct ublk_device *ub =
+		container_of(work, struct ublk_device, partition_scan_work);
+	/* Hold disk reference to prevent UAF during concurrent teardown */
+	struct gendisk *disk = ublk_get_disk(ub);
+
+	if (!disk)
+		return;
+
+	if (WARN_ON_ONCE(!test_and_clear_bit(GD_SUPPRESS_PART_SCAN,
+					     &disk->state)))
+		goto out;
+
+	mutex_lock(&disk->open_mutex);
+	bdev_disk_changed(disk, false);
+	mutex_unlock(&disk->open_mutex);
+out:
+	ublk_put_disk(disk);
+}
+
 /*
  * Use this function to ensure that ->canceling is consistently set for
  * the device and all queues. Do not set these flags directly.
@@ -2107,7 +2114,7 @@ static void ublk_stop_dev(struct ublk_device *ub)
 	mutex_lock(&ub->mutex);
 	ublk_stop_dev_unlocked(ub);
 	mutex_unlock(&ub->mutex);
-	flush_work(&ub->partition_scan_work);
+	cancel_work_sync(&ub->partition_scan_work);
 	ublk_cancel_dev(ub);
 }
 
@@ -3280,17 +3287,17 @@ static int ublk_ctrl_add_dev(const struct ublksrv_ctrl_cmd *header)
 			ub->dev_info.nr_hw_queues, nr_cpu_ids);
 	ublk_align_max_io_size(ub);
 
-	ret = ublk_init_queues(ub);
+	ret = ublk_add_tag_set(ub);
 	if (ret)
 		goto out_free_dev_number;
 
-	ret = ublk_add_tag_set(ub);
+	ret = ublk_init_queues(ub);
 	if (ret)
-		goto out_deinit_queues;
+		goto out_free_tag_set;
 
 	ret = -EFAULT;
 	if (copy_to_user(argp, &ub->dev_info, sizeof(info)))
-		goto out_free_tag_set;
+		goto out_deinit_queues;
 
 	/*
 	 * Add the char dev so that ublksrv daemon can be setup.
@@ -3299,10 +3306,10 @@ static int ublk_ctrl_add_dev(const struct ublksrv_ctrl_cmd *header)
 	ret = ublk_add_chdev(ub);
 	goto out_unlock;
 
-out_free_tag_set:
-	blk_mq_free_tag_set(&ub->tag_set);
 out_deinit_queues:
 	ublk_deinit_queues(ub);
+out_free_tag_set:
+	blk_mq_free_tag_set(&ub->tag_set);
 out_free_dev_number:
 	ublk_free_dev_number(ub);
 out_free_ub:
