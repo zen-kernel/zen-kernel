@@ -24,6 +24,7 @@ static inline bool is_migration_disabled(struct task_struct *p)
 #define valid_policy(policy)	((policy) <= SCHED_IDLE)
 
 #define task_has_dl_policy(p)	(false)
+#define dl_prio(prio)		(false)
 
 struct affinity_context {
 	const struct cpumask	*new_mask;
