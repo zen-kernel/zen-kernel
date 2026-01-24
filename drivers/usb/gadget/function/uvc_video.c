@@ -499,13 +499,11 @@ uvc_video_prep_requests(struct uvc_video *video)
 {
 	struct uvc_device *uvc = container_of(video, struct uvc_device, video);
 	struct usb_composite_dev *cdev = uvc->func.config->cdev;
-	unsigned int interval_duration = video->ep->desc->bInterval * 1250;
+	unsigned int interval_duration;
 	unsigned int max_req_size, req_size, header_size;
 	unsigned int nreq;
 
-	max_req_size = video->ep->maxpacket
-		 * max_t(unsigned int, video->ep->maxburst, 1)
-		 * (video->ep->mult);
+	max_req_size = video->max_req_size;
 
 	if (!usb_endpoint_xfer_isoc(video->ep->desc)) {
 		video->req_size = max_req_size;
@@ -515,8 +513,11 @@ uvc_video_prep_requests(struct uvc_video *video)
 		return;
 	}
 
+	interval_duration = 2 << (video->ep->desc->bInterval - 1);
 	if (cdev->gadget->speed < USB_SPEED_HIGH)
-		interval_duration = video->ep->desc->bInterval * 10000;
+		interval_duration *= 10000;
+	else
+		interval_duration *= 1250;
 
 	nreq = DIV_ROUND_UP(video->interval, interval_duration);
 
