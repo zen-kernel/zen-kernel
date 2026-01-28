@@ -365,6 +365,7 @@ static bool sugov_hold_freq(struct sugov_cpu *sg_cpu)
 	unsigned long idle_calls;
 	bool ret;
 
+#ifndef CONFIG_SCHED_ALT
 	/*
 	 * The heuristics in this function is for the fair class. For SCX, the
 	 * performance target comes directly from the BPF scheduler. Let's just
@@ -372,6 +373,7 @@ static bool sugov_hold_freq(struct sugov_cpu *sg_cpu)
 	 */
 	if (scx_switched_all())
 		return false;
+#endif /* !CONFIG_SCHED_ALT */
 
 	/* if capped by uclamp_max, always update to be in compliance */
 	if (uclamp_rq_is_capped(cpu_rq(sg_cpu->cpu)))
