@@ -6738,7 +6738,7 @@ static int cpu_shares_write_u64(struct cgroup_subsys_state *css,
 static u64 cpu_shares_read_u64(struct cgroup_subsys_state *css,
 			       struct cftype *cft)
 {
-	return 0;
+	return 1024;
 }
 
 static s64 cpu_idle_read_s64(struct cgroup_subsys_state *css,
@@ -6758,7 +6758,7 @@ static int cpu_idle_write_s64(struct cgroup_subsys_state *css,
 static s64 cpu_cfs_quota_read_s64(struct cgroup_subsys_state *css,
 				  struct cftype *cft)
 {
-	return 0;
+	return -1;
 }
 
 static int cpu_cfs_quota_write_s64(struct cgroup_subsys_state *css,
@@ -6770,7 +6770,7 @@ static int cpu_cfs_quota_write_s64(struct cgroup_subsys_state *css,
 static u64 cpu_cfs_period_read_u64(struct cgroup_subsys_state *css,
 				   struct cftype *cft)
 {
-	return 0;
+	return 100000ULL;
 }
 
 static int cpu_cfs_period_write_u64(struct cgroup_subsys_state *css,
@@ -6831,11 +6831,13 @@ static u64 cpu_rt_period_read_uint(struct cgroup_subsys_state *css,
 #ifdef CONFIG_UCLAMP_TASK_GROUP
 static int cpu_uclamp_min_show(struct seq_file *sf, void *v)
 {
+	seq_puts(sf, "0\n");
 	return 0;
 }
 
 static int cpu_uclamp_max_show(struct seq_file *sf, void *v)
 {
+	seq_puts(sf, "max\n");
 	return 0;
 }
 
@@ -6925,7 +6927,7 @@ static struct cftype cpu_legacy_files[] = {
 static u64 cpu_weight_read_u64(struct cgroup_subsys_state *css,
 			       struct cftype *cft)
 {
-	return 0;
+	return 100;
 }
 
 static int cpu_weight_write_u64(struct cgroup_subsys_state *css,
@@ -6950,6 +6952,7 @@ static int cpu_weight_nice_write_s64(struct cgroup_subsys_state *css,
 #ifdef CONFIG_CFS_BANDWIDTH
 static int cpu_max_show(struct seq_file *sf, void *v)
 {
+	seq_puts(sf, "max 100000\n");
 	return 0;
 }
 
