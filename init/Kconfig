@@ -251,6 +251,10 @@ config ZEN_INTERACTIVE
 	    Ondemand default up threshold..:  80    ->  55
 	    Ondemand micro up threshold....:  95    ->  60
 
+	  --- Split/Bus lock detection --------------------------
+
+	    Split lock mitigation..........:   1    ->   0
+
 config BROKEN
 	bool
 	help

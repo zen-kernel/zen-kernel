@@ -47,7 +47,11 @@ static const struct {
 
 static struct ratelimit_state bld_ratelimit;
 
+#ifdef CONFIG_ZEN_INTERACTIVE
+static unsigned int sysctl_sld_mitigate;
+#else
 static unsigned int sysctl_sld_mitigate = 1;
+#endif
 static DEFINE_SEMAPHORE(buslock_sem, 1);
 
 #ifdef CONFIG_PROC_SYSCTL
