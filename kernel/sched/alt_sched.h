@@ -311,7 +311,7 @@ struct rq {
 
 	/* Scratch cpumask to be temporarily used under rq_lock */
 	cpumask_var_t		scratch_mask;
-};
+} __no_randomize_layout;
 
 extern unsigned int sysctl_sched_base_slice;
 
@@ -797,6 +797,8 @@ extern void schedule_idle(void);
  * SUGOV stands for SchedUtil GOVernor.
  */
 #define SCHED_FLAG_SUGOV	0x10000000
+
+asmlinkage void schedule_user(void);
 
 #ifdef CONFIG_MEMBARRIER
 /*

@@ -1183,7 +1183,7 @@ unsigned long wait_task_inactive(struct task_struct *p, unsigned int match_state
 		rq = task_rq_lock(p, &rf);
 		trace_sched_wait_task(p);
 		running = task_on_cpu(p);
-		queued = p->on_rq;
+		queued = task_on_rq_queued(p);
 		ncsw = 0;
 		if ((match = __task_state_match(p, match_state))) {
 			/*
@@ -1333,10 +1333,6 @@ static inline void hrtick_start(struct rq *rq, u64 delay)
 	 */
 	delta = max_t(s64, delay, 10000LL);
 
-	rq->hrtick_time = ktime_add_ns(ktime_get(), delta);
-	if (!hrtick_needs_rearm(&rq->hrtick_timer, rq->hrtick_time))
-		return;
-
 	/*
 	 * If this is in the middle of schedule() only note the delay
 	 * and let hrtick_schedule_exit() deal with it.
@@ -1346,6 +1342,10 @@ static inline void hrtick_start(struct rq *rq, u64 delay)
 		rq->hrtick_delay = delta;
 		return;
 	}
+
+	rq->hrtick_time = ktime_add_ns(ktime_get(), delta);
+	if (!hrtick_needs_rearm(&rq->hrtick_timer, rq->hrtick_time))
+		return;
 
 	if (rq == this_rq())
 		hrtimer_start(&rq->hrtick_timer, rq->hrtick_time, HRTIMER_MODE_ABS_PINNED_HARD);
@@ -2956,12 +2956,7 @@ int task_call_func(struct task_struct *p, task_call_f func, void *arg)
  * @cpu: The CPU on which to snapshot the task.
  *
  * Returns the task_struct pointer of the task "currently" running on
- * the specified CPU.  If the same task is running on that CPU throughout,
- * the return value will be a pointer to that task's task_struct structure.
- * If the CPU did any context switches even vaguely concurrently with the
- * execution of this function, the return value will be a pointer to the
- * task_struct structure of a randomly chosen task that was running on
- * that CPU somewhere around the time that this function was executing.
+ * the specified CPU.
  *
  * If the specified CPU was offline, the return value is whatever it
  * is, perhaps a pointer to the task_struct structure of that CPU's idle
@@ -2975,11 +2970,16 @@ int task_call_func(struct task_struct *p, task_call_f func, void *arg)
  */
 struct task_struct *cpu_curr_snapshot(int cpu)
 {
+	struct rq *rq = cpu_rq(cpu);
 	struct task_struct *t;
+	struct rq_flags rf;
 
-	smp_mb(); /* Pairing determined by caller's synchronization design. */
+	rq_lock_irqsave(rq, &rf);
+	smp_mb__after_spinlock(); /* Pairing determined by caller's synchronization design. */
 	t = rcu_dereference(cpu_curr(cpu));
+	rq_unlock_irqrestore(rq, &rf);
 	smp_mb(); /* Pairing determined by caller's synchronization design. */
+
 	return t;
 }
 
@@ -3885,6 +3885,9 @@ EXPORT_PER_CPU_SYMBOL(kernel_cpustat);
 static inline void update_curr(struct rq *rq, struct task_struct *p)
 {
 	s64 ns = rq->clock_task - p->last_ran;
+
+	if (unlikely(ns <= 0))
+		return;
 
 	p->sched_time += ns;
 	cgroup_account_cputime(p, ns);
@@ -5347,8 +5350,8 @@ EXPORT_SYMBOL(__cond_resched_rwlock_write);
 
 #ifdef CONFIG_PREEMPT_DYNAMIC
 
-# ifdef CONFIG_GENERIC_ENTRY
-#  include <linux/entry-common.h>
+# ifdef CONFIG_GENERIC_IRQ_ENTRY
+#  include <linux/irq-entry-common.h>
 # endif
 
 /*
@@ -6256,6 +6259,7 @@ int sched_cpu_dying(unsigned int cpu)
 	sched_tick_stop(cpu);
 
 	raw_spin_rq_lock_irqsave(rq, flags);
+	update_rq_clock(rq);
 	if (rq->nr_running != 1 || rq_has_pinned_tasks(rq)) {
 		WARN(true, "Dying CPU not properly vacated!");
 		dump_rq_tasks(rq, KERN_WARNING);
