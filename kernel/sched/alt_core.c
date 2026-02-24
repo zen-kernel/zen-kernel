@@ -2140,8 +2140,11 @@ static int __set_cpus_allowed_ptr_locked(struct task_struct *p,
 		goto out;
 	}
 
-	if (cpumask_equal(&p->cpus_mask, ctx->new_mask))
+	if (cpumask_equal(&p->cpus_mask, ctx->new_mask)) {
+		if (ctx->flags & SCA_USER)
+			swap(p->user_cpus_ptr, ctx->user_mask);
 		goto out;
+	}
 
 	dest_cpu = cpumask_any_and(cpu_valid_mask, ctx->new_mask);
 	if (dest_cpu >= nr_cpu_ids) {
