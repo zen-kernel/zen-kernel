@@ -2,6 +2,7 @@
 #define _KERNEL_SCHED_ALT_SCHED_H
 
 #include <linux/context_tracking.h>
+#include <linux/memblock.h>
 #include <linux/profile.h>
 #include <linux/stop_machine.h>
 #include <linux/sched/rseq_api.h>
