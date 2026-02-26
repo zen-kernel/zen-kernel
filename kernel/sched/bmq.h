@@ -26,7 +26,8 @@ static inline void boost_task(struct task_struct *p, int n)
 
 static inline void deboost_task(struct task_struct *p)
 {
-	if (p->boost_prio < MAX_PRIORITY_ADJ)
+	if ((SCHED_NORMAL == p->policy || SCHED_BATCH == p->policy) &&
+	    p->boost_prio < MAX_PRIORITY_ADJ)
 		p->boost_prio++;
 }
 
