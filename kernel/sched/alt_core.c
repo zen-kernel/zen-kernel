@@ -72,6 +72,9 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(ipi_send_cpumask);
  * associated with them) to allow external modules to probe them.
  */
 EXPORT_TRACEPOINT_SYMBOL_GPL(pelt_irq_tp);
+EXPORT_TRACEPOINT_SYMBOL_GPL(sched_entry_tp);
+EXPORT_TRACEPOINT_SYMBOL_GPL(sched_exit_tp);
+EXPORT_TRACEPOINT_SYMBOL_GPL(sched_set_need_resched_tp);
 
 #define sched_feat(x)	(1)
 /*
@@ -590,6 +593,7 @@ static inline void sched_update_tick_dependency(struct rq *rq) { }
 static inline void add_nr_running(struct rq *rq, unsigned count)
 {
 	rq->nr_running += count;
+	trace_sched_update_nr_running_tp(rq, count);
 	if (rq->nr_running > 1) {
 		cpumask_set_cpu(cpu_of(rq), &sched_rq_pending_mask);
 		rq->prio_balance_time = rq->clock;
@@ -601,6 +605,7 @@ static inline void add_nr_running(struct rq *rq, unsigned count)
 static inline void sub_nr_running(struct rq *rq, unsigned count)
 {
 	rq->nr_running -= count;
+	trace_sched_update_nr_running_tp(rq, -count);
 	if (rq->nr_running < 2) {
 		cpumask_clear_cpu(cpu_of(rq), &sched_rq_pending_mask);
 		rq->prio_balance_time = 0;
@@ -4651,7 +4656,7 @@ static void __sched notrace __schedule(int sched_mode)
 	int cpu;
 
 	/* Trace preemptions consistently with task switches */
-	trace_sched_entry_tp(preempt);
+	trace_sched_entry_tp(sched_mode == SM_PREEMPT);
 
 	cpu = smp_processor_id();
 	rq = cpu_rq(cpu);
