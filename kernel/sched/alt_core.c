@@ -2978,7 +2978,7 @@ int task_call_func(struct task_struct *p, task_call_f func, void *arg)
 	ret = func(p, arg);
 
 	if (rq)
-		__task_rq_unlock(rq, &rf);
+		__task_rq_unlock(rq, p, &rf);
 
 	raw_spin_unlock_irqrestore(&p->pi_lock, rf.flags);
 	return ret;
@@ -5233,7 +5233,7 @@ out_unlock:
 	/* Caller holds task_struct::pi_lock, IRQs are still disabled */
 
 	__balance_callbacks(rq);
-	__task_rq_unlock(rq, &rf);
+	__task_rq_unlock(rq, p, &rf);
 }
 #endif /* CONFIG_RT_MUTEXES */
 
