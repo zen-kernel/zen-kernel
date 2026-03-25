@@ -5349,8 +5349,8 @@ EXPORT_SYMBOL(__cond_resched_rwlock_write);
 
 #ifdef CONFIG_PREEMPT_DYNAMIC
 
-# ifdef CONFIG_GENERIC_ENTRY
-#  include <linux/entry-common.h>
+# ifdef CONFIG_GENERIC_IRQ_ENTRY
+#  include <linux/irq-entry-common.h>
 # endif
 
 /*
