@@ -7377,7 +7377,6 @@ static void sched_mm_cid_fork(struct task_struct *t)
 	struct mm_struct *mm = t->mm;
 	bool percpu;
 
-	WARN_ON_ONCE(!mm || t->mm_cid.cid != MM_CID_UNSET);
 	if (!mm)
 		return;
 
