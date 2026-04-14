@@ -142,6 +142,7 @@ static void amdgpu_vm_assert_locked(struct amdgpu_vm *vm)
 static void amdgpu_vm_bo_status_init(struct amdgpu_vm_bo_status *lists)
 {
 	INIT_LIST_HEAD(&lists->evicted);
+	INIT_LIST_HEAD(&lists->soft_evicted);
 	INIT_LIST_HEAD(&lists->needs_update);
 	INIT_LIST_HEAD(&lists->idle);
 }
@@ -197,19 +198,53 @@ bool amdgpu_vm_is_bo_always_valid(struct amdgpu_vm *vm, struct amdgpu_bo *bo)
  * amdgpu_vm_bo_evicted - vm_bo is evicted
  *
  * @vm_bo: vm_bo which is evicted
+ * @soft: Whether the bo is "soft evicted", i.e. it can also stay in its current
+ * location
  *
  * State for vm_bo objects meaning the underlying BO was evicted and need to
  * move in place again.
  */
-static void amdgpu_vm_bo_evicted(struct amdgpu_vm_bo_base *vm_bo)
+static void amdgpu_vm_bo_evicted(struct amdgpu_vm_bo_base *vm_bo, bool soft)
 {
 	struct amdgpu_vm_bo_status *lists;
 
 	lists = amdgpu_vm_bo_lock_lists(vm_bo);
 	vm_bo->moved = true;
-	list_move(&vm_bo->vm_status, &lists->evicted);
+	if (soft)
+		list_move_tail(&vm_bo->vm_status, &lists->soft_evicted);
+	else
+		list_move_tail(&vm_bo->vm_status, &lists->evicted);
 	amdgpu_vm_bo_unlock_lists(vm_bo);
 }
+
+/**
+ * amdgpu_vm_bo_needs_eviction - check if a vm_bo is in a suboptimal place
+ *
+ * @adev: device the vm_bo belongs to
+ * @base: vm_bo to possibly evict
+ *
+ * Returns whether an eviction should take place.
+ */
+static bool amdgpu_vm_bo_needs_eviction(struct amdgpu_device *adev,
+					struct amdgpu_vm_bo_base *vm_bo)
+{
+	struct amdgpu_bo *bo = vm_bo->bo;
+	uint32_t preferred_domains;
+	uint32_t current_domain;
+
+	/* For VRAM|GTT BOs, VRAM is actually preferred and we should try moving
+	 * it back into VRAM if it ends up in GTT.
+	 */
+	preferred_domains = bo->preferred_domains;
+	if (preferred_domains == (AMDGPU_GEM_DOMAIN_VRAM | AMDGPU_GEM_DOMAIN_GTT) &&
+	    !(adev->flags & AMD_IS_APU))
+		preferred_domains = AMDGPU_GEM_DOMAIN_VRAM;
+
+	current_domain = amdgpu_mem_type_to_domain(bo->tbo.resource->mem_type);
+
+	return !(preferred_domains & current_domain);
+}
+
 /**
  * amdgpu_vm_bo_needs_update - vm_bo needs pagetable update
  *
@@ -395,6 +430,7 @@ void amdgpu_vm_update_stats(struct amdgpu_vm_bo_base *base,
 /**
  * amdgpu_vm_bo_base_init - Adds bo to the list of bos associated with the vm
  *
+ * @adev: the amdgpu_device the vm belongs to
  * @base: base structure for tracking BO usage in a VM
  * @vm: vm to which bo is to be added
  * @bo: amdgpu buffer object
@@ -402,9 +438,12 @@ void amdgpu_vm_update_stats(struct amdgpu_vm_bo_base *base,
  * Initialize a bo_va_base structure and add it to the appropriate lists
  *
  */
-void amdgpu_vm_bo_base_init(struct amdgpu_vm_bo_base *base,
+void amdgpu_vm_bo_base_init(struct amdgpu_device *adev,
+			    struct amdgpu_vm_bo_base *base,
 			    struct amdgpu_vm *vm, struct amdgpu_bo *bo)
 {
+	uint32_t current_domain;
+
 	base->vm = vm;
 	base->bo = bo;
 	base->next = NULL;
@@ -429,6 +468,8 @@ void amdgpu_vm_bo_base_init(struct amdgpu_vm_bo_base *base,
 
 	ttm_bo_set_bulk_move(&bo->tbo, &vm->lru_bulk_move);
 
+	current_domain = amdgpu_mem_type_to_domain(bo->tbo.resource->mem_type);
+
 	/*
 	 * When a per VM isn't in the desired domain put it into the evicted
 	 * state to make sure that it gets validated on the next best occasion.
@@ -437,7 +478,7 @@ void amdgpu_vm_bo_base_init(struct amdgpu_vm_bo_base *base,
 	    amdgpu_mem_type_to_domain(bo->tbo.resource->mem_type))
 		amdgpu_vm_bo_needs_update(base);
 	else
-		amdgpu_vm_bo_evicted(base);
+		amdgpu_vm_bo_evicted(base, bo->preferred_domains & current_domain);
 }
 
 /**
@@ -658,6 +699,26 @@ restart:
 	}
 	spin_unlock(&vm->individual_lock);
 
+	list_for_each_entry_safe(bo_base, tmp, &vm->always_valid.soft_evicted,
+				 vm_status) {
+		r = validate(param, bo_base->bo);
+		if (r)
+			return r;
+
+		bo_base->moved = true;
+		amdgpu_vm_bo_needs_update(bo_base);
+
+		/*
+		 * If the vm_bo is still in a suboptimal place after
+		 * validate(), we failed to find enough space in the
+		 * optimal place, so back off for now and retry on the
+		 * next submission.
+		 */
+		if (amdgpu_vm_bo_needs_eviction(adev, bo_base))
+			goto out;
+
+	}
+out:
 	return 0;
 }
 
@@ -1268,6 +1329,7 @@ int amdgpu_vm_bo_update(struct amdgpu_device *adev, struct amdgpu_bo_va *bo_va,
 	struct dma_fence **last_update;
 	dma_addr_t *pages_addr = NULL;
 	struct ttm_resource *mem;
+	uint32_t current_domain;
 	struct amdgpu_sync sync;
 	bool flush_tlb = clear;
 	uint64_t vram_base;
@@ -1381,10 +1443,12 @@ int amdgpu_vm_bo_update(struct amdgpu_device *adev, struct amdgpu_bo_va *bo_va,
 	 * next command submission.
 	 */
 	if (amdgpu_vm_is_bo_always_valid(vm, bo)) {
-		if (bo->tbo.resource &&
-		    !(bo->preferred_domains &
-		      amdgpu_mem_type_to_domain(bo->tbo.resource->mem_type)))
-			amdgpu_vm_bo_evicted(&bo_va->base);
+		current_domain = amdgpu_mem_type_to_domain(
+					bo->tbo.resource->mem_type);
+		if (amdgpu_vm_bo_needs_eviction(adev, &bo_va->base))
+			amdgpu_vm_bo_evicted(&bo_va->base,
+					     bo->preferred_domains &
+					     current_domain);
 		else
 			amdgpu_vm_bo_idle(&bo_va->base);
 	} else {
@@ -1664,7 +1728,7 @@ int amdgpu_vm_handle_moved(struct amdgpu_device *adev,
 		    drm_gem_is_imported(&bo_va->base.bo->tbo.base) &&
 		    (!bo_va->base.bo->tbo.resource ||
 		     bo_va->base.bo->tbo.resource->mem_type == TTM_PL_SYSTEM))
-			amdgpu_vm_bo_evicted(&bo_va->base);
+			amdgpu_vm_bo_evicted(&bo_va->base, false);
 
 		spin_lock(&vm->individual_lock);
 	}
@@ -1745,7 +1809,7 @@ struct amdgpu_bo_va *amdgpu_vm_bo_add(struct amdgpu_device *adev,
 	if (bo_va == NULL) {
 		return NULL;
 	}
-	amdgpu_vm_bo_base_init(&bo_va->base, vm, bo);
+	amdgpu_vm_bo_base_init(adev, &bo_va->base, vm, bo);
 
 	bo_va->ref_count = 1;
 	bo_va->last_pt_update = dma_fence_get_stub();
@@ -2282,7 +2346,7 @@ void amdgpu_vm_bo_invalidate(struct amdgpu_bo *bo, bool evicted)
 		struct amdgpu_vm *vm = bo_base->vm;
 
 		if (evicted && amdgpu_vm_is_bo_always_valid(vm, bo)) {
-			amdgpu_vm_bo_evicted(bo_base);
+			amdgpu_vm_bo_evicted(bo_base, false);
 			continue;
 		}
 
@@ -2625,7 +2689,7 @@ int amdgpu_vm_init(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 		goto error_free_delayed;
 	}
 
-	amdgpu_vm_bo_base_init(&vm->root, vm, root_bo);
+	amdgpu_vm_bo_base_init(adev, &vm->root, vm, root_bo);
 	r = dma_resv_reserve_fences(root_bo->tbo.base.resv, 1);
 	if (r)
 		goto error_free_root;

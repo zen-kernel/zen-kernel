@@ -227,6 +227,12 @@ struct amdgpu_vm_bo_status {
 	/* BOs evicted which need to move into place again */
 	struct list_head		evicted;
 
+	/*
+	 * BOs that are not in the optimal place but don't strictly
+	 * require being moved.
+	 */
+	struct list_head	soft_evicted;
+
 	/* BOs whose mappings changed but PDs/PTs haven't been updated */
 	struct list_head		needs_update;
 
@@ -528,7 +534,8 @@ int amdgpu_vm_flush_compute_tlb(struct amdgpu_device *adev,
 				struct amdgpu_vm *vm,
 				uint32_t flush_type,
 				uint32_t xcc_mask);
-void amdgpu_vm_bo_base_init(struct amdgpu_vm_bo_base *base,
+void amdgpu_vm_bo_base_init(struct amdgpu_device *adev,
+			    struct amdgpu_vm_bo_base *base,
 			    struct amdgpu_vm *vm, struct amdgpu_bo *bo);
 int amdgpu_vm_update_range(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 			   bool immediate, bool unlocked, bool flush_tlb,
