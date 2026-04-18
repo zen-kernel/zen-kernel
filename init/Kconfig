@@ -1329,7 +1329,7 @@ config CPUSETS
 
 config CPUSETS_V1
 	bool "Legacy cgroup v1 cpusets controller"
-	depends on CPUSETS
+	depends on (CPUSETS && !SCHED_ALT)
 	default n
 	help
 	  Legacy cgroup v1 cpusets controller which has been deprecated by
