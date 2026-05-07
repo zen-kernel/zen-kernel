@@ -3907,7 +3907,7 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	 * Tell rseq that the task was scheduled in. Must be after
 	 * switch_mm_cid() to get the TIF flag set.
 	 */
-	rseq_sched_switch_event(prev);
+	rseq_sched_switch_event(next);
 
 	prepare_lock_switch(rq, next);
 
