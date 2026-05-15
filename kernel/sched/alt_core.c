@@ -1314,16 +1314,9 @@ static enum hrtimer_restart hrtick(struct hrtimer *timer)
  *  - enabled by features
  *  - hrtimer is actually high res
  */
-static inline int hrtick_enabled(struct rq *rq)
+static inline bool hrtick_enabled(struct rq *rq)
 {
-	/**
-	 * Alt schedule FW doesn't support sched_feat yet
-	if (!sched_feat(HRTICK))
-		return 0;
-	*/
-	if (!cpu_active(cpu_of(rq)))
-		return 0;
-	return hrtimer_is_hres_active(&rq->hrtick_timer);
+	return cpu_active(cpu_of(rq)) && hrtimer_highres_enabled();
 }
 
 static void __hrtick_restart(struct rq *rq)
@@ -1376,7 +1369,7 @@ static void hrtick_rq_init(struct rq *rq)
 	hrtimer_setup(&rq->hrtick_timer, hrtick, CLOCK_MONOTONIC, HRTIMER_MODE_REL_HARD);
 }
 #else	/* !CONFIG_SCHED_HRTICK: */
-static inline int hrtick_enabled(struct rq *rq)
+static inline bool hrtick_enabled(struct rq *rq)
 {
 	return 0;
 }
