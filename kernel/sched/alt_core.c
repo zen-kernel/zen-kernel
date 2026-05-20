@@ -1325,12 +1325,24 @@ static inline bool hrtick_enabled(struct rq *rq)
 	return cpu_active(cpu_of(rq)) && hrtimer_highres_enabled();
 }
 
-static void __hrtick_restart(struct rq *rq)
+static inline bool hrtick_needs_rearm(struct hrtimer *timer, ktime_t expires)
+{
+	/*
+	 * Queued is false when the timer is not started or currently
+	 * running the callback. In both cases, restart. If queued check
+	 * whether the expiry time actually changes substantially.
+	 */
+	return !hrtimer_is_queued(timer) ||
+		abs(expires - hrtimer_get_expires(timer)) > 5000;
+}
+
+static void hrtick_cond_restart(struct rq *rq)
 {
 	struct hrtimer *timer = &rq->hrtick_timer;
 	ktime_t time = rq->hrtick_time;
 
-	hrtimer_start(timer, time, HRTIMER_MODE_ABS_PINNED_HARD);
+	if (hrtick_needs_rearm(timer, time))
+		hrtimer_start(timer, time, HRTIMER_MODE_ABS_PINNED_HARD);
 }
 
 /*
@@ -1341,7 +1353,7 @@ static void __hrtick_start(void *arg)
 	struct rq *rq = arg;
 
 	raw_spin_lock(&rq->lock);
-	__hrtick_restart(rq);
+	hrtick_cond_restart(rq);
 	raw_spin_unlock(&rq->lock);
 }
 
@@ -1361,6 +1373,8 @@ static inline void hrtick_start(struct rq *rq, u64 delay)
 	delta = max_t(s64, delay, 10000LL);
 
 	rq->hrtick_time = ktime_add_ns(ktime_get(), delta);
+	if (!hrtick_needs_rearm(&rq->hrtick_timer, rq->hrtick_time))
+		return;
 
 	/*
 	 * If this is in the middle of schedule() only note the delay
@@ -1373,7 +1387,7 @@ static inline void hrtick_start(struct rq *rq, u64 delay)
 	}
 
 	if (rq == this_rq())
-		__hrtick_restart(rq);
+		hrtimer_start(&rq->hrtick_timer, rq->hrtick_time, HRTIMER_MODE_ABS_PINNED_HARD);
 	else
 		smp_call_function_single_async(cpu_of(rq), &rq->hrtick_csd);
 }
@@ -1387,7 +1401,7 @@ static inline void hrtick_schedule_exit(struct rq *rq)
 {
 	if (rq->hrtick_sched & HRTICK_SCHED_START) {
 		rq->hrtick_time = ktime_add_ns(ktime_get(), rq->hrtick_delay);
-		__hrtick_restart(rq);
+		hrtick_cond_restart(rq);
 	} else if (idle_rq(rq)) {
 		/*
 		 * No need for using hrtimer_is_active(). The timer is CPU local
