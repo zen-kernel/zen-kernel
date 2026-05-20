@@ -42,7 +42,6 @@ static inline bool dl_task(struct task_struct *p)
 {
 	return dl_prio(p->prio);
 }
-#endif /* CONFIG_SCHED_ALT */
 
 static inline bool dl_time_before(u64 a, u64 b)
 {
@@ -92,5 +91,6 @@ static inline bool dl_is_implicit(struct sched_dl_entity *dl_se)
 {
 	return dl_se->dl_deadline == dl_se->dl_period;
 }
+#endif /* !CONFIG_SCHED_ALT */
 
 #endif /* _LINUX_SCHED_DEADLINE_H */
