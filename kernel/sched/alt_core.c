@@ -1352,7 +1352,6 @@ static void __hrtick_start(void *arg)
  */
 static inline void hrtick_start(struct rq *rq, u64 delay)
 {
-	struct hrtimer *timer = &rq->hrtick_timer;
 	s64 delta;
 
 	/*
@@ -1361,7 +1360,7 @@ static inline void hrtick_start(struct rq *rq, u64 delay)
 	 */
 	delta = max_t(s64, delay, 10000LL);
 
-	rq->hrtick_time = ktime_add_ns(hrtimer_cb_get_time(timer), delta);
+	rq->hrtick_time = ktime_add_ns(ktime_get(), delta);
 
 	/*
 	 * If this is in the middle of schedule() only note the delay
