@@ -2444,6 +2444,8 @@ static void __ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags
 
 static inline bool ttwu_queue_cond(struct task_struct *p, int cpu)
 {
+	int this_cpu = smp_processor_id();
+
 	/*
 	 * Do not complicate things with the async wake_list while the CPU is
 	 * in hotplug state.
@@ -2459,10 +2461,10 @@ static inline bool ttwu_queue_cond(struct task_struct *p, int cpu)
 	 * If the CPU does not share cache, then queue the task on the
 	 * remote rqs wakelist to avoid accessing remote data.
 	 */
-	if (!cpus_share_cache(smp_processor_id(), cpu))
+	if (!cpus_share_cache(this_cpu, cpu))
 		return true;
 
-	if (cpu == smp_processor_id())
+	if (cpu == this_cpu)
 		return false;
 
 	/*
