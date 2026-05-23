@@ -1939,7 +1939,7 @@ void amdgpu_ras_check_bad_page_status(struct amdgpu_device *adev)
 	if (!control || amdgpu_bad_page_threshold == 0)
 		return;
 
-	if (control->ras_num_bad_pages >= ras->bad_page_cnt_threshold) {
+	if (control->ras_num_bad_pages > ras->bad_page_cnt_threshold) {
 		if (amdgpu_dpm_send_rma_reason(adev))
 			dev_warn(adev->dev, "Unable to send out-of-band RMA CPER");
 		else

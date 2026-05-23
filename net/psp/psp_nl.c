@@ -305,8 +305,13 @@ int psp_assoc_device_get_locked(const struct genl_split_ops *ops,
 
 	psd = psp_dev_get_for_sock(socket->sk);
 	if (psd) {
-		err = psp_dev_check_access(psd, genl_info_net(info));
-		if (err) {
+		/* Extra care needed here, psp_dev_get_for_sock() only gives
+		 * us access to struct psp_dev's memory, which is quite weak.
+		 */
+		mutex_lock(&psd->lock);
+		if (!psp_dev_is_registered(psd) ||
+		    psp_dev_check_access(psd, genl_info_net(info))) {
+			mutex_unlock(&psd->lock);
 			psp_dev_put(psd);
 			psd = NULL;
 		}
@@ -319,7 +324,6 @@ int psp_assoc_device_get_locked(const struct genl_split_ops *ops,
 
 	id = info->attrs[PSP_A_ASSOC_DEV_ID];
 	if (psd) {
-		mutex_lock(&psd->lock);
 		if (id && psd->id != nla_get_u32(id)) {
 			mutex_unlock(&psd->lock);
 			NL_SET_ERR_MSG_ATTR(info->extack, id,

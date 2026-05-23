@@ -6281,14 +6281,23 @@ nfsd4_encode_operation(struct nfsd4_compoundres *resp, struct nfsd4_op *op)
 		int len = xdr->buf->len - (op_status_offset + XDR_UNIT);
 
 		so->so_replay.rp_status = op->status;
-		if (len <= NFSD4_REPLAY_ISIZE) {
-			so->so_replay.rp_buflen = len;
-			read_bytes_from_xdr_buf(xdr->buf,
-						op_status_offset + XDR_UNIT,
-						so->so_replay.rp_buf, len);
-		} else {
-			so->so_replay.rp_buflen = 0;
+		if (len > NFSD4_REPLAY_ISIZE) {
+			char *buf = kmalloc(len, GFP_KERNEL);
+
+			nfs4_replay_free_cache(&so->so_replay);
+			if (buf) {
+				so->so_replay.rp_buf = buf;
+			} else {
+				/* rp_buflen already zeroed; skip caching */
+				goto status;
+			}
+		} else if (so->so_replay.rp_buf != so->so_replay.rp_ibuf) {
+			nfs4_replay_free_cache(&so->so_replay);
 		}
+		so->so_replay.rp_buflen = len;
+		read_bytes_from_xdr_buf(xdr->buf,
+					op_status_offset + XDR_UNIT,
+					so->so_replay.rp_buf, len);
 	}
 status:
 	op->status = nfsd4_map_status(op->status,

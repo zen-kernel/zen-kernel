@@ -1133,9 +1133,9 @@ const char __rcu *dma_fence_driver_name(struct dma_fence *fence)
 			 "RCU protection is required for safe access to returned string");
 
 	if (!dma_fence_test_signaled_flag(fence))
-		return fence->ops->get_driver_name(fence);
+		return (const char __rcu *)fence->ops->get_driver_name(fence);
 	else
-		return "detached-driver";
+		return (const char __rcu *)"detached-driver";
 }
 EXPORT_SYMBOL(dma_fence_driver_name);
 
@@ -1165,8 +1165,8 @@ const char __rcu *dma_fence_timeline_name(struct dma_fence *fence)
 			 "RCU protection is required for safe access to returned string");
 
 	if (!dma_fence_test_signaled_flag(fence))
-		return fence->ops->get_timeline_name(fence);
+		return (const char __rcu *)fence->ops->get_driver_name(fence);
 	else
-		return "signaled-timeline";
+		return (const char __rcu *)"signaled-timeline";
 }
 EXPORT_SYMBOL(dma_fence_timeline_name);

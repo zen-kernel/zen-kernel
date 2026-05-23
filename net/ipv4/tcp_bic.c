@@ -74,7 +74,7 @@ static void bictcp_init(struct sock *sk)
 	bictcp_reset(ca);
 
 	if (initial_ssthresh)
-		tcp_sk(sk)->snd_ssthresh = initial_ssthresh;
+		WRITE_ONCE(tcp_sk(sk)->snd_ssthresh, initial_ssthresh);
 }
 
 /*

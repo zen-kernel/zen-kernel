@@ -869,13 +869,13 @@ static int xe_eu_stall_stream_close(struct inode *inode, struct file *file)
 	struct xe_eu_stall_data_stream *stream = file->private_data;
 	struct xe_gt *gt = stream->gt;
 
-	drm_dev_put(&gt->tile->xe->drm);
-
 	mutex_lock(&gt->eu_stall->stream_lock);
 	xe_eu_stall_disable_locked(stream);
 	xe_eu_stall_data_buf_destroy(stream);
 	xe_eu_stall_stream_free(stream);
 	mutex_unlock(&gt->eu_stall->stream_lock);
+
+	drm_dev_put(&gt->tile->xe->drm);
 
 	return 0;
 }

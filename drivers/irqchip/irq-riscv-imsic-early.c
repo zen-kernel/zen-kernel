@@ -158,6 +158,8 @@ static int imsic_dying_cpu(unsigned int cpu)
 	/* Cleanup IPIs */
 	imsic_ipi_dying_cpu();
 
+	imsic_local_sync_all(false);
+
 	/* Mark per-CPU IMSIC state as offline */
 	imsic_state_offline();
 

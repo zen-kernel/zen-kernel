@@ -1399,7 +1399,8 @@ static struct snd_soc_acpi_mach *hda_sdw_machine_select(struct snd_sof_dev *sdev
 		link_mask |= BIT(peripherals->array[i]->bus->link_id);
 
 	link_num = hweight32(link_mask);
-	links = devm_kcalloc(sdev->dev, link_num, sizeof(*links), GFP_KERNEL);
+	/* An empty adr_link is needed to terminate the adr_link loop */
+	links = devm_kcalloc(sdev->dev, link_num + 1, sizeof(*links), GFP_KERNEL);
 	if (!links)
 		return NULL;
 

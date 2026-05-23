@@ -164,7 +164,7 @@ struct bmic_controller_parameters {
 struct ctlr_info {
 	unsigned int *reply_map;
 	int	ctlr;
-	char	devname[8];
+	char	devname[16];
 	char    *product_name;
 	struct pci_dev *pdev;
 	u32	board_id;
@@ -255,7 +255,7 @@ struct ctlr_info {
 	int remove_in_progress;
 	/* Address of h->q[x] is passed to intr handler to know which queue */
 	u8 q[MAX_REPLY_QUEUES];
-	char intrname[MAX_REPLY_QUEUES][16];	/* "hpsa0-msix00" names */
+	char intrname[MAX_REPLY_QUEUES][32];	/* controller and IRQ names */
 	u32 TMFSupportFlags; /* cache what task mgmt funcs are supported. */
 #define HPSATMF_BITS_SUPPORTED  (1 << 0)
 #define HPSATMF_PHYS_LUN_RESET  (1 << 1)

@@ -595,7 +595,8 @@
 
 	hdmi@3d {
 		compatible = "adi,adv7535";
-		reg = <0x3d>;
+		reg = <0x3d>, <0x3f>, <0x3b>, <0x38>;
+		reg-names = "main", "edid", "cec", "packet";
 		interrupt-parent = <&gpio1>;
 		interrupts = <9 IRQ_TYPE_EDGE_FALLING>;
 		adi,dsi-lanes = <4>;
@@ -1064,7 +1065,7 @@
 
 	pinctrl_pcie0_reg: pcie0reggrp {
 		fsl,pins = <
-			MX8MP_IOMUXC_SD1_DATA4__GPIO2_IO06	0x40
+			MX8MP_IOMUXC_SD1_DATA4__GPIO2_IO06	0x140
 		>;
 	};
 

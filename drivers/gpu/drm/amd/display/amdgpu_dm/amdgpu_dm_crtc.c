@@ -101,23 +101,22 @@ bool amdgpu_dm_crtc_vrr_active(const struct dm_crtc_state *dm_state)
 
 /**
  * amdgpu_dm_crtc_set_panel_sr_feature() - Manage panel self-refresh features.
- *
- * @vblank_work:    is a pointer to a struct vblank_control_work object.
- * @vblank_enabled: indicates whether the DRM vblank counter is currently
- *                  enabled (true) or disabled (false).
- * @allow_sr_entry: represents whether entry into the self-refresh mode is
- *                  allowed (true) or not allowed (false).
+ * @dm: amdgpu display manager instance.
+ * @acrtc: CRTC whose panel self-refresh state is being updated.
+ * @stream: DC stream associated with @acrtc.
+ * @vblank_enabled: Whether the DRM vblank counter is currently enabled.
+ * @allow_sr_entry: Whether entry into self-refresh mode is allowed.
  *
  * The DRM vblank counter enable/disable action is used as the trigger to enable
  * or disable various panel self-refresh features:
  *
  * Panel Replay and PSR SU
  * - Enable when:
- *      - VRR is disabled
- *      - vblank counter is disabled
- *      - entry is allowed: usermode demonstrates an adequate number of fast
- *        commits)
- *     - CRC capture window isn't active
+ *   - VRR is disabled
+ *   - vblank counter is disabled
+ *   - entry is allowed: usermode demonstrates an adequate number of fast
+ *     commits
+ *   - CRC capture window isn't active
  * - Keep enabled even when vblank counter gets enabled
  *
  * PSR1

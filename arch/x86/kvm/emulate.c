@@ -4469,7 +4469,7 @@ static const struct opcode opcode_map_0f_38[256] = {
 	X16(N), X16(N),
 	/* 0x20 - 0x2f */
 	X8(N),
-	X2(N), GP(SrcReg | DstMem | ModRM | Mov | Aligned, &pfx_0f_e7_0f_38_2a), N, N, N, N, N,
+	X2(N), GP(SrcMem | DstReg | ModRM | Mov | Aligned, &pfx_0f_e7_0f_38_2a), N, N, N, N, N,
 	/* 0x30 - 0x7f */
 	X16(N), X16(N), X16(N), X16(N), X16(N),
 	/* 0x80 - 0xef */

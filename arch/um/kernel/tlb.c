@@ -165,6 +165,7 @@ int um_tlb_sync(struct mm_struct *mm)
 	unsigned long addr, next;
 	int ret = 0;
 
+	guard(spinlock_irqsave)(&mm->page_table_lock);
 	guard(spinlock_irqsave)(&mm->context.sync_tlb_lock);
 
 	if (mm->context.sync_tlb_range_to == 0)

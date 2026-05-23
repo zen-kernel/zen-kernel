@@ -171,7 +171,7 @@ static __always_inline bool __mutex_unlock_fast(struct mutex *lock)
 
 #else /* !CONFIG_DEBUG_LOCK_ALLOC */
 
-void mutex_init_lockep(struct mutex *lock, const char *name, struct lock_class_key *key)
+void mutex_init_lockdep(struct mutex *lock, const char *name, struct lock_class_key *key)
 {
 	__mutex_init_generic(lock);
 
@@ -181,7 +181,7 @@ void mutex_init_lockep(struct mutex *lock, const char *name, struct lock_class_k
 	debug_check_no_locks_freed((void *)lock, sizeof(*lock));
 	lockdep_init_map_wait(&lock->dep_map, name, key, 0, LD_WAIT_SLEEP);
 }
-EXPORT_SYMBOL(mutex_init_lockep);
+EXPORT_SYMBOL(mutex_init_lockdep);
 #endif /* !CONFIG_DEBUG_LOCK_ALLOC */
 
 static inline void __mutex_set_flag(struct mutex *lock, unsigned long flag)

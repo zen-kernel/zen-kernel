@@ -181,7 +181,7 @@ static inline void tcp_accecn_third_ack(struct sock *sk,
 		    tcp_accecn_validate_syn_feedback(sk, ace, sent_ect)) {
 			if ((tcp_accecn_extract_syn_ect(ace) == INET_ECN_CE) &&
 			    !tp->delivered_ce)
-				tp->delivered_ce++;
+				WRITE_ONCE(tp->delivered_ce, 1);
 		}
 		break;
 	}

@@ -147,7 +147,8 @@ do_vegas:
 					tcp_snd_cwnd_set(tp, max(tcp_snd_cwnd(tp),
 								 yeah->reno_count));
 
-					tp->snd_ssthresh = tcp_snd_cwnd(tp);
+					WRITE_ONCE(tp->snd_ssthresh,
+						   tcp_snd_cwnd(tp));
 				}
 
 				if (yeah->reno_count <= 2)

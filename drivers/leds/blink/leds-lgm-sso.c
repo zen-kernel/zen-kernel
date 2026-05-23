@@ -809,8 +809,6 @@ static int intel_sso_led_probe(struct platform_device *pdev)
 	priv->fpid_clkrate = clk_get_rate(priv->clocks[1].clk);
 
 	priv->mmap = syscon_node_to_regmap(dev->of_node);
-
-	priv->mmap = syscon_node_to_regmap(dev->of_node);
 	if (IS_ERR(priv->mmap)) {
 		dev_err(dev, "Failed to map iomem!\n");
 		return PTR_ERR(priv->mmap);

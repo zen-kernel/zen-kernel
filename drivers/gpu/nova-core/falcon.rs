@@ -2,12 +2,13 @@
 
 //! Falcon microprocessor base support
 
-use core::ops::Deref;
-
 use hal::FalconHal;
 
 use kernel::{
-    device,
+    device::{
+        self,
+        Device, //
+    },
     dma::{
         DmaAddress,
         DmaMask, //
@@ -15,9 +16,7 @@ use kernel::{
     io::poll::read_poll_timeout,
     prelude::*,
     sync::aref::ARef,
-    time::{
-        Delta, //
-    },
+    time::Delta,
 };
 
 use crate::{
@@ -327,9 +326,10 @@ pub(crate) trait FalconEngine:
     const ID: Self;
 }
 
-/// Represents a portion of the firmware to be loaded into a particular memory (e.g. IMEM or DMEM).
+/// Represents a portion of the firmware to be loaded into a particular memory (e.g. IMEM or DMEM)
+/// using DMA.
 #[derive(Debug, Clone)]
-pub(crate) struct FalconLoadTarget {
+pub(crate) struct FalconDmaLoadTarget {
     /// Offset from the start of the source object to copy from.
     pub(crate) src_start: u32,
     /// Offset from the start of the destination memory to copy into.
@@ -349,17 +349,20 @@ pub(crate) struct FalconBromParams {
     pub(crate) ucode_id: u8,
 }
 
-/// Trait for providing load parameters of falcon firmwares.
-pub(crate) trait FalconLoadParams {
+/// Trait implemented by falcon firmwares that can be loaded using DMA.
+pub(crate) trait FalconDmaLoadable {
+    /// Returns the firmware data as a slice of bytes.
+    fn as_slice(&self) -> &[u8];
+
     /// Returns the load parameters for Secure `IMEM`.
-    fn imem_sec_load_params(&self) -> FalconLoadTarget;
+    fn imem_sec_load_params(&self) -> FalconDmaLoadTarget;
 
     /// Returns the load parameters for Non-Secure `IMEM`,
     /// used only on Turing and GA100.
-    fn imem_ns_load_params(&self) -> Option<FalconLoadTarget>;
+    fn imem_ns_load_params(&self) -> Option<FalconDmaLoadTarget>;
 
     /// Returns the load parameters for `DMEM`.
-    fn dmem_load_params(&self) -> FalconLoadTarget;
+    fn dmem_load_params(&self) -> FalconDmaLoadTarget;
 
     /// Returns the parameters to write into the BROM registers.
     fn brom_params(&self) -> FalconBromParams;
@@ -370,9 +373,8 @@ pub(crate) trait FalconLoadParams {
 
 /// Trait for a falcon firmware.
 ///
-/// A falcon firmware can be loaded on a given engine, and is presented in the form of a DMA
-/// object.
-pub(crate) trait FalconFirmware: FalconLoadParams + Deref<Target = DmaObject> {
+/// A falcon firmware can be loaded on a given engine.
+pub(crate) trait FalconFirmware: FalconDmaLoadable {
     /// Engine on which this firmware is to be loaded.
     type Target: FalconEngine;
 }
@@ -415,12 +417,12 @@ impl<E: FalconEngine + 'static> Falcon<E> {
     /// `target_mem`.
     ///
     /// `sec` is set if the loaded firmware is expected to run in secure mode.
-    fn dma_wr<F: FalconFirmware<Target = E>>(
+    fn dma_wr(
         &self,
         bar: &Bar0,
-        fw: &F,
+        dma_obj: &DmaObject,
         target_mem: FalconMem,
-        load_offsets: FalconLoadTarget,
+        load_offsets: FalconDmaLoadTarget,
     ) -> Result {
         const DMA_LEN: u32 = 256;
 
@@ -430,11 +432,11 @@ impl<E: FalconEngine + 'static> Falcon<E> {
         // For DMEM we can fold the start offset into the DMA handle.
         let (src_start, dma_start) = match target_mem {
             FalconMem::ImemSecure | FalconMem::ImemNonSecure => {
-                (load_offsets.src_start, fw.dma_handle())
+                (load_offsets.src_start, dma_obj.dma_handle())
             }
             FalconMem::Dmem => (
                 0,
-                fw.dma_handle_with_offset(load_offsets.src_start.into_safe_cast())?,
+                dma_obj.dma_handle_with_offset(load_offsets.src_start.into_safe_cast())?,
             ),
         };
         if dma_start % DmaAddress::from(DMA_LEN) > 0 {
@@ -466,7 +468,7 @@ impl<E: FalconEngine + 'static> Falcon<E> {
                 dev_err!(self.dev, "DMA transfer length overflow\n");
                 return Err(EOVERFLOW);
             }
-            Some(upper_bound) if usize::from_safe_cast(upper_bound) > fw.size() => {
+            Some(upper_bound) if usize::from_safe_cast(upper_bound) > dma_obj.size() => {
                 dev_err!(self.dev, "DMA transfer goes beyond range of DMA object\n");
                 return Err(EINVAL);
             }
@@ -515,7 +517,12 @@ impl<E: FalconEngine + 'static> Falcon<E> {
     }
 
     /// Perform a DMA load into `IMEM` and `DMEM` of `fw`, and prepare the falcon to run it.
-    fn dma_load<F: FalconFirmware<Target = E>>(&self, bar: &Bar0, fw: &F) -> Result {
+    fn dma_load<F: FalconFirmware<Target = E>>(
+        &self,
+        dev: &Device<device::Bound>,
+        bar: &Bar0,
+        fw: &F,
+    ) -> Result {
         // The Non-Secure section only exists on firmware used by Turing and GA100, and
         // those platforms do not use DMA.
         if fw.imem_ns_load_params().is_some() {
@@ -523,14 +530,22 @@ impl<E: FalconEngine + 'static> Falcon<E> {
             return Err(EINVAL);
         }
 
+        // Create DMA object with firmware content as the source of the DMA engine.
+        let dma_obj = DmaObject::from_data(dev, fw.as_slice())?;
+
         self.dma_reset(bar);
         regs::NV_PFALCON_FBIF_TRANSCFG::update(bar, &E::ID, 0, |v| {
             v.set_target(FalconFbifTarget::CoherentSysmem)
                 .set_mem_type(FalconFbifMemType::Physical)
         });
 
-        self.dma_wr(bar, fw, FalconMem::ImemSecure, fw.imem_sec_load_params())?;
-        self.dma_wr(bar, fw, FalconMem::Dmem, fw.dmem_load_params())?;
+        self.dma_wr(
+            bar,
+            &dma_obj,
+            FalconMem::ImemSecure,
+            fw.imem_sec_load_params(),
+        )?;
+        self.dma_wr(bar, &dma_obj, FalconMem::Dmem, fw.dmem_load_params())?;
 
         self.hal.program_brom(self, bar, &fw.brom_params())?;
 
@@ -641,9 +656,14 @@ impl<E: FalconEngine + 'static> Falcon<E> {
     }
 
     // Load a firmware image into Falcon memory
-    pub(crate) fn load<F: FalconFirmware<Target = E>>(&self, bar: &Bar0, fw: &F) -> Result {
+    pub(crate) fn load<F: FalconFirmware<Target = E>>(
+        &self,
+        dev: &Device<device::Bound>,
+        bar: &Bar0,
+        fw: &F,
+    ) -> Result {
         match self.hal.load_method() {
-            LoadMethod::Dma => self.dma_load(bar, fw),
+            LoadMethod::Dma => self.dma_load(dev, bar, fw),
             LoadMethod::Pio => Err(ENOTSUPP),
         }
     }

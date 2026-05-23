@@ -31,6 +31,12 @@ struct netc_tbl_vers {
 	u8 rsst_ver;
 };
 
+struct netc_swcbd {
+	void *buf;
+	dma_addr_t dma;
+	size_t size;
+};
+
 struct netc_cbdr {
 	struct device *dev;
 	struct netc_cbdr_regs regs;
@@ -44,9 +50,10 @@ struct netc_cbdr {
 	void *addr_base_align;
 	dma_addr_t dma_base;
 	dma_addr_t dma_base_align;
+	struct netc_swcbd *swcbd;
 
 	/* Serialize the order of command BD ring */
-	spinlock_t ring_lock;
+	struct mutex ring_lock;
 };
 
 struct ntmp_user {

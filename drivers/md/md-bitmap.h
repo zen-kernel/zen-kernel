@@ -125,7 +125,7 @@ struct bitmap_operations {
 	void (*set_pages)(void *data, unsigned long pages);
 	void (*free)(void *data);
 
-	struct attribute_group *group;
+	const struct attribute_group **groups;
 };
 
 /* the bitmap API */

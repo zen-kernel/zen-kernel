@@ -87,12 +87,12 @@ do {									\
 	struct mutex mutexname = __MUTEX_INITIALIZER(mutexname)
 
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
-void mutex_init_lockep(struct mutex *lock, const char *name, struct lock_class_key *key);
+void mutex_init_lockdep(struct mutex *lock, const char *name, struct lock_class_key *key);
 
 static inline void __mutex_init(struct mutex *lock, const char *name,
 				struct lock_class_key *key)
 {
-	mutex_init_lockep(lock, name, key);
+	mutex_init_lockdep(lock, name, key);
 }
 #else
 extern void mutex_init_generic(struct mutex *lock);
@@ -146,7 +146,7 @@ static inline void __mutex_init(struct mutex *lock, const char *name,
 {
 	mutex_rt_init_generic(lock);
 }
-#endif /* !CONFIG_LOCKDEP */
+#endif /* !CONFIG_DEBUG_LOCK_ALLOC */
 #endif /* CONFIG_PREEMPT_RT */
 
 #ifdef CONFIG_DEBUG_MUTEXES

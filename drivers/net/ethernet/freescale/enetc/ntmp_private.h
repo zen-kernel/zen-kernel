@@ -12,6 +12,9 @@
 
 #define NTMP_EID_REQ_LEN	8
 #define NETC_CBDR_BD_NUM	256
+#define NETC_CBDRCIR_INDEX	GENMASK(9, 0)
+#define NETC_CBDRCIR_SBE	BIT(31)
+#define NETC_CBDR_CLEAN_WORK	16
 
 union netc_cbd {
 	struct {
@@ -52,13 +55,6 @@ union netc_cbd {
 #define NTMP_RESP_RR		BIT(15)
 		__le32 resv1[4];
 	} resp_hdr; /* NTMP Response Message Header Format */
-};
-
-struct ntmp_dma_buf {
-	struct device *dev;
-	size_t size;
-	void *buf;
-	dma_addr_t dma;
 };
 
 struct ntmp_cmn_req_data {

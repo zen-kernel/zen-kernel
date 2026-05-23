@@ -22,6 +22,7 @@ struct ib_umem {
 	u64 iova;
 	size_t			length;
 	unsigned long		address;
+	unsigned long		dma_attrs;
 	u32 writable : 1;
 	u32 is_odp : 1;
 	u32 is_dmabuf : 1;

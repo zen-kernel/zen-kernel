@@ -240,7 +240,8 @@ static void tcp_vegas_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 				 */
 				tcp_snd_cwnd_set(tp, min(tcp_snd_cwnd(tp),
 							 (u32)target_cwnd + 1));
-				tp->snd_ssthresh = tcp_vegas_ssthresh(tp);
+				WRITE_ONCE(tp->snd_ssthresh,
+					   tcp_vegas_ssthresh(tp));
 
 			} else if (tcp_in_slow_start(tp)) {
 				/* Slow start.  */
@@ -256,8 +257,8 @@ static void tcp_vegas_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 					 * we slow down.
 					 */
 					tcp_snd_cwnd_set(tp, tcp_snd_cwnd(tp) - 1);
-					tp->snd_ssthresh
-						= tcp_vegas_ssthresh(tp);
+					WRITE_ONCE(tp->snd_ssthresh,
+						   tcp_vegas_ssthresh(tp));
 				} else if (diff < alpha) {
 					/* We don't have enough extra packets
 					 * in the network, so speed up.
@@ -275,7 +276,7 @@ static void tcp_vegas_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 			else if (tcp_snd_cwnd(tp) > tp->snd_cwnd_clamp)
 				tcp_snd_cwnd_set(tp, tp->snd_cwnd_clamp);
 
-			tp->snd_ssthresh = tcp_current_ssthresh(sk);
+			WRITE_ONCE(tp->snd_ssthresh, tcp_current_ssthresh(sk));
 		}
 
 		/* Wipe the slate clean for the next RTT. */

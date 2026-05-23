@@ -378,6 +378,31 @@ static void ice_ptp_cfg_sync_delay(const struct ice_hw *hw, u32 delay)
  */
 
 /**
+ * ice_ptp_init_phc_e825c - Perform E825C specific PHC initialization
+ * @hw: pointer to HW struct
+ *
+ * Perform E825C-specific PTP hardware clock initialization steps.
+ *
+ * Return: 0 on success, or a negative error value on failure.
+ */
+static int ice_ptp_init_phc_e825c(struct ice_hw *hw)
+{
+	int err;
+
+	/* Soft reset all ports, to ensure everything is at a clean state */
+	for (int port = 0; port < hw->ptp.num_lports; port++) {
+		err = ice_ptp_phy_soft_reset_eth56g(hw, port);
+		if (err) {
+			ice_debug(hw, ICE_DBG_PTP, "Failed to soft reset port %d, err %d\n",
+				  port, err);
+			return err;
+		}
+	}
+
+	return 0;
+}
+
+/**
  * ice_ptp_get_dest_dev_e825 - get destination PHY for given port number
  * @hw: pointer to the HW struct
  * @port: destination port
@@ -1847,6 +1872,8 @@ static int ice_phy_cfg_mac_eth56g(struct ice_hw *hw, u8 port)
  * @ena: enable or disable interrupt
  * @threshold: interrupt threshold
  *
+ * The threshold cannot be 0 while the interrupt is enabled.
+ *
  * Configure TX timestamp interrupt for the specified port
  *
  * Return:
@@ -1858,19 +1885,45 @@ int ice_phy_cfg_intr_eth56g(struct ice_hw *hw, u8 port, bool ena, u8 threshold)
 	int err;
 	u32 val;
 
+	if (ena && !threshold)
+		return -EINVAL;
+
 	err = ice_read_ptp_reg_eth56g(hw, port, PHY_REG_TS_INT_CONFIG, &val);
 	if (err)
 		return err;
 
+	val &= ~PHY_TS_INT_CONFIG_ENA_M;
 	if (ena) {
-		val |= PHY_TS_INT_CONFIG_ENA_M;
 		val &= ~PHY_TS_INT_CONFIG_THRESHOLD_M;
 		val |= FIELD_PREP(PHY_TS_INT_CONFIG_THRESHOLD_M, threshold);
-	} else {
-		val &= ~PHY_TS_INT_CONFIG_ENA_M;
+		err = ice_write_ptp_reg_eth56g(hw, port, PHY_REG_TS_INT_CONFIG,
+					       val);
+		if (err) {
+			ice_debug(hw, ICE_DBG_PTP,
+				  "Failed to update 'threshold' PHY_REG_TS_INT_CONFIG port=%u ena=%u threshold=%u\n",
+				  port, !!ena, threshold);
+			return err;
+		}
+		val |= PHY_TS_INT_CONFIG_ENA_M;
 	}
 
-	return ice_write_ptp_reg_eth56g(hw, port, PHY_REG_TS_INT_CONFIG, val);
+	err = ice_write_ptp_reg_eth56g(hw, port, PHY_REG_TS_INT_CONFIG, val);
+	if (err) {
+		ice_debug(hw, ICE_DBG_PTP,
+			  "Failed to update 'ena' PHY_REG_TS_INT_CONFIG port=%u ena=%u threshold=%u\n",
+			  port, !!ena, threshold);
+		return err;
+	}
+
+	err = ice_read_ptp_reg_eth56g(hw, port, PHY_REG_TS_INT_CONFIG, &val);
+	if (err) {
+		ice_debug(hw, ICE_DBG_PTP,
+			  "Failed to read PHY_REG_TS_INT_CONFIG port=%u ena=%u threshold=%u\n",
+			  port, !!ena, threshold);
+		return err;
+	}
+
+	return 0;
 }
 
 /**
@@ -2116,6 +2169,35 @@ int ice_start_phy_timer_eth56g(struct ice_hw *hw, u8 port)
 }
 
 /**
+ * ice_check_phy_tx_tstamp_ready_eth56g - Check Tx memory status for all ports
+ * @hw: pointer to the HW struct
+ *
+ * Check the PHY_REG_TX_MEMORY_STATUS for all ports. A set bit indicates
+ * a waiting timestamp.
+ *
+ * Return: 1 if any port has at least one timestamp ready bit set,
+ * 0 otherwise, and a negative error code if unable to read the bitmap.
+ */
+static int ice_check_phy_tx_tstamp_ready_eth56g(struct ice_hw *hw)
+{
+	int port;
+
+	for (port = 0; port < hw->ptp.num_lports; port++) {
+		u64 tstamp_ready;
+		int err;
+
+		err = ice_get_phy_tx_tstamp_ready(hw, port, &tstamp_ready);
+		if (err)
+			return err;
+
+		if (tstamp_ready)
+			return 1;
+	}
+
+	return 0;
+}
+
+/**
  * ice_ptp_read_tx_hwtstamp_status_eth56g - Get TX timestamp status
  * @hw: pointer to the HW struct
  * @ts_status: the timestamp mask pointer
@@ -2137,18 +2219,87 @@ int ice_ptp_read_tx_hwtstamp_status_eth56g(struct ice_hw *hw, u32 *ts_status)
 	*ts_status = 0;
 
 	for (phy = 0; phy < params->num_phys; phy++) {
+		u8 port;
 		int err;
 
-		err = ice_read_phy_eth56g(hw, phy, PHY_PTP_INT_STATUS, &status);
+		/* ice_read_phy_eth56g expects a port index, so use the first
+		 * port of the PHY
+		 */
+		port = phy * hw->ptp.ports_per_phy;
+
+		err = ice_read_phy_eth56g(hw, port, PHY_PTP_INT_STATUS, &status);
 		if (err)
 			return err;
 
-		*ts_status |= (status & mask) << (phy * hw->ptp.ports_per_phy);
+		*ts_status |= (status & mask) << port;
 	}
 
 	ice_debug(hw, ICE_DBG_PTP, "PHY interrupt err: %x\n", *ts_status);
 
 	return 0;
+}
+
+/**
+ * ice_ptp_phy_soft_reset_eth56g - Perform a PHY soft reset on ETH56G
+ * @hw: pointer to the HW structure
+ * @port: PHY port number
+ *
+ * Trigger a soft reset of the ETH56G PHY by toggling the soft reset
+ * bit in the PHY global register. The reset sequence consists of:
+ *   1. Clearing the soft reset bit
+ *   2. Asserting the soft reset bit
+ *   3. Clearing the soft reset bit again
+ *
+ * Short delays are inserted between each step to allow the hardware
+ * to settle. This provides a controlled way to reinitialize the PHY
+ * without requiring a full device reset.
+ *
+ * Return: 0 on success, or a negative error code on failure when
+ *         reading or writing the PHY register.
+ */
+int ice_ptp_phy_soft_reset_eth56g(struct ice_hw *hw, u8 port)
+{
+	u32 global_val;
+	int err;
+
+	err = ice_read_ptp_reg_eth56g(hw, port, PHY_REG_GLOBAL, &global_val);
+	if (err) {
+		ice_debug(hw, ICE_DBG_PTP, "Failed to read PHY_REG_GLOBAL for port %d, err %d\n",
+			  port, err);
+		return err;
+	}
+
+	global_val &= ~PHY_REG_GLOBAL_SOFT_RESET_M;
+	ice_debug(hw, ICE_DBG_PTP, "Clearing soft reset bit for port %d, val: 0x%x\n",
+		  port, global_val);
+	err = ice_write_ptp_reg_eth56g(hw, port, PHY_REG_GLOBAL, global_val);
+	if (err) {
+		ice_debug(hw, ICE_DBG_PTP, "Failed to write PHY_REG_GLOBAL for port %d, err %d\n",
+			  port, err);
+		return err;
+	}
+
+	usleep_range(5000, 6000);
+
+	global_val |= PHY_REG_GLOBAL_SOFT_RESET_M;
+	ice_debug(hw, ICE_DBG_PTP, "Set soft reset bit for port %d, val: 0x%x\n",
+		  port, global_val);
+	err = ice_write_ptp_reg_eth56g(hw, port, PHY_REG_GLOBAL, global_val);
+	if (err) {
+		ice_debug(hw, ICE_DBG_PTP, "Failed to write PHY_REG_GLOBAL for port %d, err %d\n",
+			  port, err);
+		return err;
+	}
+	usleep_range(5000, 6000);
+
+	global_val &= ~PHY_REG_GLOBAL_SOFT_RESET_M;
+	ice_debug(hw, ICE_DBG_PTP, "Clear soft reset bit for port %d, val: 0x%x\n",
+		  port, global_val);
+	err = ice_write_ptp_reg_eth56g(hw, port, PHY_REG_GLOBAL, global_val);
+	if (err)
+		ice_debug(hw, ICE_DBG_PTP, "Failed to write PHY_REG_GLOBAL for port %d, err %d\n",
+			  port, err);
+	return err;
 }
 
 /**
@@ -4203,6 +4354,35 @@ ice_get_phy_tx_tstamp_ready_e82x(struct ice_hw *hw, u8 quad, u64 *tstamp_ready)
 }
 
 /**
+ * ice_check_phy_tx_tstamp_ready_e82x - Check Tx memory status for all quads
+ * @hw: pointer to the HW struct
+ *
+ * Check the Q_REG_TX_MEMORY_STATUS for all quads. A set bit indicates
+ * a waiting timestamp.
+ *
+ * Return: 1 if any quad has at least one timestamp ready bit set,
+ * 0 otherwise, and a negative error value if unable to read the bitmap.
+ */
+static int ice_check_phy_tx_tstamp_ready_e82x(struct ice_hw *hw)
+{
+	int quad;
+
+	for (quad = 0; quad < ICE_GET_QUAD_NUM(hw->ptp.num_lports); quad++) {
+		u64 tstamp_ready;
+		int err;
+
+		err = ice_get_phy_tx_tstamp_ready(hw, quad, &tstamp_ready);
+		if (err)
+			return err;
+
+		if (tstamp_ready)
+			return 1;
+	}
+
+	return 0;
+}
+
+/**
  * ice_phy_cfg_intr_e82x - Configure TX timestamp interrupt
  * @hw: pointer to the HW struct
  * @quad: the timestamp quad
@@ -4755,6 +4935,23 @@ ice_get_phy_tx_tstamp_ready_e810(struct ice_hw *hw, u8 port, u64 *tstamp_ready)
 	return 0;
 }
 
+/**
+ * ice_check_phy_tx_tstamp_ready_e810 - Check Tx memory status register
+ * @hw: pointer to the HW struct
+ *
+ * The E810 devices do not have a Tx memory status register. Note this is
+ * intentionally different behavior from ice_get_phy_tx_tstamp_ready_e810
+ * which always says that all bits are ready. This function is called in cases
+ * where code will trigger interrupts if timestamps are waiting, and should
+ * not be called for E810 hardware.
+ *
+ * Return: 0.
+ */
+static int ice_check_phy_tx_tstamp_ready_e810(struct ice_hw *hw)
+{
+	return 0;
+}
+
 /* E810 SMA functions
  *
  * The following functions operate specifically on E810 hardware and are used
@@ -5007,6 +5204,21 @@ static void ice_get_phy_tx_tstamp_ready_e830(const struct ice_hw *hw, u8 port,
 	*tstamp_ready = rd32(hw, E830_PRTMAC_TS_TX_MEM_VALID_H);
 	*tstamp_ready <<= 32;
 	*tstamp_ready |= rd32(hw, E830_PRTMAC_TS_TX_MEM_VALID_L);
+}
+
+/**
+ * ice_check_phy_tx_tstamp_ready_e830 - Check Tx memory status register
+ * @hw: pointer to the HW struct
+ *
+ * Return: 1 if the device has waiting timestamps, 0 otherwise.
+ */
+static int ice_check_phy_tx_tstamp_ready_e830(struct ice_hw *hw)
+{
+	u64 tstamp_ready;
+
+	ice_get_phy_tx_tstamp_ready_e830(hw, 0, &tstamp_ready);
+
+	return !!tstamp_ready;
 }
 
 /**
@@ -5381,8 +5593,8 @@ int ice_ptp_write_incval_locked(struct ice_hw *hw, u64 incval)
  */
 int ice_ptp_adj_clock(struct ice_hw *hw, s32 adj)
 {
+	int err = 0;
 	u8 tmr_idx;
-	int err;
 
 	tmr_idx = hw->func_caps.ts_func_info.tmr_index_owned;
 
@@ -5399,8 +5611,8 @@ int ice_ptp_adj_clock(struct ice_hw *hw, s32 adj)
 		err = ice_ptp_prep_phy_adj_e810(hw, adj);
 		break;
 	case ICE_MAC_E830:
-		/* E830 sync PHYs automatically after setting GLTSYN_SHADJ */
-		return 0;
+		/* E830 sync PHYs automatically after setting cmd register */
+		break;
 	case ICE_MAC_GENERIC:
 		err = ice_ptp_prep_phy_adj_e82x(hw, adj);
 		break;
@@ -5564,7 +5776,7 @@ int ice_ptp_init_phc(struct ice_hw *hw)
 	case ICE_MAC_GENERIC:
 		return ice_ptp_init_phc_e82x(hw);
 	case ICE_MAC_GENERIC_3K_E825:
-		return 0;
+		return ice_ptp_init_phc_e825c(hw);
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -5596,6 +5808,33 @@ int ice_get_phy_tx_tstamp_ready(struct ice_hw *hw, u8 block, u64 *tstamp_ready)
 	case ICE_MAC_GENERIC_3K_E825:
 		return ice_get_phy_tx_tstamp_ready_eth56g(hw, block,
 							  tstamp_ready);
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+/**
+ * ice_check_phy_tx_tstamp_ready - Check PHY Tx timestamp memory status
+ * @hw: pointer to the HW struct
+ *
+ * Check the PHY for Tx timestamp memory status on all ports. If you need to
+ * see individual timestamp status for each index, use
+ * ice_get_phy_tx_tstamp_ready() instead.
+ *
+ * Return: 1 if any port has timestamps available, 0 if there are no timestamps
+ * available, and a negative error code on failure.
+ */
+int ice_check_phy_tx_tstamp_ready(struct ice_hw *hw)
+{
+	switch (hw->mac_type) {
+	case ICE_MAC_E810:
+		return ice_check_phy_tx_tstamp_ready_e810(hw);
+	case ICE_MAC_E830:
+		return ice_check_phy_tx_tstamp_ready_e830(hw);
+	case ICE_MAC_GENERIC:
+		return ice_check_phy_tx_tstamp_ready_e82x(hw);
+	case ICE_MAC_GENERIC_3K_E825:
+		return ice_check_phy_tx_tstamp_ready_eth56g(hw);
 	default:
 		return -EOPNOTSUPP;
 	}

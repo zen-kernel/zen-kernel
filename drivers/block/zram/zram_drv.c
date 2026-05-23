@@ -1748,6 +1748,10 @@ static ssize_t algorithm_params_store(struct device *dev,
 		}
 	}
 
+	guard(rwsem_write)(&zram->dev_lock);
+	if (init_done(zram))
+		return -EBUSY;
+
 	/* Lookup priority by algorithm name */
 	if (algo) {
 		s32 p;

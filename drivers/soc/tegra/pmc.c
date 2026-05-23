@@ -437,7 +437,10 @@ struct tegra_pmc_soc {
  * @wake_sw_status_map: Bitmap to hold raw status of wakes without mask
  * @wake_cntrl_level_map: Bitmap to hold wake levels to be programmed in
  *     cntrl register associated with each wake during system suspend.
+ * @reboot_notifier: PMC reboot notifier handler
  * @syscore: syscore suspend/resume callbacks
+ * @wake_work: IRQ work handler for processing wake-up events.
+ * @wake_status: Status of wake-up events.
  */
 struct tegra_pmc {
 	struct device *dev;
@@ -1004,7 +1007,7 @@ static struct tegra_pmc *tegra_pmc_get(struct device *dev)
 }
 
 /**
- * tegra_pmc_get() - find the PMC for a given device
+ * devm_tegra_pmc_get() - find the PMC for a given device
  * @dev: device for which to find the PMC
  *
  * Returns a pointer to the PMC on success or an ERR_PTR()-encoded error code
@@ -1746,7 +1749,7 @@ static void tegra_io_pad_unprepare(struct tegra_pmc *pmc)
 }
 
 /**
- * tegra_io_pad_power_enable() - enable power to I/O pad
+ * tegra_pmc_io_pad_power_enable() - enable power to I/O pad
  * @pmc: power management controller
  * @id: Tegra I/O pad ID for which to enable power
  *

@@ -167,14 +167,12 @@ enum mpam_device_features {
 	mpam_feat_msmon_csu,
 	mpam_feat_msmon_csu_capture,
 	mpam_feat_msmon_csu_xcl,
-	mpam_feat_msmon_csu_hw_nrdy,
 	mpam_feat_msmon_mbwu,
 	mpam_feat_msmon_mbwu_31counter,
 	mpam_feat_msmon_mbwu_44counter,
 	mpam_feat_msmon_mbwu_63counter,
 	mpam_feat_msmon_mbwu_capture,
 	mpam_feat_msmon_mbwu_rwbw,
-	mpam_feat_msmon_mbwu_hw_nrdy,
 	mpam_feat_partid_nrw,
 	MPAM_FEATURE_LAST
 };
@@ -265,10 +263,6 @@ struct mpam_config {
 	u32	cpbm;
 	u32	mbw_pbm;
 	u16	mbw_max;
-
-	bool	reset_cpbm;
-	bool	reset_mbw_pbm;
-	bool	reset_mbw_max;
 
 	struct mpam_garbage	garbage;
 };

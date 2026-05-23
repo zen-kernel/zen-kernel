@@ -55,8 +55,7 @@ static void __ib_umem_release(struct ib_device *dev, struct ib_umem *umem, int d
 
 	if (dirty)
 		ib_dma_unmap_sgtable_attrs(dev, &umem->sgt_append.sgt,
-					   DMA_BIDIRECTIONAL,
-					   DMA_ATTR_REQUIRE_COHERENT);
+					   DMA_BIDIRECTIONAL, umem->dma_attrs);
 
 	for_each_sgtable_sg(&umem->sgt_append.sgt, sg, i) {
 		unpin_user_page_range_dirty_lock(sg_page(sg),
@@ -170,7 +169,6 @@ struct ib_umem *ib_umem_get(struct ib_device *device, unsigned long addr,
 	unsigned long lock_limit;
 	unsigned long new_pinned;
 	unsigned long cur_base;
-	unsigned long dma_attr = DMA_ATTR_REQUIRE_COHERENT;
 	struct mm_struct *mm;
 	unsigned long npages;
 	int pinned, ret;
@@ -203,6 +201,10 @@ struct ib_umem *ib_umem_get(struct ib_device *device, unsigned long addr,
 	umem->iova = addr;
 	umem->writable   = ib_access_writable(access);
 	umem->owning_mm = mm = current->mm;
+	umem->dma_attrs = DMA_ATTR_REQUIRE_COHERENT;
+	if (access & IB_ACCESS_RELAXED_ORDERING)
+		umem->dma_attrs |= DMA_ATTR_WEAK_ORDERING;
+
 	mmgrab(mm);
 
 	page_list = (struct page **) __get_free_page(GFP_KERNEL);
@@ -255,11 +257,8 @@ struct ib_umem *ib_umem_get(struct ib_device *device, unsigned long addr,
 		}
 	}
 
-	if (access & IB_ACCESS_RELAXED_ORDERING)
-		dma_attr |= DMA_ATTR_WEAK_ORDERING;
-
 	ret = ib_dma_map_sgtable_attrs(device, &umem->sgt_append.sgt,
-				       DMA_BIDIRECTIONAL, dma_attr);
+				       DMA_BIDIRECTIONAL, umem->dma_attrs);
 	if (ret)
 		goto umem_release;
 	goto out;

@@ -295,22 +295,31 @@ int fseek(FILE *stream, long offset, int whence)
  *  - %[l*]{d,u,c,x,p}
  *  - %s
  *  - unknown modifiers are ignored.
+ *
+ * Called by vfprintf() and snprintf() to do the actual formatting.
+ * The callers provide a callback function to save the formatted data.
+ * The callback function is called multiple times:
+ *  - for each group of literal characters in the format string.
+ *  - for field padding.
+ *  - for each conversion specifier.
+ *  - with (NULL, 0) at the end of the __nolibc_printf.
+ * If the callback returns non-zero __nolibc_printf() immediately returns -1.
  */
-typedef int (*__nolibc_printf_cb)(intptr_t state, const char *buf, size_t size);
+typedef int (*__nolibc_printf_cb)(void *state, const char *buf, size_t size);
 
-static __attribute__((unused, format(printf, 4, 0)))
-int __nolibc_printf(__nolibc_printf_cb cb, intptr_t state, size_t n, const char *fmt, va_list args)
+static __attribute__((unused, format(printf, 3, 0)))
+int __nolibc_printf(__nolibc_printf_cb cb, void *state, const char *fmt, va_list args)
 {
-	char escape, lpref, c;
+	char escape, lpref, ch;
 	unsigned long long v;
 	unsigned int written, width;
-	size_t len, ofs, w;
-	char tmpbuf[21];
+	size_t len, ofs;
+	char outbuf[21];
 	const char *outstr;
 
 	written = ofs = escape = lpref = 0;
 	while (1) {
-		c = fmt[ofs++];
+		ch = fmt[ofs++];
 		width = 0;
 
 		if (escape) {
@@ -318,17 +327,17 @@ int __nolibc_printf(__nolibc_printf_cb cb, intptr_t state, size_t n, const char 
 			escape = 0;
 
 			/* width */
-			while (c >= '0' && c <= '9') {
+			while (ch >= '0' && ch <= '9') {
 				width *= 10;
-				width += c - '0';
+				width += ch - '0';
 
-				c = fmt[ofs++];
+				ch = fmt[ofs++];
 			}
 
-			if (c == 'c' || c == 'd' || c == 'u' || c == 'x' || c == 'p') {
-				char *out = tmpbuf;
+			if (ch == 'c' || ch == 'd' || ch == 'u' || ch == 'x' || ch == 'p') {
+				char *out = outbuf;
 
-				if (c == 'p')
+				if (ch == 'p')
 					v = va_arg(args, unsigned long);
 				else if (lpref) {
 					if (lpref > 1)
@@ -338,7 +347,7 @@ int __nolibc_printf(__nolibc_printf_cb cb, intptr_t state, size_t n, const char 
 				} else
 					v = va_arg(args, unsigned int);
 
-				if (c == 'd') {
+				if (ch == 'd') {
 					/* sign-extend the value */
 					if (lpref == 0)
 						v = (long long)(int)v;
@@ -346,7 +355,7 @@ int __nolibc_printf(__nolibc_printf_cb cb, intptr_t state, size_t n, const char 
 						v = (long long)(long)v;
 				}
 
-				switch (c) {
+				switch (ch) {
 				case 'c':
 					out[0] = v;
 					out[1] = 0;
@@ -365,30 +374,30 @@ int __nolibc_printf(__nolibc_printf_cb cb, intptr_t state, size_t n, const char 
 					u64toh_r(v, out);
 					break;
 				}
-				outstr = tmpbuf;
+				outstr = outbuf;
 			}
-			else if (c == 's') {
+			else if (ch == 's') {
 				outstr = va_arg(args, char *);
 				if (!outstr)
 					outstr="(null)";
 			}
-			else if (c == 'm') {
+			else if (ch == 'm') {
 #ifdef NOLIBC_IGNORE_ERRNO
 				outstr = "unknown error";
 #else
 				outstr = strerror(errno);
 #endif /* NOLIBC_IGNORE_ERRNO */
 			}
-			else if (c == '%') {
+			else if (ch == '%') {
 				/* queue it verbatim */
 				continue;
 			}
 			else {
 				/* modifiers or final 0 */
-				if (c == 'l') {
+				if (ch == 'l') {
 					/* long format prefix, maintain the escape */
 					lpref++;
-				} else if (c == 'j') {
+				} else if (ch == 'j') {
 					lpref = 2;
 				}
 				escape = 1;
@@ -399,28 +408,24 @@ int __nolibc_printf(__nolibc_printf_cb cb, intptr_t state, size_t n, const char 
 		}
 
 		/* not an escape sequence */
-		if (c == 0 || c == '%') {
+		if (ch == 0 || ch == '%') {
 			/* flush pending data on escape or end */
 			escape = 1;
 			lpref = 0;
 			outstr = fmt;
 			len = ofs - 1;
 		flush_str:
-			if (n) {
-				w = len < n ? len : n;
-				n -= w;
-				while (width-- > w) {
-					if (cb(state, " ", 1) != 0)
-						return -1;
-					written += 1;
-				}
-				if (cb(state, outstr, w) != 0)
+			while (width-- > len) {
+				if (cb(state, " ", 1) != 0)
 					return -1;
+				written += 1;
 			}
+			if (cb(state, outstr, len) != 0)
+				return -1;
 
 			written += len;
 		do_escape:
-			if (c == 0)
+			if (ch == 0)
 				break;
 			fmt += ofs;
 			ofs = 0;
@@ -429,18 +434,25 @@ int __nolibc_printf(__nolibc_printf_cb cb, intptr_t state, size_t n, const char 
 
 		/* literal char, just queue it */
 	}
+
+	/* Request a final '\0' be added to the snprintf() output.
+	 * This may be the only call of the cb() function.
+	 */
+	if (cb(state, NULL, 0) != 0)
+		return -1;
+
 	return written;
 }
 
-static int __nolibc_fprintf_cb(intptr_t state, const char *buf, size_t size)
+static int __nolibc_fprintf_cb(void *stream, const char *buf, size_t size)
 {
-	return _fwrite(buf, size, (FILE *)state);
+	return _fwrite(buf, size, stream);
 }
 
 static __attribute__((unused, format(printf, 2, 0)))
 int vfprintf(FILE *stream, const char *fmt, va_list args)
 {
-	return __nolibc_printf(__nolibc_fprintf_cb, (intptr_t)stream, SIZE_MAX, fmt, args);
+	return __nolibc_printf(__nolibc_fprintf_cb, stream, fmt, args);
 }
 
 static __attribute__((unused, format(printf, 1, 0)))
@@ -498,26 +510,54 @@ int dprintf(int fd, const char *fmt, ...)
 	return ret;
 }
 
-static int __nolibc_sprintf_cb(intptr_t _state, const char *buf, size_t size)
-{
-	char **state = (char **)_state;
+struct __nolibc_sprintf_cb_state {
+	char *buf;
+	size_t space;
+};
 
-	memcpy(*state, buf, size);
-	*state += size;
+static int __nolibc_sprintf_cb(void *v_state, const char *buf, size_t size)
+{
+	struct __nolibc_sprintf_cb_state *state = v_state;
+	size_t space = state->space;
+	char *tgt;
+
+	/* Truncate the request to fit in the output buffer space.
+	 * The last byte is reserved for the terminating '\0'.
+	 * state->space can only be zero for snprintf(NULL, 0, fmt, args)
+	 * so this normally lets through calls with 'size == 0'.
+	 */
+	if (size >= space) {
+		if (space <= 1)
+			return 0;
+		size = space - 1;
+	}
+	tgt = state->buf;
+
+	/* __nolibc_printf() ends with cb(state, NULL, 0) to request the output
+	 * buffer be '\0' terminated.
+	 * That will be the only cb() call for, eg, snprintf(buf, sz, "").
+	 * Zero lengths can occur at other times (eg "%s" for an empty string).
+	 * Unconditionally write the '\0' byte to reduce code size, it is
+	 * normally overwritten by the data being output.
+	 * There is no point adding a '\0' after copied data - there is always
+	 * another call.
+	 */
+	*tgt = '\0';
+	if (size) {
+		state->space = space - size;
+		state->buf = tgt + size;
+		memcpy(tgt, buf, size);
+	}
+
 	return 0;
 }
 
 static __attribute__((unused, format(printf, 3, 0)))
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 {
-	char *state = buf;
-	int ret;
+	struct __nolibc_sprintf_cb_state state = { .buf = buf, .space = size };
 
-	ret = __nolibc_printf(__nolibc_sprintf_cb, (intptr_t)&state, size, fmt, args);
-	if (ret < 0)
-		return ret;
-	buf[(size_t)ret < size ? (size_t)ret : size - 1] = '\0';
-	return ret;
+	return __nolibc_printf(__nolibc_sprintf_cb, &state, fmt, args);
 }
 
 static __attribute__((unused, format(printf, 3, 4)))

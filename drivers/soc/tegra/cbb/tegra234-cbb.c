@@ -313,11 +313,36 @@ static void tegra234_cbb_lookup_apbslv(struct seq_file *file, const char *target
 	}
 }
 
+static struct tegra234_cbb *tegra234_cbb_get_fabric(u8 fab_id)
+{
+	struct tegra_cbb *entry;
+
+	list_for_each_entry(entry, &cbb_list, node) {
+		struct tegra234_cbb *priv = to_tegra234_cbb(entry);
+
+		if (priv->fabric->fab_id == fab_id)
+			return priv;
+	}
+
+	return NULL;
+}
+
 static void tegra234_sw_lookup_target_timeout(struct seq_file *file, struct tegra234_cbb *cbb,
 					      u8 target_id, u8 fab_id)
 {
 	const struct tegra234_target_lookup *map = cbb->fabric->fab_list[fab_id].target_map;
+	struct tegra234_cbb *target_cbb = NULL;
 	void __iomem *addr;
+
+	if (fab_id == cbb->fabric->fab_id)
+		target_cbb = cbb;
+	else
+		target_cbb = tegra234_cbb_get_fabric(fab_id);
+
+	if (!target_cbb) {
+		dev_err(cbb->base.dev, "could not find fabric for fab_id:%d\n", fab_id);
+		return;
+	}
 
 	if (target_id >= cbb->fabric->fab_list[fab_id].max_targets) {
 		tegra_cbb_print_err(file, "\t  Invalid target_id:%d\n", target_id);
@@ -341,7 +366,7 @@ static void tegra234_sw_lookup_target_timeout(struct seq_file *file, struct tegr
 	 *	e) Goto step-a till all bits are set.
 	 */
 
-	addr = cbb->regs + map[target_id].offset;
+	addr = target_cbb->regs + map[target_id].offset;
 
 	if (strstr(map[target_id].name, "AXI2APB")) {
 		addr += APB_BLOCK_TMO_STATUS_0;
@@ -881,7 +906,7 @@ static const struct tegra234_fabric_lookup tegra234_cbb_fab_list[] = {
 				 ARRAY_SIZE(tegra234_common_target_map) },
 	[T234_AON_FABRIC_ID] = { "aon-fabric", true,
 				 tegra234_aon_target_map,
-				 ARRAY_SIZE(tegra234_bpmp_target_map) },
+				 ARRAY_SIZE(tegra234_aon_target_map) },
 	[T234_PSC_FABRIC_ID] = { "psc-fabric" },
 	[T234_BPMP_FABRIC_ID] = { "bpmp-fabric", true,
 				 tegra234_bpmp_target_map,
@@ -1160,7 +1185,7 @@ static const struct tegra234_fabric_lookup tegra241_cbb_fab_list[] = {
 	[T234_CBB_FABRIC_ID]  = { "cbb-fabric", true,
 				  tegra241_cbb_target_map, ARRAY_SIZE(tegra241_cbb_target_map) },
 	[T234_BPMP_FABRIC_ID] = { "bpmp-fabric", true,
-				  tegra241_bpmp_target_map, ARRAY_SIZE(tegra241_cbb_target_map) },
+				  tegra241_bpmp_target_map, ARRAY_SIZE(tegra241_bpmp_target_map) },
 };
 static const struct tegra234_cbb_fabric tegra241_cbb_fabric = {
 	.fab_id = T234_CBB_FABRIC_ID,
@@ -1585,6 +1610,10 @@ static int tegra234_cbb_probe(struct platform_device *pdev)
 static int __maybe_unused tegra234_cbb_resume_noirq(struct device *dev)
 {
 	struct tegra234_cbb *cbb = dev_get_drvdata(dev);
+
+	/* set ERD bit to mask SError and generate interrupt to report error */
+	if (cbb->fabric->off_mask_erd)
+		tegra234_cbb_mask_serror(cbb);
 
 	tegra234_cbb_error_enable(&cbb->base);
 

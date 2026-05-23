@@ -177,7 +177,7 @@ static void dctcp_react_to_loss(struct sock *sk)
 	struct tcp_sock *tp = tcp_sk(sk);
 
 	ca->loss_cwnd = tcp_snd_cwnd(tp);
-	tp->snd_ssthresh = max(tcp_snd_cwnd(tp) >> 1U, 2U);
+	WRITE_ONCE(tp->snd_ssthresh, max(tcp_snd_cwnd(tp) >> 1U, 2U));
 }
 
 __bpf_kfunc static void dctcp_state(struct sock *sk, u8 new_state)

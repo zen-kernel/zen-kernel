@@ -148,11 +148,17 @@ static void mpam_free_garbage(void)
 /*
  * Once mpam is enabled, new requestors cannot further reduce the available
  * partid. Assert that the size is fixed, and new requestors will be turned
- * away.
+ * away. This is needed when walking over structures sized by PARTID.
+ *
+ * During mpam_disable() these structures are not fixed, but the MSC state
+ * is still reset using whatever sizes have been discovered so far. As only
+ * PARTID 0 will be used after mpam_disable(), any race would be benign.
+ * Skip the check if a mpam_disable_reason has been set.
  */
 static void mpam_assert_partid_sizes_fixed(void)
 {
-	WARN_ON_ONCE(!partid_max_published);
+	if (!mpam_disable_reason)
+		WARN_ON_ONCE(!partid_max_published);
 }
 
 static u32 __mpam_read_reg(struct mpam_msc *msc, u16 reg)
@@ -632,10 +638,9 @@ static struct mpam_msc_ris *mpam_get_or_create_ris(struct mpam_msc *msc,
  * Try and see what values stick in this bit. If we can write either value,
  * its probably not implemented by hardware.
  */
-static bool _mpam_ris_hw_probe_hw_nrdy(struct mpam_msc_ris *ris, u32 mon_reg)
+static bool mpam_ris_hw_probe_csu_nrdy(struct mpam_msc_ris *ris)
 {
-	u32 now;
-	u64 mon_sel;
+	u32 now, mon_sel, ctl_val;
 	bool can_set, can_clear;
 	struct mpam_msc *msc = ris->vmsc->msc;
 
@@ -644,22 +649,29 @@ static bool _mpam_ris_hw_probe_hw_nrdy(struct mpam_msc_ris *ris, u32 mon_reg)
 
 	mon_sel = FIELD_PREP(MSMON_CFG_MON_SEL_MON_SEL, 0) |
 		  FIELD_PREP(MSMON_CFG_MON_SEL_RIS, ris->ris_idx);
-	_mpam_write_monsel_reg(msc, mon_reg, mon_sel);
+	mpam_write_monsel_reg(msc, CFG_MON_SEL, mon_sel);
 
-	_mpam_write_monsel_reg(msc, mon_reg, MSMON___NRDY);
-	now = _mpam_read_monsel_reg(msc, mon_reg);
+	/* Hardware might ignore nrdy if it's not enabled */
+	ctl_val = MSMON_CFG_CSU_CTL_TYPE_CSU;
+	ctl_val |= MSMON_CFG_x_CTL_MATCH_PARTID;
+	ctl_val |= MSMON_CFG_x_CTL_MATCH_PMG;
+	ctl_val |= MSMON_CFG_x_CTL_EN;
+	mpam_write_monsel_reg(msc, CFG_CSU_FLT, 0);
+	mpam_write_monsel_reg(msc, CFG_CSU_CTL, ctl_val);
+
+	_mpam_write_monsel_reg(msc, MSMON_CSU, MSMON___NRDY);
+	now = _mpam_read_monsel_reg(msc, MSMON_CSU);
 	can_set = now & MSMON___NRDY;
 
-	_mpam_write_monsel_reg(msc, mon_reg, 0);
-	now = _mpam_read_monsel_reg(msc, mon_reg);
+	_mpam_write_monsel_reg(msc, MSMON_CSU, 0);
+	/* Configuration change to try and coax hardware into setting nrdy */
+	mpam_write_monsel_reg(msc, CFG_CSU_FLT, 0x1);
+	now = _mpam_read_monsel_reg(msc, MSMON_CSU);
 	can_clear = !(now & MSMON___NRDY);
 	mpam_mon_sel_unlock(msc);
 
 	return (!can_set || !can_clear);
 }
-
-#define mpam_ris_hw_probe_hw_nrdy(_ris, _mon_reg)			\
-	_mpam_ris_hw_probe_hw_nrdy(_ris, MSMON_##_mon_reg)
 
 static void mpam_ris_hw_probe(struct mpam_msc_ris *ris)
 {
@@ -770,20 +782,18 @@ static void mpam_ris_hw_probe(struct mpam_msc_ris *ris)
 					mpam_set_feature(mpam_feat_msmon_csu_xcl, props);
 
 				/* Is NRDY hardware managed? */
-				hw_managed = mpam_ris_hw_probe_hw_nrdy(ris, CSU);
-				if (hw_managed)
-					mpam_set_feature(mpam_feat_msmon_csu_hw_nrdy, props);
-			}
+				hw_managed = mpam_ris_hw_probe_csu_nrdy(ris);
 
-			/*
-			 * Accept the missing firmware property if NRDY appears
-			 * un-implemented.
-			 */
-			if (err && mpam_has_feature(mpam_feat_msmon_csu_hw_nrdy, props))
-				dev_err_once(dev, "Counters are not usable because not-ready timeout was not provided by firmware.");
+				/*
+				 * Accept the missing firmware property if NRDY appears
+				 * un-implemented.
+				 */
+				if (err && hw_managed)
+					dev_err_once(dev, "Counters are not usable because not-ready timeout was not provided by firmware.");
+			}
 		}
 		if (FIELD_GET(MPAMF_MSMON_IDR_MSMON_MBWU, msmon_features)) {
-			bool has_long, hw_managed;
+			bool has_long;
 			u32 mbwumon_idr = mpam_read_partsel_reg(msc, MBWUMON_IDR);
 
 			props->num_mbwu_mon = FIELD_GET(MPAMF_MBWUMON_IDR_NUM_MON, mbwumon_idr);
@@ -802,16 +812,6 @@ static void mpam_ris_hw_probe(struct mpam_msc_ris *ris)
 				} else {
 					mpam_set_feature(mpam_feat_msmon_mbwu_31counter, props);
 				}
-
-				/* Is NRDY hardware managed? */
-				hw_managed = mpam_ris_hw_probe_hw_nrdy(ris, MBWU);
-				if (hw_managed)
-					mpam_set_feature(mpam_feat_msmon_mbwu_hw_nrdy, props);
-
-				/*
-				 * Don't warn about any missing firmware property for
-				 * MBWU NRDY - it doesn't make any sense!
-				 */
 			}
 		}
 	}
@@ -1078,7 +1078,6 @@ static void __ris_msmon_read(void *arg)
 	bool reset_on_next_read = false;
 	struct mpam_msc_ris *ris = m->ris;
 	struct msmon_mbwu_state *mbwu_state;
-	struct mpam_props *rprops = &ris->props;
 	struct mpam_msc *msc = m->ris->vmsc->msc;
 	u32 mon_sel, ctl_val, flt_val, cur_ctl, cur_flt;
 
@@ -1134,8 +1133,7 @@ static void __ris_msmon_read(void *arg)
 	switch (m->type) {
 	case mpam_feat_msmon_csu:
 		now = mpam_read_monsel_reg(msc, CSU);
-		if (mpam_has_feature(mpam_feat_msmon_csu_hw_nrdy, rprops))
-			nrdy = now & MSMON___NRDY;
+		nrdy = now & MSMON___NRDY;
 		now = FIELD_GET(MSMON___VALUE, now);
 		break;
 	case mpam_feat_msmon_mbwu_31counter:
@@ -1143,8 +1141,7 @@ static void __ris_msmon_read(void *arg)
 	case mpam_feat_msmon_mbwu_63counter:
 		if (m->type != mpam_feat_msmon_mbwu_31counter) {
 			now = mpam_msc_read_mbwu_l(msc);
-			if (mpam_has_feature(mpam_feat_msmon_mbwu_hw_nrdy, rprops))
-				nrdy = now & MSMON___L_NRDY;
+			nrdy = now & MSMON___L_NRDY;
 
 			if (m->type == mpam_feat_msmon_mbwu_63counter)
 				now = FIELD_GET(MSMON___LWD_VALUE, now);
@@ -1152,8 +1149,7 @@ static void __ris_msmon_read(void *arg)
 				now = FIELD_GET(MSMON___L_VALUE, now);
 		} else {
 			now = mpam_read_monsel_reg(msc, MBWU);
-			if (mpam_has_feature(mpam_feat_msmon_mbwu_hw_nrdy, rprops))
-				nrdy = now & MSMON___NRDY;
+			nrdy = now & MSMON___NRDY;
 			now = FIELD_GET(MSMON___VALUE, now);
 		}
 
@@ -1364,17 +1360,15 @@ static void mpam_reprogram_ris_partid(struct mpam_msc_ris *ris, u16 partid,
 		__mpam_intpart_sel(ris->ris_idx, partid, msc);
 	}
 
-	if (mpam_has_feature(mpam_feat_cpor_part, rprops) &&
-	    mpam_has_feature(mpam_feat_cpor_part, cfg)) {
-		if (cfg->reset_cpbm)
-			mpam_reset_msc_bitmap(msc, MPAMCFG_CPBM, rprops->cpbm_wd);
-		else
+	if (mpam_has_feature(mpam_feat_cpor_part, rprops)) {
+		if (mpam_has_feature(mpam_feat_cpor_part, cfg))
 			mpam_write_partsel_reg(msc, CPBM, cfg->cpbm);
+		else
+			mpam_reset_msc_bitmap(msc, MPAMCFG_CPBM, rprops->cpbm_wd);
 	}
 
-	if (mpam_has_feature(mpam_feat_mbw_part, rprops) &&
-	    mpam_has_feature(mpam_feat_mbw_part, cfg)) {
-		if (cfg->reset_mbw_pbm)
+	if (mpam_has_feature(mpam_feat_mbw_part, rprops)) {
+		if (mpam_has_feature(mpam_feat_mbw_part, cfg))
 			mpam_reset_msc_bitmap(msc, MPAMCFG_MBW_PBM, rprops->mbw_pbm_bits);
 		else
 			mpam_write_partsel_reg(msc, MBW_PBM, cfg->mbw_pbm);
@@ -1384,16 +1378,14 @@ static void mpam_reprogram_ris_partid(struct mpam_msc_ris *ris, u16 partid,
 	    mpam_has_feature(mpam_feat_mbw_min, cfg))
 		mpam_write_partsel_reg(msc, MBW_MIN, 0);
 
-	if (mpam_has_feature(mpam_feat_mbw_max, rprops) &&
-	    mpam_has_feature(mpam_feat_mbw_max, cfg)) {
-		if (cfg->reset_mbw_max)
-			mpam_write_partsel_reg(msc, MBW_MAX, MPAMCFG_MBW_MAX_MAX);
-		else
+	if (mpam_has_feature(mpam_feat_mbw_max, rprops)) {
+		if (mpam_has_feature(mpam_feat_mbw_max, cfg))
 			mpam_write_partsel_reg(msc, MBW_MAX, cfg->mbw_max);
+		else
+			mpam_write_partsel_reg(msc, MBW_MAX, MPAMCFG_MBW_MAX_MAX);
 	}
 
-	if (mpam_has_feature(mpam_feat_mbw_prop, rprops) &&
-	    mpam_has_feature(mpam_feat_mbw_prop, cfg))
+	if (mpam_has_feature(mpam_feat_mbw_prop, rprops))
 		mpam_write_partsel_reg(msc, MBW_PROP, 0);
 
 	if (mpam_has_feature(mpam_feat_cmax_cmax, rprops))
@@ -1493,16 +1485,6 @@ static int mpam_save_mbwu_state(void *arg)
 	return 0;
 }
 
-static void mpam_init_reset_cfg(struct mpam_config *reset_cfg)
-{
-	*reset_cfg = (struct mpam_config) {
-		.reset_cpbm = true,
-		.reset_mbw_pbm = true,
-		.reset_mbw_max = true,
-	};
-	bitmap_fill(reset_cfg->features, MPAM_FEATURE_LAST);
-}
-
 /*
  * Called via smp_call_on_cpu() to prevent migration, while still being
  * pre-emptible. Caller must hold mpam_srcu.
@@ -1510,13 +1492,11 @@ static void mpam_init_reset_cfg(struct mpam_config *reset_cfg)
 static int mpam_reset_ris(void *arg)
 {
 	u16 partid, partid_max;
-	struct mpam_config reset_cfg;
+	struct mpam_config reset_cfg = {};
 	struct mpam_msc_ris *ris = arg;
 
 	if (ris->in_reset_state)
 		return 0;
-
-	mpam_init_reset_cfg(&reset_cfg);
 
 	spin_lock(&partid_max_lock);
 	partid_max = mpam_partid_max;
@@ -2379,6 +2359,9 @@ static void __destroy_component_cfg(struct mpam_component *comp)
 
 	lockdep_assert_held(&mpam_list_lock);
 
+	if (!comp->cfg)
+		return;
+
 	add_to_garbage(comp->cfg);
 	list_for_each_entry(vmsc, &comp->vmsc, comp_list) {
 		msc = vmsc->msc;
@@ -2694,6 +2677,7 @@ int mpam_apply_config(struct mpam_component *comp, u16 partid,
 					 srcu_read_lock_held(&mpam_srcu)) {
 			arg.ris = ris;
 			mpam_touch_msc(msc, __write_config, &arg);
+			ris->in_reset_state = false;
 		}
 		mutex_unlock(&msc->cfg_lock);
 	}

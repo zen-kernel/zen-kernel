@@ -50,6 +50,8 @@ struct atmel_tcb_pwm_chip {
 	spinlock_t lock;
 	u8 channel;
 	u8 width;
+	unsigned long rate;
+	unsigned long slow_rate;
 	struct regmap *regmap;
 	struct clk *clk;
 	struct clk *gclk;
@@ -266,7 +268,7 @@ static int atmel_tcb_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
 	int slowclk = 0;
 	unsigned period;
 	unsigned duty;
-	unsigned rate = clk_get_rate(tcbpwmc->clk);
+	unsigned long rate = tcbpwmc->rate;
 	unsigned long long min;
 	unsigned long long max;
 
@@ -294,7 +296,7 @@ static int atmel_tcb_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
 	 */
 	if (i == ARRAY_SIZE(atmel_tcb_divisors)) {
 		i = slowclk;
-		rate = clk_get_rate(tcbpwmc->slow_clk);
+		rate = tcbpwmc->slow_rate;
 		min = div_u64(NSEC_PER_SEC, rate);
 		max = min << tcbpwmc->width;
 
@@ -431,24 +433,49 @@ static int atmel_tcb_pwm_probe(struct platform_device *pdev)
 	}
 
 	chip->ops = &atmel_tcb_pwm_ops;
+	chip->atomic = true;
 	tcbpwmc->channel = channel;
 	tcbpwmc->width = config->counter_width;
 
-	err = clk_prepare_enable(tcbpwmc->slow_clk);
+	err = clk_prepare_enable(tcbpwmc->clk);
 	if (err)
 		goto err_gclk;
+
+	err = clk_prepare_enable(tcbpwmc->slow_clk);
+	if (err)
+		goto err_disable_clk;;
+
+	err = clk_rate_exclusive_get(tcbpwmc->clk);
+	if (err)
+		goto err_disable_slow_clk;
+
+	err = clk_rate_exclusive_get(tcbpwmc->slow_clk);
+	if (err)
+		goto err_clk_unlock;
+
+	tcbpwmc->rate = clk_get_rate(tcbpwmc->clk);
+	tcbpwmc->slow_rate = clk_get_rate(tcbpwmc->slow_clk);
 
 	spin_lock_init(&tcbpwmc->lock);
 
 	err = pwmchip_add(chip);
 	if (err < 0)
-		goto err_disable_clk;
+		goto err_slow_clk_unlock;
 
 	platform_set_drvdata(pdev, chip);
 
 	return 0;
 
+err_slow_clk_unlock:
+	clk_rate_exclusive_put(tcbpwmc->slow_clk);
+
+err_clk_unlock:
+	clk_rate_exclusive_put(tcbpwmc->clk);
+
 err_disable_clk:
+	clk_disable_unprepare(tcbpwmc->clk);
+
+err_disable_slow_clk:
 	clk_disable_unprepare(tcbpwmc->slow_clk);
 
 err_gclk:
@@ -470,6 +497,9 @@ static void atmel_tcb_pwm_remove(struct platform_device *pdev)
 
 	pwmchip_remove(chip);
 
+	clk_rate_exclusive_put(tcbpwmc->slow_clk);
+	clk_rate_exclusive_put(tcbpwmc->clk);
+	clk_disable_unprepare(tcbpwmc->clk);
 	clk_disable_unprepare(tcbpwmc->slow_clk);
 	clk_put(tcbpwmc->gclk);
 	clk_put(tcbpwmc->clk);
