@@ -576,21 +576,10 @@ static inline void idle_set_state(struct rq *rq,
 {
 	rq->idle_state = idle_state;
 }
-
-static inline struct cpuidle_state *idle_get_state(struct rq *rq)
-{
-	WARN_ON(!rcu_read_lock_held());
-	return rq->idle_state;
-}
 #else
 static inline void idle_set_state(struct rq *rq,
 				  struct cpuidle_state *idle_state)
 {
-}
-
-static inline struct cpuidle_state *idle_get_state(struct rq *rq)
-{
-	return NULL;
 }
 #endif
 
