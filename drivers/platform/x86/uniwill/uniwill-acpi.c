@@ -1193,6 +1193,16 @@ static int uniwill_led_init(struct uniwill_data *data)
 							 &init_data);
 }
 
+static unsigned int uniwill_sanitize_battery_threshold(unsigned int value)
+{
+	/* 0 means "charging threshold not active" */
+	if (!value)
+		return 100;
+
+	/* Guard against invalid values */
+	return min(value, 100);
+}
+
 static int uniwill_get_property(struct power_supply *psy, const struct power_supply_ext *ext,
 				void *drvdata, enum power_supply_property psp,
 				union power_supply_propval *val)
@@ -1239,7 +1249,8 @@ static int uniwill_get_property(struct power_supply *psy, const struct power_sup
 		if (ret < 0)
 			return ret;
 
-		val->intval = clamp_val(FIELD_GET(CHARGE_CTRL_MASK, regval), 0, 100);
+		regval = FIELD_GET(CHARGE_CTRL_MASK, regval);
+		val->intval = uniwill_sanitize_battery_threshold(regval);
 		return 0;
 	default:
 		return -EINVAL;
@@ -1254,11 +1265,11 @@ static int uniwill_set_property(struct power_supply *psy, const struct power_sup
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD:
-		if (val->intval < 1 || val->intval > 100)
+		if (val->intval < 0 || val->intval > 100)
 			return -EINVAL;
 
 		return regmap_update_bits(data->regmap, EC_ADDR_CHARGE_CTRL, CHARGE_CTRL_MASK,
-					  val->intval);
+					  max(val->intval, 1));
 	default:
 		return -EINVAL;
 	}
@@ -1334,10 +1345,32 @@ static int uniwill_remove_battery(struct power_supply *battery, struct acpi_batt
 
 static int uniwill_battery_init(struct uniwill_data *data)
 {
+	unsigned int value, threshold, sanitized;
 	int ret;
 
 	if (!uniwill_device_supports(data, UNIWILL_FEATURE_BATTERY))
 		return 0;
+
+	ret = regmap_read(data->regmap, EC_ADDR_CHARGE_CTRL, &value);
+	if (ret < 0)
+		return ret;
+
+	/*
+	 * The charge control threshold might be initialized with 0 by
+	 * the EC to signal that said threshold is uninitialized. We thus
+	 * need to replace this placeholder value with a valid one (100)
+	 * to signal that we want to take control of battery charging.
+	 * For the sake of completeness we also apply this to other
+	 * invalid threshold values.
+	 */
+	threshold = FIELD_GET(CHARGE_CTRL_MASK, value);
+	sanitized = uniwill_sanitize_battery_threshold(threshold);
+	if (threshold != sanitized) {
+		FIELD_MODIFY(CHARGE_CTRL_MASK, &value, sanitized);
+		ret = regmap_write(data->regmap, EC_ADDR_CHARGE_CTRL, value);
+		if (ret < 0)
+			return ret;
+	}
 
 	ret = devm_mutex_init(data->dev, &data->battery_lock);
 	if (ret < 0)
@@ -2156,8 +2189,6 @@ static int __init uniwill_init(void)
 		if (!force)
 			return -ENODEV;
 
-		/* Assume that the device supports all features */
-		device_descriptor.features = UINT_MAX;
 		pr_warn("Loading on a potentially unsupported device\n");
 	} else {
 		/*
@@ -2173,6 +2204,12 @@ static int __init uniwill_init(void)
 
 		descriptor = id->driver_data;
 		device_descriptor = *descriptor;
+	}
+
+	if (force) {
+		/* Assume that the device supports all features except the charge limit */
+		device_descriptor.features = UINT_MAX & ~UNIWILL_FEATURE_BATTERY;
+		pr_warn("Enabling potentially unsupported features\n");
 	}
 
 	ret = platform_driver_register(&uniwill_driver);

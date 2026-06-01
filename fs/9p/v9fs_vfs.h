@@ -75,17 +75,4 @@ static inline void v9fs_invalidate_inode_attr(struct inode *inode)
 
 int v9fs_open_to_dotl_flags(int flags);
 
-static inline void v9fs_i_size_write(struct inode *inode, loff_t i_size)
-{
-	/*
-	 * 32-bit need the lock, concurrent updates could break the
-	 * sequences and make i_size_read() loop forever.
-	 * 64-bit updates are atomic and can skip the locking.
-	 */
-	if (sizeof(i_size) > sizeof(long))
-		spin_lock(&inode->i_lock);
-	i_size_write(inode, i_size);
-	if (sizeof(i_size) > sizeof(long))
-		spin_unlock(&inode->i_lock);
-}
 #endif

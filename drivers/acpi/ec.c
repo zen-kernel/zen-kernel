@@ -1679,9 +1679,13 @@ static int acpi_ec_setup(struct acpi_ec *ec, struct acpi_device *device, bool ca
 
 static int acpi_ec_probe(struct platform_device *pdev)
 {
-	struct acpi_device *device = ACPI_COMPANION(&pdev->dev);
+	struct acpi_device *device;
 	struct acpi_ec *ec;
 	int ret;
+
+	device = ACPI_COMPANION(&pdev->dev);
+	if (!device)
+		return -ENODEV;
 
 	strscpy(acpi_device_name(device), ACPI_EC_DEVICE_NAME);
 	strscpy(acpi_device_class(device), ACPI_EC_CLASS);

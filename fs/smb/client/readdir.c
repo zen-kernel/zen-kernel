@@ -143,7 +143,8 @@ retry:
 						fattr->cf_rdev = inode->i_rdev;
 						fattr->cf_uid = inode->i_uid;
 						fattr->cf_gid = inode->i_gid;
-						fattr->cf_eof = CIFS_I(inode)->netfs.remote_i_size;
+						fattr->cf_eof =
+							netfs_read_remote_i_size(inode);
 						fattr->cf_symlink_target = NULL;
 					} else {
 						CIFS_I(inode)->time = 0;

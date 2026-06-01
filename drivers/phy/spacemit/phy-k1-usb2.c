@@ -97,7 +97,6 @@ static int spacemit_usb2phy_init(struct phy *phy)
 	ret = clk_enable(sphy->clk);
 	if (ret) {
 		dev_err(&phy->dev, "failed to enable clock\n");
-		clk_disable(sphy->clk);
 		return ret;
 	}
 

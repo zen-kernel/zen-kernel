@@ -79,9 +79,9 @@ done:
 	if (ret < 0)
 		req_set_fail(req);
 	if (nop->flags & IORING_NOP_CQE32)
-		io_req_set_res32(req, nop->result, 0, nop->extra1, nop->extra2);
+		io_req_set_res32(req, ret, 0, nop->extra1, nop->extra2);
 	else
-		io_req_set_res(req, nop->result, 0);
+		io_req_set_res(req, ret, 0);
 	if (nop->flags & IORING_NOP_TW) {
 		req->io_task_work.func = io_req_task_complete;
 		io_req_task_work_add(req);

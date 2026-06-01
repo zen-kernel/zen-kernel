@@ -252,7 +252,7 @@ int mlx5e_napi_poll(struct napi_struct *napi, int budget)
 		mlx5e_cq_arm(&c->xdpsq->cq);
 
 	if (unlikely(aff_change && busy_xsk)) {
-		mlx5e_trigger_irq(&c->icosq);
+		mlx5e_trigger_napi_async_icosq(c);
 		ch_stats->force_irq++;
 	}
 

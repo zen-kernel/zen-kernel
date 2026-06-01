@@ -2491,18 +2491,23 @@ int cifs_lock(struct file *file, int cmd, struct file_lock *flock)
 void cifs_write_subrequest_terminated(struct cifs_io_subrequest *wdata, ssize_t result)
 {
 	struct netfs_io_request *wreq = wdata->rreq;
-	struct netfs_inode *ictx = netfs_inode(wreq->inode);
+	struct inode *inode = wreq->inode;
+	struct netfs_inode *ictx = netfs_inode(inode);
 	loff_t wrend;
 
 	if (result > 0) {
+		spin_lock(&inode->i_lock);
+
 		wrend = wdata->subreq.start + wdata->subreq.transferred + result;
 
-		if (wrend > ictx->zero_point &&
+		if (wrend > ictx->_zero_point &&
 		    (wdata->rreq->origin == NETFS_UNBUFFERED_WRITE ||
 		     wdata->rreq->origin == NETFS_DIO_WRITE))
-			ictx->zero_point = wrend;
-		if (wrend > ictx->remote_i_size)
+			netfs_write_zero_point(inode, wrend);
+		if (wrend > ictx->_remote_i_size)
 			netfs_resize_file(ictx, wrend, true);
+
+		spin_unlock(&inode->i_lock);
 	}
 
 	netfs_write_subrequest_terminated(&wdata->subreq, result);

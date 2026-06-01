@@ -376,8 +376,10 @@ ssize_t netfs_unbuffered_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	if (ret < 0)
 		goto out;
 	end = iocb->ki_pos + iov_iter_count(from);
-	if (end > ictx->zero_point)
-		ictx->zero_point = end;
+	spin_lock(&inode->i_lock);
+	if (end > ictx->_zero_point)
+		netfs_write_zero_point(inode, end);
+	spin_unlock(&inode->i_lock);
 
 	fscache_invalidate(netfs_i_cookie(ictx), NULL, i_size_read(inode),
 			   FSCACHE_INVAL_DIO_WRITE);

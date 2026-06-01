@@ -332,27 +332,7 @@ bool rxrpc_input_call_event(struct rxrpc_call *call)
 
 			saw_ack |= sp->hdr.type == RXRPC_PACKET_TYPE_ACK;
 
-			if (sp->hdr.type == RXRPC_PACKET_TYPE_DATA &&
-			    sp->hdr.securityIndex != 0 &&
-			    (skb_cloned(skb) ||
-			     skb_has_frag_list(skb) ||
-			     skb_has_shared_frag(skb))) {
-				/* Unshare the packet so that it can be
-				 * modified by in-place decryption.
-				 */
-				struct sk_buff *nskb = skb_copy(skb, GFP_ATOMIC);
-
-				if (nskb) {
-					rxrpc_new_skb(nskb, rxrpc_skb_new_unshared);
-					rxrpc_input_call_packet(call, nskb);
-					rxrpc_free_skb(nskb, rxrpc_skb_put_call_rx);
-				} else {
-					/* OOM - Drop the packet. */
-					rxrpc_see_skb(skb, rxrpc_skb_see_unshare_nomem);
-				}
-			} else {
-				rxrpc_input_call_packet(call, skb);
-			}
+			rxrpc_input_call_packet(call, skb);
 			rxrpc_free_skb(skb, rxrpc_skb_put_call_rx);
 			did_receive = true;
 		}

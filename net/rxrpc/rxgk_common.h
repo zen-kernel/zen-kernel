@@ -106,6 +106,49 @@ int rxgk_decrypt_skb(const struct krb5_enctype *krb5,
 }
 
 /*
+ * Apply decryption and checksumming functions a flat data buffer.  The data
+ * point and length are updated to reflect the actual content of the encrypted
+ * region.
+ */
+static inline int rxgk_decrypt(const struct krb5_enctype *krb5,
+			       struct crypto_aead *aead,
+			       void **_data, unsigned int *_len,
+			       int *_error_code)
+{
+	struct scatterlist sg[1];
+	size_t offset = 0, len = *_len;
+	int ret;
+
+	sg_init_one(sg, *_data, len);
+
+	ret = crypto_krb5_decrypt(krb5, aead, sg, 1, &offset, &len);
+	switch (ret) {
+	case 0:
+		if (offset & 3) {
+			*_error_code = RXGK_INCONSISTENCY;
+			ret = -EPROTO;
+			break;
+		}
+		*_data += offset;
+		*_len = len;
+		break;
+	case -EBADMSG: /* Checksum mismatch. */
+	case -EPROTO:
+		*_error_code = RXGK_SEALEDINCON;
+		break;
+	case -EMSGSIZE:
+		*_error_code = RXGK_PACKETSHORT;
+		break;
+	case -ENOPKG: /* Would prefer RXGK_BADETYPE, but not available for YFS. */
+	default:
+		*_error_code = RXGK_INCONSISTENCY;
+		break;
+	}
+
+	return ret;
+}
+
+/*
  * Check the MIC on a region of an skbuff.  The offset and length are updated
  * to reflect the actual content of the secure region.
  */
@@ -131,6 +174,45 @@ int rxgk_verify_mic_skb(const struct krb5_enctype *krb5,
 	switch (ret) {
 	case 0:
 		*_offset += offset;
+		*_len = len;
+		break;
+	case -EBADMSG: /* Checksum mismatch */
+	case -EPROTO:
+		*_error_code = RXGK_SEALEDINCON;
+		break;
+	case -EMSGSIZE:
+		*_error_code = RXGK_PACKETSHORT;
+		break;
+	case -ENOPKG: /* Would prefer RXGK_BADETYPE, but not available for YFS. */
+	default:
+		*_error_code = RXGK_INCONSISTENCY;
+		break;
+	}
+
+	return ret;
+}
+
+/*
+ * Check the MIC on a flat buffer.  The data pointer and length are updated to
+ * reflect the actual content of the secure region.
+ */
+static inline
+int rxgk_verify_mic(const struct krb5_enctype *krb5,
+		    struct crypto_shash *shash,
+		    const struct krb5_buffer *metadata,
+		    void **_data, unsigned int *_len,
+		    u32 *_error_code)
+{
+	struct scatterlist sg[1];
+	size_t offset = 0, len = *_len;
+	int ret;
+
+	sg_init_one(sg, *_data, len);
+
+	ret = crypto_krb5_verify_mic(krb5, shash, metadata, sg, 1, &offset, &len);
+	switch (ret) {
+	case 0:
+		*_data += offset;
 		*_len = len;
 		break;
 	case -EBADMSG: /* Checksum mismatch */

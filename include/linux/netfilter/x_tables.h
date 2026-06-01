@@ -297,9 +297,11 @@ struct xt_counters *xt_counters_alloc(unsigned int counters);
 
 struct xt_table *xt_register_table(struct net *net,
 				   const struct xt_table *table,
+				   const struct nf_hook_ops *template_ops,
 				   struct xt_table_info *bootstrap,
 				   struct xt_table_info *newinfo);
-void *xt_unregister_table(struct xt_table *table);
+void xt_unregister_table_pre_exit(struct net *net, u8 af, const char *name);
+struct xt_table *xt_unregister_table_exit(struct net *net, u8 af, const char *name);
 
 struct xt_table_info *xt_replace_table(struct xt_table *table,
 				       unsigned int num_counters,

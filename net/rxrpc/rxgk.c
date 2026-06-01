@@ -473,15 +473,20 @@ static int rxgk_verify_packet_integrity(struct rxrpc_call *call,
 	struct rxrpc_skb_priv *sp = rxrpc_skb(skb);
 	struct rxgk_header *hdr;
 	struct krb5_buffer metadata;
-	unsigned int offset = sp->offset, len = sp->len;
+	unsigned int len = call->rx_dec_len;
 	size_t data_offset = 0, data_len = len;
+	void *data = call->rx_dec_buffer, *p = data;
 	u32 ac = 0;
 	int ret = -ENOMEM;
 
 	_enter("");
 
-	crypto_krb5_where_is_the_data(gk->krb5, KRB5_CHECKSUM_MODE,
-				      &data_offset, &data_len);
+	if (crypto_krb5_where_is_the_data(gk->krb5, KRB5_CHECKSUM_MODE,
+					  &data_offset, &data_len) < 0) {
+		ret = rxrpc_abort_eproto(call, skb, RXGK_PACKETSHORT,
+					 rxgk_abort_1_short_header);
+		goto put_gk;
+	}
 
 	hdr = kzalloc_obj(*hdr, GFP_NOFS);
 	if (!hdr)
@@ -496,16 +501,15 @@ static int rxgk_verify_packet_integrity(struct rxrpc_call *call,
 
 	metadata.len = sizeof(*hdr);
 	metadata.data = hdr;
-	ret = rxgk_verify_mic_skb(gk->krb5, gk->rx_Kc, &metadata,
-				  skb, &offset, &len, &ac);
+	ret = rxgk_verify_mic(gk->krb5, gk->rx_Kc, &metadata, &p, &len, &ac);
 	kfree(hdr);
 	if (ret < 0) {
 		if (ret != -ENOMEM)
 			rxrpc_abort_eproto(call, skb, ac,
 					   rxgk_abort_1_verify_mic_eproto);
 	} else {
-		sp->offset = offset;
-		sp->len = len;
+		call->rx_dec_offset = p - data;
+		call->rx_dec_len = len;
 	}
 
 put_gk:
@@ -522,49 +526,53 @@ static int rxgk_verify_packet_encrypted(struct rxrpc_call *call,
 					struct sk_buff *skb)
 {
 	struct rxrpc_skb_priv *sp = rxrpc_skb(skb);
-	struct rxgk_header hdr;
-	unsigned int offset = sp->offset, len = sp->len;
+	struct rxgk_header *hdr;
+	unsigned int offset = 0, len = call->rx_dec_len;
+	void *data = call->rx_dec_buffer, *p = data;
 	int ret;
 	u32 ac = 0;
 
 	_enter("");
 
-	ret = rxgk_decrypt_skb(gk->krb5, gk->rx_enc, skb, &offset, &len, &ac);
+	if (crypto_krb5_check_data_len(gk->krb5, KRB5_ENCRYPT_MODE,
+				       len, sizeof(*hdr)) < 0) {
+		ret = rxrpc_abort_eproto(call, skb, RXGK_PACKETSHORT,
+					 rxgk_abort_2_short_header);
+		goto error;
+	}
+
+	ret = rxgk_decrypt(gk->krb5, gk->rx_enc, &p, &len, &ac);
 	if (ret < 0) {
 		if (ret != -ENOMEM)
 			rxrpc_abort_eproto(call, skb, ac, rxgk_abort_2_decrypt_eproto);
 		goto error;
 	}
+	offset = p - data;
 
-	if (len < sizeof(hdr)) {
+	if (len < sizeof(*hdr)) {
 		ret = rxrpc_abort_eproto(call, skb, RXGK_PACKETSHORT,
 					 rxgk_abort_2_short_header);
 		goto error;
 	}
 
 	/* Extract the header from the skb */
-	ret = skb_copy_bits(skb, offset, &hdr, sizeof(hdr));
-	if (ret < 0) {
-		ret = rxrpc_abort_eproto(call, skb, RXGK_PACKETSHORT,
-					 rxgk_abort_2_short_encdata);
-		goto error;
-	}
-	offset += sizeof(hdr);
-	len -= sizeof(hdr);
+	hdr = data + offset;
+	offset += sizeof(*hdr);
+	len -= sizeof(*hdr);
 
-	if (ntohl(hdr.epoch)		!= call->conn->proto.epoch ||
-	    ntohl(hdr.cid)		!= call->cid ||
-	    ntohl(hdr.call_number)	!= call->call_id ||
-	    ntohl(hdr.seq)		!= sp->hdr.seq ||
-	    ntohl(hdr.sec_index)	!= call->security_ix ||
-	    ntohl(hdr.data_len)		> len) {
+	if (ntohl(hdr->epoch)		!= call->conn->proto.epoch ||
+	    ntohl(hdr->cid)		!= call->cid ||
+	    ntohl(hdr->call_number)	!= call->call_id ||
+	    ntohl(hdr->seq)		!= sp->hdr.seq ||
+	    ntohl(hdr->sec_index)	!= call->security_ix ||
+	    ntohl(hdr->data_len)	> len) {
 		ret = rxrpc_abort_eproto(call, skb, RXGK_SEALEDINCON,
 					 rxgk_abort_2_short_data);
 		goto error;
 	}
 
-	sp->offset = offset;
-	sp->len = ntohl(hdr.data_len);
+	call->rx_dec_offset = offset;
+	call->rx_dec_len = ntohl(hdr->data_len);
 	ret = 0;
 error:
 	rxgk_put(gk);

@@ -430,27 +430,25 @@ static int rxkad_verify_packet_1(struct rxrpc_call *call, struct sk_buff *skb,
 				 rxrpc_seq_t seq,
 				 struct skcipher_request *req)
 {
-	struct rxkad_level1_hdr sechdr;
+	struct rxkad_level1_hdr *sechdr;
 	struct rxrpc_skb_priv *sp = rxrpc_skb(skb);
 	struct rxrpc_crypt iv;
-	struct scatterlist sg[16];
-	u32 data_size, buf;
+	struct scatterlist sg[1];
+	void *data = call->rx_dec_buffer;
+	u32 len = sp->len, data_size, buf;
 	u16 check;
 	int ret;
 
 	_enter("");
 
-	if (sp->len < 8)
+	if (len < 8)
 		return rxrpc_abort_eproto(call, skb, RXKADSEALEDINCON,
 					  rxkad_abort_1_short_header);
 
 	/* Decrypt the skbuff in-place.  TODO: We really want to decrypt
 	 * directly into the target buffer.
 	 */
-	sg_init_table(sg, ARRAY_SIZE(sg));
-	ret = skb_to_sgvec(skb, sg, sp->offset, 8);
-	if (unlikely(ret < 0))
-		return ret;
+	sg_init_one(sg, data, len);
 
 	/* start the decryption afresh */
 	memset(&iv, 0, sizeof(iv));
@@ -464,13 +462,11 @@ static int rxkad_verify_packet_1(struct rxrpc_call *call, struct sk_buff *skb,
 		return ret;
 
 	/* Extract the decrypted packet length */
-	if (skb_copy_bits(skb, sp->offset, &sechdr, sizeof(sechdr)) < 0)
-		return rxrpc_abort_eproto(call, skb, RXKADDATALEN,
-					  rxkad_abort_1_short_encdata);
-	sp->offset += sizeof(sechdr);
-	sp->len    -= sizeof(sechdr);
+	sechdr = data;
+	call->rx_dec_offset = sizeof(*sechdr);
+	len -= sizeof(*sechdr);
 
-	buf = ntohl(sechdr.data_size);
+	buf = ntohl(sechdr->data_size);
 	data_size = buf & 0xffff;
 
 	check = buf >> 16;
@@ -479,10 +475,10 @@ static int rxkad_verify_packet_1(struct rxrpc_call *call, struct sk_buff *skb,
 	if (check != 0)
 		return rxrpc_abort_eproto(call, skb, RXKADSEALEDINCON,
 					  rxkad_abort_1_short_check);
-	if (data_size > sp->len)
+	if (data_size > len)
 		return rxrpc_abort_eproto(call, skb, RXKADDATALEN,
 					  rxkad_abort_1_short_data);
-	sp->len = data_size;
+	call->rx_dec_len = data_size;
 
 	_leave(" = 0 [dlen=%x]", data_size);
 	return 0;
@@ -496,43 +492,28 @@ static int rxkad_verify_packet_2(struct rxrpc_call *call, struct sk_buff *skb,
 				 struct skcipher_request *req)
 {
 	const struct rxrpc_key_token *token;
-	struct rxkad_level2_hdr sechdr;
+	struct rxkad_level2_hdr *sechdr;
 	struct rxrpc_skb_priv *sp = rxrpc_skb(skb);
 	struct rxrpc_crypt iv;
-	struct scatterlist _sg[4], *sg;
-	u32 data_size, buf;
+	struct scatterlist sg[1];
+	void *data = call->rx_dec_buffer;
+	u32 len = sp->len, data_size, buf;
 	u16 check;
-	int nsg, ret;
+	int ret;
 
-	_enter(",{%d}", sp->len);
+	_enter(",{%d}", len);
 
-	if (sp->len < 8)
+	if (len < 8)
 		return rxrpc_abort_eproto(call, skb, RXKADSEALEDINCON,
 					  rxkad_abort_2_short_header);
 
 	/* Don't let the crypto algo see a misaligned length. */
-	sp->len = round_down(sp->len, 8);
+	len = round_down(len, 8);
 
-	/* Decrypt the skbuff in-place.  TODO: We really want to decrypt
-	 * directly into the target buffer.
+	/* Decrypt in place in the call's decryption buffer.  TODO: We really
+	 * want to decrypt directly into the target buffer.
 	 */
-	sg = _sg;
-	nsg = skb_shinfo(skb)->nr_frags + 1;
-	if (nsg <= 4) {
-		nsg = 4;
-	} else {
-		sg = kmalloc_objs(*sg, nsg, GFP_NOIO);
-		if (!sg)
-			return -ENOMEM;
-	}
-
-	sg_init_table(sg, nsg);
-	ret = skb_to_sgvec(skb, sg, sp->offset, sp->len);
-	if (unlikely(ret < 0)) {
-		if (sg != _sg)
-			kfree(sg);
-		return ret;
-	}
+	sg_init_one(sg, data, len);
 
 	/* decrypt from the session key */
 	token = call->conn->key->payload.data[0];
@@ -540,11 +521,9 @@ static int rxkad_verify_packet_2(struct rxrpc_call *call, struct sk_buff *skb,
 
 	skcipher_request_set_sync_tfm(req, call->conn->rxkad.cipher);
 	skcipher_request_set_callback(req, 0, NULL, NULL);
-	skcipher_request_set_crypt(req, sg, sg, sp->len, iv.x);
+	skcipher_request_set_crypt(req, sg, sg, len, iv.x);
 	ret = crypto_skcipher_decrypt(req);
 	skcipher_request_zero(req);
-	if (sg != _sg)
-		kfree(sg);
 	if (ret < 0) {
 		if (ret == -ENOMEM)
 			return ret;
@@ -553,13 +532,11 @@ static int rxkad_verify_packet_2(struct rxrpc_call *call, struct sk_buff *skb,
 	}
 
 	/* Extract the decrypted packet length */
-	if (skb_copy_bits(skb, sp->offset, &sechdr, sizeof(sechdr)) < 0)
-		return rxrpc_abort_eproto(call, skb, RXKADDATALEN,
-					  rxkad_abort_2_short_len);
-	sp->offset += sizeof(sechdr);
-	sp->len    -= sizeof(sechdr);
+	sechdr = data;
+	call->rx_dec_offset = sizeof(*sechdr);
+	len -= sizeof(*sechdr);
 
-	buf = ntohl(sechdr.data_size);
+	buf = ntohl(sechdr->data_size);
 	data_size = buf & 0xffff;
 
 	check = buf >> 16;
@@ -569,17 +546,18 @@ static int rxkad_verify_packet_2(struct rxrpc_call *call, struct sk_buff *skb,
 		return rxrpc_abort_eproto(call, skb, RXKADSEALEDINCON,
 					  rxkad_abort_2_short_check);
 
-	if (data_size > sp->len)
+	if (data_size > len)
 		return rxrpc_abort_eproto(call, skb, RXKADDATALEN,
 					  rxkad_abort_2_short_data);
 
-	sp->len = data_size;
+	call->rx_dec_len = data_size;
 	_leave(" = 0 [dlen=%x]", data_size);
 	return 0;
 }
 
 /*
- * Verify the security on a received packet and the subpackets therein.
+ * Verify the security on a received (sub)packet.  If the packet needs
+ * modifying (e.g. decrypting), it must be copied.
  */
 static int rxkad_verify_packet(struct rxrpc_call *call, struct sk_buff *skb)
 {
