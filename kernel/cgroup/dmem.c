@@ -771,6 +771,7 @@ struct dmem_cgroup_pool_state *dmem_cgroup_get_common_ancestor(struct dmem_cgrou
 {
 	struct cgroup *ancestor_cgroup;
 	struct cgroup_subsys_state *ancestor_css;
+	struct dmem_cgroup_pool_state *pool = NULL;
 
 	if (!a || !b)
 		return NULL;
@@ -779,10 +780,15 @@ struct dmem_cgroup_pool_state *dmem_cgroup_get_common_ancestor(struct dmem_cgrou
 	if (!ancestor_cgroup)
 		return NULL;
 
+	rcu_read_lock();
 	ancestor_css = cgroup_e_css(ancestor_cgroup, &dmem_cgrp_subsys);
-	css_get(ancestor_css);
+	if (css_tryget(ancestor_css))
+		pool = get_cg_pool_unlocked(css_to_dmemcs(ancestor_css), a->region);
+	if (!pool)
+		css_put(ancestor_css);
+	rcu_read_unlock();
 
-	return get_cg_pool_unlocked(css_to_dmemcs(ancestor_css), a->region);
+	return pool;
 }
 EXPORT_SYMBOL_GPL(dmem_cgroup_get_common_ancestor);
 
