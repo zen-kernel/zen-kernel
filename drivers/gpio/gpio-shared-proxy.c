@@ -103,8 +103,17 @@ static void gpio_shared_proxy_free(struct gpio_chip *gc, unsigned int offset)
 {
 	struct gpio_shared_proxy_data *proxy = gpiochip_get_data(gc);
 	struct gpio_shared_desc *shared_desc = proxy->shared_desc;
+	int ret;
 
 	guard(gpio_shared_desc_lock)(shared_desc);
+
+	if (proxy->voted_high) {
+		ret = gpio_shared_proxy_set_unlocked(proxy,
+			shared_desc->can_sleep ? gpiod_set_value_cansleep : gpiod_set_value, 0);
+		if (ret)
+			dev_err(proxy->dev,
+				"Failed to unset the shared GPIO value on release: %d\n", ret);
+	}
 
 	proxy->shared_desc->usecnt--;
 

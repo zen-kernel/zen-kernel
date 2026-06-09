@@ -148,7 +148,7 @@ int hugetlb_mfill_atomic_pte(pte_t *dst_pte,
 			     struct folio **foliop);
 #endif /* CONFIG_USERFAULTFD */
 long hugetlb_reserve_pages(struct inode *inode, long from, long to,
-			   struct vm_area_desc *desc, vma_flags_t vma_flags);
+			   struct vm_area_struct *vma, vma_flags_t vma_flags);
 long hugetlb_unreserve_pages(struct inode *inode, long start, long end,
 						long freed);
 bool folio_isolate_hugetlb(struct folio *folio, struct list_head *list);
@@ -276,7 +276,6 @@ long hugetlb_change_protection(struct vm_area_struct *vma,
 void hugetlb_unshare_all_pmds(struct vm_area_struct *vma);
 void fixup_hugetlb_reservations(struct vm_area_struct *vma);
 void hugetlb_split(struct vm_area_struct *vma, unsigned long addr);
-int hugetlb_vma_lock_alloc(struct vm_area_struct *vma);
 
 unsigned int arch_hugetlb_cma_order(void);
 
@@ -468,11 +467,6 @@ static inline void fixup_hugetlb_reservations(struct vm_area_struct *vma)
 }
 
 static inline void hugetlb_split(struct vm_area_struct *vma, unsigned long addr) {}
-
-static inline int hugetlb_vma_lock_alloc(struct vm_area_struct *vma)
-{
-	return 0;
-}
 
 #endif /* !CONFIG_HUGETLB_PAGE */
 

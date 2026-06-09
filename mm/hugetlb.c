@@ -116,6 +116,7 @@ struct mutex *hugetlb_fault_mutex_table __ro_after_init;
 /* Forward declaration */
 static int hugetlb_acct_memory(struct hstate *h, long delta);
 static void hugetlb_vma_lock_free(struct vm_area_struct *vma);
+static void hugetlb_vma_lock_alloc(struct vm_area_struct *vma);
 static void __hugetlb_vma_unlock_write_free(struct vm_area_struct *vma);
 static void hugetlb_unshare_pmds(struct vm_area_struct *vma,
 		unsigned long start, unsigned long end, bool take_locks);
@@ -413,21 +414,17 @@ static void hugetlb_vma_lock_free(struct vm_area_struct *vma)
 	}
 }
 
-/*
- * vma specific semaphore used for pmd sharing and fault/truncation
- * synchronization
- */
-int hugetlb_vma_lock_alloc(struct vm_area_struct *vma)
+static void hugetlb_vma_lock_alloc(struct vm_area_struct *vma)
 {
 	struct hugetlb_vma_lock *vma_lock;
 
 	/* Only establish in (flags) sharable vmas */
 	if (!vma || !(vma->vm_flags & VM_MAYSHARE))
-		return 0;
+		return;
 
 	/* Should never get here with non-NULL vm_private_data */
 	if (vma->vm_private_data)
-		return -EINVAL;
+		return;
 
 	vma_lock = kmalloc_obj(*vma_lock);
 	if (!vma_lock) {
@@ -442,15 +439,13 @@ int hugetlb_vma_lock_alloc(struct vm_area_struct *vma)
 		 * allocation failure.
 		 */
 		pr_warn_once("HugeTLB: unable to allocate vma specific lock\n");
-		return -EINVAL;
+		return;
 	}
 
 	kref_init(&vma_lock->refs);
 	init_rwsem(&vma_lock->rw_sema);
 	vma_lock->vma = vma;
 	vma->vm_private_data = vma_lock;
-
-	return 0;
 }
 
 /* Helper that removes a struct file_region from the resv_map cache and returns
@@ -1183,28 +1178,20 @@ static struct resv_map *vma_resv_map(struct vm_area_struct *vma)
 	}
 }
 
+static void set_vma_resv_map(struct vm_area_struct *vma, struct resv_map *map)
+{
+	VM_WARN_ON_ONCE_VMA(!is_vm_hugetlb_page(vma), vma);
+	VM_WARN_ON_ONCE_VMA(vma_flags_test(&vma->flags, VMA_MAYSHARE_BIT), vma);
+
+	set_vma_private_data(vma, (unsigned long)map);
+}
+
 static void set_vma_resv_flags(struct vm_area_struct *vma, unsigned long flags)
 {
 	VM_WARN_ON_ONCE_VMA(!is_vm_hugetlb_page(vma), vma);
-	VM_WARN_ON_ONCE_VMA(vma->vm_flags & VM_MAYSHARE, vma);
+	VM_WARN_ON_ONCE_VMA(vma_flags_test(&vma->flags, VMA_MAYSHARE_BIT), vma);
 
 	set_vma_private_data(vma, get_vma_private_data(vma) | flags);
-}
-
-static void set_vma_desc_resv_map(struct vm_area_desc *desc, struct resv_map *map)
-{
-	VM_WARN_ON_ONCE(!is_vma_hugetlb_flags(&desc->vma_flags));
-	VM_WARN_ON_ONCE(vma_desc_test_flags(desc, VMA_MAYSHARE_BIT));
-
-	desc->private_data = map;
-}
-
-static void set_vma_desc_resv_flags(struct vm_area_desc *desc, unsigned long flags)
-{
-	VM_WARN_ON_ONCE(!is_vma_hugetlb_flags(&desc->vma_flags));
-	VM_WARN_ON_ONCE(vma_desc_test_flags(desc, VMA_MAYSHARE_BIT));
-
-	desc->private_data = (void *)((unsigned long)desc->private_data | flags);
 }
 
 static int is_vma_resv_set(struct vm_area_struct *vma, unsigned long flag)
@@ -1212,13 +1199,6 @@ static int is_vma_resv_set(struct vm_area_struct *vma, unsigned long flag)
 	VM_BUG_ON_VMA(!is_vm_hugetlb_page(vma), vma);
 
 	return (get_vma_private_data(vma) & flag) != 0;
-}
-
-static bool is_vma_desc_resv_set(struct vm_area_desc *desc, unsigned long flag)
-{
-	VM_WARN_ON_ONCE(!is_vma_hugetlb_flags(&desc->vma_flags));
-
-	return ((unsigned long)desc->private_data) & flag;
 }
 
 bool __vma_private_lock(struct vm_area_struct *vma)
@@ -6572,7 +6552,7 @@ next:
 
 long hugetlb_reserve_pages(struct inode *inode,
 		long from, long to,
-		struct vm_area_desc *desc,
+		struct vm_area_struct *vma,
 		vma_flags_t vma_flags)
 {
 	long chg = -1, add = -1, spool_resv, gbl_resv;
@@ -6590,6 +6570,12 @@ long hugetlb_reserve_pages(struct inode *inode,
 	}
 
 	/*
+	 * vma specific semaphore used for pmd sharing and fault/truncation
+	 * synchronization
+	 */
+	hugetlb_vma_lock_alloc(vma);
+
+	/*
 	 * Only apply hugepage reservation if asked. At fault time, an
 	 * attempt will be made for VM_NORESERVE to allocate a page
 	 * without using reserves
@@ -6601,9 +6587,9 @@ long hugetlb_reserve_pages(struct inode *inode,
 	 * Shared mappings base their reservation on the number of pages that
 	 * are already allocated on behalf of the file. Private mappings need
 	 * to reserve the full area even if read-only as mprotect() may be
-	 * called to make the mapping read-write. Assume !desc is a shm mapping
+	 * called to make the mapping read-write. Assume !vma is a shm mapping
 	 */
-	if (!desc || vma_desc_test_flags(desc, VMA_MAYSHARE_BIT)) {
+	if (!vma || vma_flags_test(&vma->flags, VMA_MAYSHARE_BIT)) {
 		/*
 		 * resv_map can not be NULL as hugetlb_reserve_pages is only
 		 * called for inodes for which resv_maps were created (see
@@ -6622,8 +6608,8 @@ long hugetlb_reserve_pages(struct inode *inode,
 
 		chg = to - from;
 
-		set_vma_desc_resv_map(desc, resv_map);
-		set_vma_desc_resv_flags(desc, HPAGE_RESV_OWNER);
+		set_vma_resv_map(vma, resv_map);
+		set_vma_resv_flags(vma, HPAGE_RESV_OWNER);
 	}
 
 	if (chg < 0) {
@@ -6637,7 +6623,7 @@ long hugetlb_reserve_pages(struct inode *inode,
 	if (err < 0)
 		goto out_err;
 
-	if (desc && !vma_desc_test_flags(desc, VMA_MAYSHARE_BIT) && h_cg) {
+	if (vma && !vma_flags_test(&vma->flags, VMA_MAYSHARE_BIT) && h_cg) {
 		/* For private mappings, the hugetlb_cgroup uncharge info hangs
 		 * of the resv_map.
 		 */
@@ -6674,7 +6660,7 @@ long hugetlb_reserve_pages(struct inode *inode,
 	 * consumed reservations are stored in the map. Hence, nothing
 	 * else has to be done for private mappings here
 	 */
-	if (!desc || vma_desc_test_flags(desc, VMA_MAYSHARE_BIT)) {
+	if (!vma || vma_flags_test(&vma->flags, VMA_MAYSHARE_BIT)) {
 		add = region_add(resv_map, from, to, regions_needed, h, h_cg);
 
 		if (unlikely(add < 0)) {
@@ -6738,15 +6724,16 @@ out_uncharge_cgroup:
 	hugetlb_cgroup_uncharge_cgroup_rsvd(hstate_index(h),
 					    chg * pages_per_huge_page(h), h_cg);
 out_err:
-	if (!desc || vma_desc_test_flags(desc, VMA_MAYSHARE_BIT))
+	hugetlb_vma_lock_free(vma);
+	if (!vma || vma_flags_test(&vma->flags, VMA_MAYSHARE_BIT))
 		/* Only call region_abort if the region_chg succeeded but the
 		 * region_add failed or didn't run.
 		 */
 		if (chg >= 0 && add < 0)
 			region_abort(resv_map, from, to, regions_needed);
-	if (desc && is_vma_desc_resv_set(desc, HPAGE_RESV_OWNER)) {
+	if (vma && is_vma_resv_set(vma, HPAGE_RESV_OWNER)) {
 		kref_put(&resv_map->refs, resv_map_release);
-		set_vma_desc_resv_map(desc, NULL);
+		set_vma_resv_map(vma, NULL);
 	}
 	return err;
 }

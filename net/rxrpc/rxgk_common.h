@@ -41,10 +41,10 @@ struct rxgk_context {
  * rxgk_app.c
  */
 int rxgk_yfs_decode_ticket(struct rxrpc_connection *conn, struct sk_buff *skb,
-			   unsigned int ticket_offset, unsigned int ticket_len,
+			   void *ticket, unsigned int ticket_len,
 			   struct key **_key);
 int rxgk_extract_token(struct rxrpc_connection *conn, struct sk_buff *skb,
-		       unsigned int token_offset, unsigned int token_len,
+		       void *token, unsigned int token_len,
 		       struct key **_key);
 
 /*
@@ -60,50 +60,6 @@ int rxgk_set_up_token_cipher(const struct krb5_buffer *server_key,
 			     unsigned int enctype,
 			     const struct krb5_enctype **_krb5,
 			     gfp_t gfp);
-
-/*
- * Apply decryption and checksumming functions to part of an skbuff.  The
- * offset and length are updated to reflect the actual content of the encrypted
- * region.
- */
-static inline
-int rxgk_decrypt_skb(const struct krb5_enctype *krb5,
-		     struct crypto_aead *aead,
-		     struct sk_buff *skb,
-		     unsigned int *_offset, unsigned int *_len,
-		     int *_error_code)
-{
-	struct scatterlist sg[16];
-	size_t offset = 0, len = *_len;
-	int nr_sg, ret;
-
-	sg_init_table(sg, ARRAY_SIZE(sg));
-	nr_sg = skb_to_sgvec(skb, sg, *_offset, len);
-	if (unlikely(nr_sg < 0))
-		return nr_sg;
-
-	ret = crypto_krb5_decrypt(krb5, aead, sg, nr_sg,
-				  &offset, &len);
-	switch (ret) {
-	case 0:
-		*_offset += offset;
-		*_len = len;
-		break;
-	case -EBADMSG: /* Checksum mismatch. */
-	case -EPROTO:
-		*_error_code = RXGK_SEALEDINCON;
-		break;
-	case -EMSGSIZE:
-		*_error_code = RXGK_PACKETSHORT;
-		break;
-	case -ENOPKG: /* Would prefer RXGK_BADETYPE, but not available for YFS. */
-	default:
-		*_error_code = RXGK_INCONSISTENCY;
-		break;
-	}
-
-	return ret;
-}
 
 /*
  * Apply decryption and checksumming functions a flat data buffer.  The data
@@ -133,50 +89,6 @@ static inline int rxgk_decrypt(const struct krb5_enctype *krb5,
 		*_len = len;
 		break;
 	case -EBADMSG: /* Checksum mismatch. */
-	case -EPROTO:
-		*_error_code = RXGK_SEALEDINCON;
-		break;
-	case -EMSGSIZE:
-		*_error_code = RXGK_PACKETSHORT;
-		break;
-	case -ENOPKG: /* Would prefer RXGK_BADETYPE, but not available for YFS. */
-	default:
-		*_error_code = RXGK_INCONSISTENCY;
-		break;
-	}
-
-	return ret;
-}
-
-/*
- * Check the MIC on a region of an skbuff.  The offset and length are updated
- * to reflect the actual content of the secure region.
- */
-static inline
-int rxgk_verify_mic_skb(const struct krb5_enctype *krb5,
-			struct crypto_shash *shash,
-			const struct krb5_buffer *metadata,
-			struct sk_buff *skb,
-			unsigned int *_offset, unsigned int *_len,
-			u32 *_error_code)
-{
-	struct scatterlist sg[16];
-	size_t offset = 0, len = *_len;
-	int nr_sg, ret;
-
-	sg_init_table(sg, ARRAY_SIZE(sg));
-	nr_sg = skb_to_sgvec(skb, sg, *_offset, len);
-	if (unlikely(nr_sg < 0))
-		return nr_sg;
-
-	ret = crypto_krb5_verify_mic(krb5, shash, metadata, sg, nr_sg,
-				     &offset, &len);
-	switch (ret) {
-	case 0:
-		*_offset += offset;
-		*_len = len;
-		break;
-	case -EBADMSG: /* Checksum mismatch */
 	case -EPROTO:
 		*_error_code = RXGK_SEALEDINCON;
 		break;

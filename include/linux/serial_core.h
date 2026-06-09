@@ -1275,6 +1275,18 @@ static inline void uart_unlock_and_check_sysrq_irqrestore(struct uart_port *port
 #endif	/* CONFIG_MAGIC_SYSRQ_SERIAL */
 
 /*
+ * Variant of guard(uart_port_lock_irqsave) for IRQ handlers that may capture
+ * a SysRq character via uart_prepare_sysrq_char(). The destructor uses the
+ * sysrq-aware unlock helper so that a captured port->sysrq_ch is dispatched
+ * to handle_sysrq() on scope exit. The plain guard variant silently drops
+ * sysrq_ch and must not be used by callers that process RX.
+ */
+DEFINE_LOCK_GUARD_1(uart_port_lock_check_sysrq_irqsave, struct uart_port,
+                    uart_port_lock_irqsave(_T->lock, &_T->flags),
+                    uart_unlock_and_check_sysrq_irqrestore(_T->lock, _T->flags),
+                    unsigned long flags);
+
+/*
  * We do the SysRQ and SAK checking like this...
  */
 static inline int uart_handle_break(struct uart_port *port)

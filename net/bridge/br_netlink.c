@@ -1000,19 +1000,25 @@ static int br_setport(struct net_bridge_port *p, struct nlattr *tb[],
 	br_port_flags_change(p, changed_mask);
 
 	if (tb[IFLA_BRPORT_COST]) {
+		spin_lock_bh(&p->br->lock);
 		err = br_stp_set_path_cost(p, nla_get_u32(tb[IFLA_BRPORT_COST]));
+		spin_unlock_bh(&p->br->lock);
 		if (err)
 			return err;
 	}
 
 	if (tb[IFLA_BRPORT_PRIORITY]) {
+		spin_lock_bh(&p->br->lock);
 		err = br_stp_set_port_priority(p, nla_get_u16(tb[IFLA_BRPORT_PRIORITY]));
+		spin_unlock_bh(&p->br->lock);
 		if (err)
 			return err;
 	}
 
 	if (tb[IFLA_BRPORT_STATE]) {
+		spin_lock_bh(&p->br->lock);
 		err = br_set_port_state(p, nla_get_u8(tb[IFLA_BRPORT_STATE]));
+		spin_unlock_bh(&p->br->lock);
 		if (err)
 			return err;
 	}
@@ -1114,9 +1120,7 @@ int br_setlink(struct net_device *dev, struct nlmsghdr *nlh, u16 flags,
 			if (err)
 				return err;
 
-			spin_lock_bh(&p->br->lock);
 			err = br_setport(p, tb, extack);
-			spin_unlock_bh(&p->br->lock);
 		} else {
 			/* Binary compatibility with old RSTP */
 			if (nla_len(protinfo) < sizeof(u8))
@@ -1203,17 +1207,10 @@ static int br_port_slave_changelink(struct net_device *brdev,
 				    struct nlattr *data[],
 				    struct netlink_ext_ack *extack)
 {
-	struct net_bridge *br = netdev_priv(brdev);
-	int ret;
-
 	if (!data)
 		return 0;
 
-	spin_lock_bh(&br->lock);
-	ret = br_setport(br_port_get_rtnl(dev), data, extack);
-	spin_unlock_bh(&br->lock);
-
-	return ret;
+	return br_setport(br_port_get_rtnl(dev), data, extack);
 }
 
 static int br_port_fill_slave_info(struct sk_buff *skb,

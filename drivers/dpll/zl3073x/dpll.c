@@ -1066,6 +1066,25 @@ zl3073x_dpll_output_pin_state_on_dpll_get(const struct dpll_pin *dpll_pin,
 }
 
 static int
+zl3073x_dpll_temp_get(const struct dpll_device *dpll, void *dpll_priv,
+		      s32 *temp, struct netlink_ext_ack *extack)
+{
+	struct zl3073x_dpll *zldpll = dpll_priv;
+	struct zl3073x_dev *zldev = zldpll->dev;
+	u16 val;
+	int rc;
+
+	rc = zl3073x_read_u16(zldev, ZL_REG_DIE_TEMP_STATUS, &val);
+	if (rc)
+		return rc;
+
+	/* Register value is in units of 0.1 C, convert to millidegrees */
+	*temp = (s16)val * 100;
+
+	return 0;
+}
+
+static int
 zl3073x_dpll_lock_status_get(const struct dpll_device *dpll, void *dpll_priv,
 			     enum dpll_lock_status *status,
 			     enum dpll_lock_status_error *status_error,
@@ -1174,15 +1193,6 @@ zl3073x_dpll_phase_offset_avg_factor_get(const struct dpll_device *dpll,
 	return 0;
 }
 
-static void
-zl3073x_dpll_change_work(struct work_struct *work)
-{
-	struct zl3073x_dpll *zldpll;
-
-	zldpll = container_of(work, struct zl3073x_dpll, change_work);
-	dpll_device_change_ntf(zldpll->dpll_dev);
-}
-
 static int
 zl3073x_dpll_phase_offset_avg_factor_set(const struct dpll_device *dpll,
 					 void *dpll_priv, u32 factor,
@@ -1208,8 +1218,10 @@ zl3073x_dpll_phase_offset_avg_factor_set(const struct dpll_device *dpll,
 	 * we have to send a notification for other DPLL devices.
 	 */
 	list_for_each_entry(item, &zldpll->dev->dplls, list) {
-		if (item != zldpll)
-			schedule_work(&item->change_work);
+		struct dpll_device *dpll_dev = READ_ONCE(item->dpll_dev);
+
+		if (item != zldpll && dpll_dev)
+			__dpll_device_change_ntf(dpll_dev);
 	}
 
 	return 0;
@@ -1671,6 +1683,10 @@ zl3073x_dpll_device_register(struct zl3073x_dpll *zldpll)
 	zldpll->forced_ref = FIELD_GET(ZL_DPLL_MODE_REFSEL_REF,
 				       dpll_mode_refsel);
 
+	zldpll->ops = zl3073x_dpll_device_ops;
+	if (zldev->info->flags & ZL3073X_FLAG_DIE_TEMP)
+		zldpll->ops.temp_get = zl3073x_dpll_temp_get;
+
 	zldpll->dpll_dev = dpll_device_get(zldev->clock_id, zldpll->id,
 					   THIS_MODULE, &zldpll->tracker);
 	if (IS_ERR(zldpll->dpll_dev)) {
@@ -1682,7 +1698,7 @@ zl3073x_dpll_device_register(struct zl3073x_dpll *zldpll)
 
 	rc = dpll_device_register(zldpll->dpll_dev,
 				  zl3073x_prop_dpll_type_get(zldev, zldpll->id),
-				  &zl3073x_dpll_device_ops, zldpll);
+				  &zldpll->ops, zldpll);
 	if (rc) {
 		dpll_device_put(zldpll->dpll_dev, &zldpll->tracker);
 		zldpll->dpll_dev = NULL;
@@ -1701,14 +1717,13 @@ zl3073x_dpll_device_register(struct zl3073x_dpll *zldpll)
 static void
 zl3073x_dpll_device_unregister(struct zl3073x_dpll *zldpll)
 {
-	WARN(!zldpll->dpll_dev, "DPLL device is not registered\n");
+	struct dpll_device *dpll_dev = READ_ONCE(zldpll->dpll_dev);
 
-	cancel_work_sync(&zldpll->change_work);
+	WARN(!dpll_dev, "DPLL device is not registered\n");
 
-	dpll_device_unregister(zldpll->dpll_dev, &zl3073x_dpll_device_ops,
-			       zldpll);
-	dpll_device_put(zldpll->dpll_dev, &zldpll->tracker);
-	zldpll->dpll_dev = NULL;
+	WRITE_ONCE(zldpll->dpll_dev, NULL);
+	dpll_device_unregister(dpll_dev, &zldpll->ops, zldpll);
+	dpll_device_put(dpll_dev, &zldpll->tracker);
 }
 
 /**
@@ -1954,7 +1969,6 @@ zl3073x_dpll_alloc(struct zl3073x_dev *zldev, u8 ch)
 	zldpll->dev = zldev;
 	zldpll->id = ch;
 	INIT_LIST_HEAD(&zldpll->pins);
-	INIT_WORK(&zldpll->change_work, zl3073x_dpll_change_work);
 
 	return zldpll;
 }

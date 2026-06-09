@@ -245,13 +245,6 @@ static const struct iio_info veml6070_info = {
 	.write_raw = veml6070_write_raw,
 };
 
-static void veml6070_i2c_unreg(void *p)
-{
-	struct veml6070_data *data = p;
-
-	i2c_unregister_device(data->client2);
-}
-
 static int veml6070_probe(struct i2c_client *client)
 {
 	struct veml6070_data *data;
@@ -281,7 +274,8 @@ static int veml6070_probe(struct i2c_client *client)
 	if (ret < 0)
 		return ret;
 
-	data->client2 = i2c_new_dummy_device(client->adapter, VEML6070_ADDR_DATA_LSB);
+	data->client2 = devm_i2c_new_dummy_device(&client->dev, client->adapter,
+						  VEML6070_ADDR_DATA_LSB);
 	if (IS_ERR(data->client2))
 		return dev_err_probe(&client->dev, PTR_ERR(data->client2),
 				     "i2c device for second chip address failed\n");
@@ -289,10 +283,6 @@ static int veml6070_probe(struct i2c_client *client)
 	data->config = FIELD_PREP(VEML6070_COMMAND_IT, VEML6070_IT_10) |
 		VEML6070_COMMAND_RSRVD | VEML6070_COMMAND_SD;
 	ret = i2c_smbus_write_byte(data->client1, data->config);
-	if (ret < 0)
-		return ret;
-
-	ret = devm_add_action_or_reset(&client->dev, veml6070_i2c_unreg, data);
 	if (ret < 0)
 		return ret;
 

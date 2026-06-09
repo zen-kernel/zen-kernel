@@ -597,8 +597,10 @@ static void vgic_its_invalidate_cache(struct vgic_its *its)
 	unsigned long idx;
 
 	xa_for_each(&its->translation_cache, idx, irq) {
-		xa_erase(&its->translation_cache, idx);
-		vgic_put_irq(kvm, irq);
+		/* Only the context that erases the entry drops its cache ref. */
+		irq = xa_erase(&its->translation_cache, idx);
+		if (irq)
+			vgic_put_irq(kvm, irq);
 	}
 }
 
