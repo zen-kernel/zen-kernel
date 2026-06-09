@@ -2071,8 +2071,16 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 		}
 	}
 
-	if (static_call(sched_idle_select_func)(&mask, &allow_mask, sched_idle_mask)	||
-	    preempt_mask_check(&mask, &allow_mask, task_sched_prio(p)))
+	if (static_call(sched_idle_select_func)(&mask, &allow_mask, sched_idle_mask)) {
+		do {
+			new_cpu = best_mask_cpu(prev_cpu, &mask);
+			if (!cpu_rq(new_cpu)->ttwu_pending)
+				goto out;
+			cpumask_clear_cpu(new_cpu, &mask);
+		} while (!cpumask_empty(&mask));
+	}
+
+	if (preempt_mask_check(&mask, &allow_mask, task_sched_prio(p)))
 		new_cpu = best_mask_cpu(prev_cpu, &mask);
 	else
 		new_cpu = best_mask_cpu(prev_cpu, &allow_mask);
