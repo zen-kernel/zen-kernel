@@ -377,21 +377,28 @@ enum {
 };
 
 DECLARE_PER_CPU_ALIGNED(cpumask_t [NR_CPU_AFFINITY_LEVELS], sched_cpu_topo_masks);
+DECLARE_PER_CPU_ALIGNED(cpumask_t *, sched_cpu_topo_end_mask);
 
 static inline int
-__best_mask_cpu(const cpumask_t *cpumask, const cpumask_t *mask)
+__best_mask_cpu(const cpumask_t *cpumask, const cpumask_t *mask,
+		const cpumask_t *end_mask)
 {
 	int cpu;
 
-	while ((cpu = cpumask_any_and(cpumask, mask)) >= nr_cpu_ids)
+	while (mask < end_mask) {
+		cpu = cpumask_any_and(cpumask, mask);
+		if (cpu < nr_cpu_ids)
+			return cpu;
 		mask++;
+	}
 
-	return cpu;
+	return cpumask_any(cpumask);
 }
 
 static inline int best_mask_cpu(int cpu, const cpumask_t *mask)
 {
-	return __best_mask_cpu(mask, per_cpu(sched_cpu_topo_masks, cpu));
+	return __best_mask_cpu(mask, per_cpu(sched_cpu_topo_masks, cpu),
+			       per_cpu(sched_cpu_topo_end_mask, cpu));
 }
 
 extern void resched_latency_warn(int cpu, u64 latency);
