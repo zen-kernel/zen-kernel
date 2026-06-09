@@ -2076,7 +2076,7 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 			new_cpu = best_mask_cpu(prev_cpu, &mask);
 			if (!cpu_rq(new_cpu)->ttwu_pending)
 				goto out;
-			cpumask_clear_cpu(new_cpu, &mask);
+			__cpumask_clear_cpu(new_cpu, &mask);
 		} while (!cpumask_empty(&mask));
 	}
 
