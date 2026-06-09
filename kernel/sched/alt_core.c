@@ -2541,6 +2541,9 @@ static void __ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags
 
 static inline bool ttwu_queue_cond(struct task_struct *p, int cpu)
 {
+	if (p == cpu_rq(cpu)->stop)
+		return false;
+
 	/*
 	 * Do not complicate things with the async wake_list while the CPU is
 	 * in hotplug state.
