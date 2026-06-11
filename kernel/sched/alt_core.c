@@ -4819,7 +4819,7 @@ static void __sched notrace __schedule(int sched_mode)
 	int cpu;
 
 	/* Trace preemptions consistently with task switches */
-	trace_sched_entry_tp(preempt);
+	trace_sched_entry_tp(sched_mode == SM_PREEMPT);
 
 	cpu = smp_processor_id();
 	rq = cpu_rq(cpu);
