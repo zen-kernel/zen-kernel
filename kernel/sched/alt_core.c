@@ -653,6 +653,7 @@ static inline void sched_update_tick_dependency(struct rq *rq) { }
 static inline void add_nr_running(struct rq *rq, unsigned count)
 {
 	rq->nr_running += count;
+	trace_sched_update_nr_running_tp(rq, count);
 	if (rq->nr_running > 1) {
 		cpumask_set_cpu(cpu_of(rq), &sched_rq_pending_mask);
 		rq->prio_balance_time = rq->clock;
@@ -664,6 +665,7 @@ static inline void add_nr_running(struct rq *rq, unsigned count)
 static inline void sub_nr_running(struct rq *rq, unsigned count)
 {
 	rq->nr_running -= count;
+	trace_sched_update_nr_running_tp(rq, -count);
 	if (rq->nr_running < 2) {
 		cpumask_clear_cpu(cpu_of(rq), &sched_rq_pending_mask);
 		rq->prio_balance_time = 0;
