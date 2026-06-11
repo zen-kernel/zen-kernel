@@ -6251,6 +6251,11 @@ int sched_cpu_activate(unsigned int cpu)
 	 */
 	balance_push_set(cpu, false);
 
+	/*
+	 * When going up, increment the number of cores with SMT present.
+	 */
+	sched_smt_present_inc(cpu);
+
 	set_cpu_active(cpu, true);
 
 	if (sched_smp_initialized)
@@ -6266,11 +6271,6 @@ int sched_cpu_activate(unsigned int cpu)
 	 *    domains.
 	 */
 	sched_set_rq_online(rq, cpu);
-
-	/*
-	 * When going up, increment the number of cores with SMT present.
-	 */
-	sched_smt_present_inc(cpu);
 
 	return 0;
 }
