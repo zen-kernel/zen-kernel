@@ -2328,7 +2328,7 @@ int __set_cpus_allowed_ptr(struct task_struct *p,
 	 * flags are set.
 	 */
 	if (p->user_cpus_ptr &&
-	    !(ctx->flags & SCA_USER) &&
+	    !(ctx->flags & (SCA_USER | SCA_MIGRATE_ENABLE | SCA_MIGRATE_DISABLE)) &&
 	    cpumask_and(rq->scratch_mask, ctx->new_mask, p->user_cpus_ptr))
 		ctx->new_mask = rq->scratch_mask;
 
