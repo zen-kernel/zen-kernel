@@ -2544,7 +2544,9 @@ static void __ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags
 	p->sched_remote_wakeup = !!(wake_flags & WF_MIGRATED);
 
 	WRITE_ONCE(rq->ttwu_pending, 1);
+#ifdef CONFIG_SMP
 	__smp_call_single_queue(cpu, &p->wake_entry.llist);
+#endif
 }
 
 static inline bool ttwu_queue_cond(struct task_struct *p, int cpu)
