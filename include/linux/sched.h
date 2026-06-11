@@ -2487,6 +2487,10 @@ static inline void __migrate_enable(void)
 {
 	struct task_struct *p = current;
 
+#ifdef CONFIG_SCHED_ALT
+	if (!p->migration_disabled)
+		return;
+#endif
 #ifdef CONFIG_DEBUG_PREEMPT
 	/*
 	 * Check both overflow from migrate_disable() and superfluous
