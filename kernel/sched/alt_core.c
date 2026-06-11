@@ -2491,6 +2491,8 @@ static inline void ttwu_do_wakeup(struct task_struct *p)
 static inline void
 ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags)
 {
+	lockdep_assert_rq_held(rq);
+
 	if (p->sched_contributes_to_load)
 		rq->nr_uninterruptible--;
 
