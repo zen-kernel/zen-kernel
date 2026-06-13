@@ -4,6 +4,7 @@
 #include <linux/context_tracking.h>
 #include <linux/memblock.h>
 #include <linux/profile.h>
+#include <linux/psi.h>
 #include <linux/stop_machine.h>
 #include <linux/sched/rseq_api.h>
 #include <linux/sched/stat.h>
@@ -245,6 +246,7 @@ struct rq {
 
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
 	u64 prev_irq_time;
+	u64 psi_irq_time;
 #endif /* CONFIG_IRQ_TIME_ACCOUNTING */
 #ifdef CONFIG_PARAVIRT
 	u64 prev_steal_time;
@@ -572,7 +574,7 @@ static inline int task_current(struct rq *rq, struct task_struct *p)
 	return rq->curr == p;
 }
 
-static inline bool task_on_cpu(struct task_struct *p)
+static inline bool task_on_cpu(struct rq *rq, struct task_struct *p)
 {
 	return p->on_cpu;
 }

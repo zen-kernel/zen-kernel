@@ -137,6 +137,7 @@ static inline void psi_enqueue(struct task_struct *p, int flags)
 	if (task_on_cpu(task_rq(p), p))
 		return;
 
+#ifndef CONFIG_SCHED_ALT
 	if (p->se.sched_delayed) {
 		/* CPU migration of "sleeping" task */
 		WARN_ON_ONCE(!(flags & ENQUEUE_MIGRATED));
@@ -144,7 +145,9 @@ static inline void psi_enqueue(struct task_struct *p, int flags)
 			set |= TSK_MEMSTALL;
 		if (p->in_iowait)
 			set |= TSK_IOWAIT;
-	} else if (flags & ENQUEUE_MIGRATED) {
+	} else
+#endif
+	if (flags & ENQUEUE_MIGRATED) {
 		/* CPU migration of runnable task */
 		set = TSK_RUNNING;
 		if (p->in_memstall)
