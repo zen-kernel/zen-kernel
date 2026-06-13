@@ -732,6 +732,7 @@ static inline void __dequeue_task(struct task_struct *p, struct rq *rq)
 static inline void dequeue_task(struct task_struct *p, struct rq *rq, int flags)
 {
 	__dequeue_task(p, rq);
+	psi_dequeue(p, flags);
 	sub_nr_running(rq, 1);
 }
 
@@ -751,6 +752,7 @@ static inline void __enqueue_task(struct task_struct *p, struct rq *rq)
 static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
 {
 	__enqueue_task(p, rq);
+	psi_enqueue(p, flags);
 	add_nr_running(rq, 1);
 }
 
@@ -1218,7 +1220,7 @@ unsigned long wait_task_inactive(struct task_struct *p, unsigned int match_state
 		 * if the runqueue has changed and p is actually now
 		 * running somewhere else!
 		 */
-		while (task_on_cpu(p)) {
+		while (task_on_cpu(task_rq(p), p)) {
 			if (!task_state_match(p, match_state))
 				return 0;
 			cpu_relax();
@@ -1231,7 +1233,7 @@ unsigned long wait_task_inactive(struct task_struct *p, unsigned int match_state
 		 */
 		task_access_lock_irqsave(p, &lock, &flags);
 		trace_sched_wait_task(p);
-		running = task_on_cpu(p);
+		running = task_on_cpu(task_rq(p), p);
 		queued = p->on_rq;
 		ncsw = 0;
 		if ((match = __task_state_match(p, match_state))) {
@@ -1609,7 +1611,7 @@ struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int new_cpu)
 	WARN_ON_ONCE(task_cpu(p) != new_cpu);
 
 	sched_task_sanity_check(p, rq);
-	enqueue_task(p, rq, 0);
+	enqueue_task(p, rq, ENQUEUE_MIGRATED);
 	WRITE_ONCE(p->on_rq, TASK_ON_RQ_QUEUED);
 	wakeup_preempt(rq);
 
@@ -2148,7 +2150,7 @@ static int affine_move_task(struct rq *rq, struct task_struct *p, int dest_cpu,
 		if (is_migration_disabled(p))
 			__migrate_force_enable(p, rq);
 
-		if (task_on_cpu(p) || READ_ONCE(p->__state) == TASK_WAKING) {
+		if (task_on_cpu(task_rq(p), p) || READ_ONCE(p->__state) == TASK_WAKING) {
 			struct migration_arg arg = { p, dest_cpu };
 
 			/* Need help from migration thread: drop lock and wait. */
@@ -2466,7 +2468,7 @@ static int ttwu_runnable(struct task_struct *p, int wake_flags)
 
 	rq = __task_access_lock(p, &lock);
 	if (task_on_rq_queued(p)) {
-		if (!task_on_cpu(p)) {
+		if (!task_on_cpu(task_rq(p), p)) {
 			/*
 			 * When on_rq && !on_cpu the task is preempted, see if
 			 * it should preempt the task that is current now.
@@ -2980,6 +2982,7 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 			}
 
 			wake_flags |= WF_MIGRATED;
+			psi_ttwu_dequeue(p);
 			set_task_cpu(p, cpu);
 		}
 
@@ -4109,6 +4112,7 @@ void sched_tick(void)
 	sched_clock_tick();
 
 	raw_spin_lock(&rq->lock);
+	psi_account_irqtime(rq, curr, NULL);
 	update_rq_clock(rq);
 
 	if (dynamic_preempt_lazy() && tif_test_bit(TIF_NEED_RESCHED_LAZY))
@@ -4452,10 +4456,12 @@ migrate_pending_tasks(struct rq *rq, struct rq *dest_rq, const int dest_cpu)
 	       (p = sched_rq_next_task(skip, rq)) != rq->idle) {
 		skip = sched_rq_next_task(p, rq);
 		if (cpumask_test_cpu(dest_cpu, p->cpus_ptr)) {
+			psi_dequeue(p, 0);
 			__SCHED_DEQUEUE_TASK(p, rq, 0, );
 			set_task_cpu(p, dest_cpu);
 			sched_task_sanity_check(p, dest_rq);
 			__SCHED_ENQUEUE_TASK(p, dest_rq, 0, );
+			psi_enqueue(p, ENQUEUE_MIGRATED);
 			nr_migrated++;
 		}
 		nr_tries--;
@@ -4545,7 +4551,7 @@ __move_queued_task(struct rq *rq, struct task_struct *p, struct rq *dest_rq, int
 	set_task_cpu(p, dest_cpu);
 
 	sched_task_sanity_check(p, dest_rq);
-	enqueue_task(p, dest_rq, 0);
+	enqueue_task(p, dest_rq, ENQUEUE_MIGRATED);
 	WRITE_ONCE(p->on_rq, TASK_ON_RQ_QUEUED);
 	wakeup_preempt(dest_rq);
 }
@@ -4840,6 +4846,9 @@ picked:
 		 * the inline comments in membarrier_arch_switch_mm().
 		 */
 		++*switch_count;
+
+		psi_account_irqtime(rq, prev, next);
+		psi_sched_switch(prev, next, !task_on_rq_queued(prev));
 
 		trace_sched_switch(preempt, prev, next, prev_state);
 
@@ -6515,6 +6524,8 @@ void __init sched_init(void)
 	balance_push_set(smp_processor_id(), false);
 
 	sched_init_topology_cpumask_early();
+
+	psi_init();
 
 	preempt_dynamic_init();
 }
