@@ -26,6 +26,7 @@
 
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_blend.h>
+#include <drm/drm_exec.h>
 #include "drm/drm_framebuffer.h"
 #include <drm/drm_gem_atomic_helper.h>
 #include <drm/drm_plane_helper.h>
@@ -930,6 +931,7 @@ static int amdgpu_dm_plane_helper_prepare_fb(struct drm_plane *plane,
 	struct drm_gem_object *obj;
 	struct amdgpu_device *adev;
 	struct amdgpu_bo *rbo;
+	struct drm_exec exec;
 	struct dm_plane_state *dm_plane_state_new, *dm_plane_state_old;
 	uint32_t domain;
 	int r;
@@ -948,27 +950,31 @@ static int amdgpu_dm_plane_helper_prepare_fb(struct drm_plane *plane,
 
 	rbo = gem_to_amdgpu_bo(obj);
 	adev = amdgpu_ttm_adev(rbo->tbo.bdev);
-	r = amdgpu_bo_reserve(rbo, true);
-	if (r) {
-		drm_err(adev_to_drm(adev), "fail to reserve bo (%d)\n", r);
-		return r;
-	}
 
-	r = dma_resv_reserve_fences(rbo->tbo.base.resv, TTM_NUM_MOVE_FENCES);
-	if (r)
-		goto error_unlock;
+	drm_exec_init(&exec, 0, 0);
+	drm_exec_until_all_locked(&exec)
+	{
+		r = drm_exec_prepare_obj(&exec, obj, TTM_NUM_MOVE_FENCES);
+		drm_exec_retry_on_contention(&exec);
+		if (r)
+			goto error_unlock;
 
-	if (plane->type != DRM_PLANE_TYPE_CURSOR)
-		domain = amdgpu_display_supported_domains(adev, rbo->flags);
-	else
-		domain = AMDGPU_GEM_DOMAIN_VRAM;
+		if (plane->type != DRM_PLANE_TYPE_CURSOR)
+			domain = amdgpu_display_supported_domains(adev,
+								  rbo->flags);
+		else
+			domain = AMDGPU_GEM_DOMAIN_VRAM;
 
-	rbo->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
-	r = amdgpu_bo_pin(rbo, domain);
-	if (unlikely(r != 0)) {
-		if (r != -ERESTARTSYS)
-			DRM_ERROR("Failed to pin framebuffer with error %d\n", r);
-		goto error_unlock;
+		rbo->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
+		r = amdgpu_bo_pin(rbo, &exec, domain);
+		drm_exec_retry_on_contention(&exec);
+		if (unlikely(r != 0)) {
+			if (r != -ERESTARTSYS)
+				DRM_ERROR(
+					"Failed to pin framebuffer with error %d\n",
+					r);
+			goto error_unlock;
+		}
 	}
 
 	r = amdgpu_ttm_alloc_gart(&rbo->tbo);
@@ -981,7 +987,7 @@ static int amdgpu_dm_plane_helper_prepare_fb(struct drm_plane *plane,
 	if (unlikely(r != 0))
 		goto error_unpin;
 
-	amdgpu_bo_unreserve(rbo);
+	drm_exec_fini(&exec);
 
 	afb->address = amdgpu_bo_gpu_offset(rbo);
 
@@ -1017,7 +1023,7 @@ error_unpin:
 	amdgpu_bo_unpin(rbo);
 
 error_unlock:
-	amdgpu_bo_unreserve(rbo);
+	drm_exec_fini(&exec);
 	return r;
 }
 

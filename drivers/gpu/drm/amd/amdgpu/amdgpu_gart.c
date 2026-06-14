@@ -191,7 +191,7 @@ int amdgpu_gart_table_ram_alloc(struct amdgpu_device *adev)
 		goto error;
 	}
 
-	ret = amdgpu_bo_pin(bo, AMDGPU_GEM_DOMAIN_GTT);
+	ret = amdgpu_bo_pin(bo, NULL, AMDGPU_GEM_DOMAIN_GTT);
 	WARN(ret, "Pinning the GART table failed");
 	if (ret)
 		goto error_resv;

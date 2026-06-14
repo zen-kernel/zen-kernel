@@ -277,7 +277,7 @@ int amdgpu_bo_create_reserved(struct amdgpu_device *adev,
 	}
 
 	if (free) {
-		r = amdgpu_bo_pin(*bo_ptr, domain);
+		r = amdgpu_bo_pin(*bo_ptr, NULL, domain);
 		if (r) {
 			dev_err(adev->dev, "(%d) kernel bo pin failed\n", r);
 			goto error_unreserve;
@@ -396,7 +396,7 @@ int amdgpu_bo_create_isp_user(struct amdgpu_device *adev,
 		return r;
 	}
 
-	r = amdgpu_bo_pin(*bo, domain);
+	r = amdgpu_bo_pin(*bo, NULL, domain);
 	if (r) {
 		dev_err(adev->dev, "(%d) isp user bo pin failed\n", r);
 		goto error_unreserve;
@@ -929,10 +929,14 @@ void amdgpu_bo_unref(struct amdgpu_bo **bo)
  * Returns:
  * 0 for success or a negative error code on failure.
  */
-int amdgpu_bo_pin(struct amdgpu_bo *bo, u32 domain)
+int amdgpu_bo_pin(struct amdgpu_bo *bo, struct drm_exec *exec, u32 domain)
 {
 	struct amdgpu_device *adev = amdgpu_ttm_adev(bo->tbo.bdev);
-	struct ttm_operation_ctx ctx = { false, false };
+	struct ttm_operation_ctx ctx = {
+		.interruptible = false,
+		.no_wait_gpu = false,
+		.exec = exec,
+	};
 	int r, i;
 
 	if (amdgpu_ttm_tt_get_usermm(bo->tbo.ttm))
@@ -986,7 +990,8 @@ int amdgpu_bo_pin(struct amdgpu_bo *bo, u32 domain)
 
 	r = ttm_bo_validate(&bo->tbo, &bo->placement, &ctx);
 	if (unlikely(r)) {
-		dev_err(adev->dev, "%p pin failed\n", bo);
+		if (r != -EDEADLOCK || !exec)
+			dev_err(adev->dev, "%p pin failed\n", bo);
 		goto error;
 	}
 

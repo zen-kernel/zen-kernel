@@ -80,7 +80,7 @@ int amdgpu_gmc_pdb0_alloc(struct amdgpu_device *adev)
 	if (unlikely(r != 0))
 		goto bo_reserve_failure;
 
-	r = amdgpu_bo_pin(adev->gmc.pdb0_bo, AMDGPU_GEM_DOMAIN_VRAM);
+	r = amdgpu_bo_pin(adev->gmc.pdb0_bo, NULL, AMDGPU_GEM_DOMAIN_VRAM);
 	if (r)
 		goto bo_pin_failure;
 	r = amdgpu_bo_kmap(adev->gmc.pdb0_bo, &adev->gmc.ptr_pdb0);

@@ -36,6 +36,8 @@
 #include <linux/mmu_notifier.h>
 #endif
 
+struct drm_exec;
+
 #define AMDGPU_BO_INVALID_OFFSET	LONG_MAX
 #define AMDGPU_BO_MAX_PLACEMENTS	3
 
@@ -283,7 +285,7 @@ void *amdgpu_bo_kptr(struct amdgpu_bo *bo);
 void amdgpu_bo_kunmap(struct amdgpu_bo *bo);
 struct amdgpu_bo *amdgpu_bo_ref(struct amdgpu_bo *bo);
 void amdgpu_bo_unref(struct amdgpu_bo **bo);
-int amdgpu_bo_pin(struct amdgpu_bo *bo, u32 domain);
+int amdgpu_bo_pin(struct amdgpu_bo *bo, struct drm_exec *exec, u32 domain);
 void amdgpu_bo_unpin(struct amdgpu_bo *bo);
 int amdgpu_bo_init(struct amdgpu_device *adev);
 void amdgpu_bo_fini(struct amdgpu_device *adev);

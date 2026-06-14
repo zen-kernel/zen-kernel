@@ -144,7 +144,7 @@ static int amdgpu_dma_buf_pin(struct dma_buf_attachment *attach)
 	if (WARN_ON(!domains))
 		return -EINVAL;
 
-	return amdgpu_bo_pin(bo, domains);
+	return amdgpu_bo_pin(bo, NULL, domains);
 }
 
 /**
@@ -329,7 +329,8 @@ static int amdgpu_dma_buf_vmap(struct dma_buf *dma_buf, struct iosys_map *map)
 	 * domain is not that important as long as it's mapable. Using
 	 * GTT and VRAM should be compatible with most use cases.
 	 */
-	ret = amdgpu_bo_pin(bo, AMDGPU_GEM_DOMAIN_GTT | AMDGPU_GEM_DOMAIN_VRAM);
+	ret = amdgpu_bo_pin(bo, NULL,
+			    AMDGPU_GEM_DOMAIN_GTT | AMDGPU_GEM_DOMAIN_VRAM);
 	if (ret)
 		return ret;
 	ret = drm_gem_dmabuf_vmap(dma_buf, map);
