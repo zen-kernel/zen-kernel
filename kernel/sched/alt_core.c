@@ -86,6 +86,10 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 
 #define STOP_PRIO		(MAX_RT_PRIO - 1)
 
+#ifndef CONFIG_PREEMPT_RT
+#define ALT_SCHED_TTWU_QUEUE 1
+#endif
+
 /*
  * Time slice
  * (default: 4 msec, units: nanoseconds)
@@ -2140,8 +2144,16 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 		}
 	}
 
-	if (static_call(sched_idle_select_func)(&mask, &allow_mask, sched_idle_mask)	||
-	    preempt_mask_check(&mask, &allow_mask, task_sched_prio(p)))
+	if (static_call(sched_idle_select_func)(&mask, &allow_mask, sched_idle_mask)) {
+		do {
+			new_cpu = best_mask_cpu(prev_cpu, &mask);
+			if (!cpu_rq(new_cpu)->ttwu_pending)
+				goto out;
+			__cpumask_clear_cpu(new_cpu, &mask);
+		} while (!cpumask_empty(&mask));
+	}
+
+	if (preempt_mask_check(&mask, &allow_mask, task_sched_prio(p)))
 		new_cpu = best_mask_cpu(prev_cpu, &mask);
 	else
 		new_cpu = best_mask_cpu(prev_cpu, &allow_mask);
@@ -2606,12 +2618,17 @@ static void __ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags
 	p->sched_remote_wakeup = !!(wake_flags & WF_MIGRATED);
 
 	WRITE_ONCE(rq->ttwu_pending, 1);
+#ifdef CONFIG_SMP
 	__smp_call_single_queue(cpu, &p->wake_entry.llist);
+#endif
 }
 
 static inline bool ttwu_queue_cond(struct task_struct *p, int cpu)
 {
 	int this_cpu = smp_processor_id();
+
+	if (p == cpu_rq(cpu)->stop)
+		return false;
 
 	/*
 	 * Do not complicate things with the async wake_list while the CPU is
