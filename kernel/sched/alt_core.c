@@ -86,6 +86,10 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 
 #define STOP_PRIO		(MAX_RT_PRIO - 1)
 
+#ifndef CONFIG_PREEMPT_RT
+#define ALT_SCHED_TTWU_QUEUE 1
+#endif
+
 /*
  * Time slice
  * (default: 4 msec, units: nanoseconds)
@@ -641,6 +645,7 @@ static inline void sched_update_tick_dependency(struct rq *rq) { }
 static inline void add_nr_running(struct rq *rq, unsigned count)
 {
 	rq->nr_running += count;
+	trace_sched_update_nr_running_tp(rq, count);
 	if (rq->nr_running > 1) {
 		cpumask_set_cpu(cpu_of(rq), &sched_rq_pending_mask);
 		rq->prio_balance_time = rq->clock;
@@ -652,6 +657,7 @@ static inline void add_nr_running(struct rq *rq, unsigned count)
 static inline void sub_nr_running(struct rq *rq, unsigned count)
 {
 	rq->nr_running -= count;
+	trace_sched_update_nr_running_tp(rq, -count);
 	if (rq->nr_running < 2) {
 		cpumask_clear_cpu(cpu_of(rq), &sched_rq_pending_mask);
 		rq->prio_balance_time = 0;
@@ -726,6 +732,7 @@ static inline void __dequeue_task(struct task_struct *p, struct rq *rq)
 static inline void dequeue_task(struct task_struct *p, struct rq *rq, int flags)
 {
 	__dequeue_task(p, rq);
+	psi_dequeue(p, flags);
 	sub_nr_running(rq, 1);
 }
 
@@ -745,6 +752,7 @@ static inline void __enqueue_task(struct task_struct *p, struct rq *rq)
 static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
 {
 	__enqueue_task(p, rq);
+	psi_enqueue(p, flags);
 	add_nr_running(rq, 1);
 }
 
@@ -1212,7 +1220,7 @@ unsigned long wait_task_inactive(struct task_struct *p, unsigned int match_state
 		 * if the runqueue has changed and p is actually now
 		 * running somewhere else!
 		 */
-		while (task_on_cpu(p)) {
+		while (task_on_cpu(task_rq(p), p)) {
 			if (!task_state_match(p, match_state))
 				return 0;
 			cpu_relax();
@@ -1225,7 +1233,7 @@ unsigned long wait_task_inactive(struct task_struct *p, unsigned int match_state
 		 */
 		task_access_lock_irqsave(p, &lock, &flags);
 		trace_sched_wait_task(p);
-		running = task_on_cpu(p);
+		running = task_on_cpu(task_rq(p), p);
 		queued = p->on_rq;
 		ncsw = 0;
 		if ((match = __task_state_match(p, match_state))) {
@@ -1603,7 +1611,7 @@ struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int new_cpu)
 	WARN_ON_ONCE(task_cpu(p) != new_cpu);
 
 	sched_task_sanity_check(p, rq);
-	enqueue_task(p, rq, 0);
+	enqueue_task(p, rq, ENQUEUE_MIGRATED);
 	WRITE_ONCE(p->on_rq, TASK_ON_RQ_QUEUED);
 	wakeup_preempt(rq);
 
@@ -2067,8 +2075,16 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 		}
 	}
 
-	if (static_call(sched_idle_select_func)(&mask, &allow_mask, sched_idle_mask)	||
-	    preempt_mask_check(&mask, &allow_mask, task_sched_prio(p)))
+	if (static_call(sched_idle_select_func)(&mask, &allow_mask, sched_idle_mask)) {
+		do {
+			new_cpu = best_mask_cpu(prev_cpu, &mask);
+			if (!cpu_rq(new_cpu)->ttwu_pending)
+				goto out;
+			__cpumask_clear_cpu(new_cpu, &mask);
+		} while (!cpumask_empty(&mask));
+	}
+
+	if (preempt_mask_check(&mask, &allow_mask, task_sched_prio(p)))
 		new_cpu = best_mask_cpu(prev_cpu, &mask);
 	else
 		new_cpu = best_mask_cpu(prev_cpu, &allow_mask);
@@ -2134,7 +2150,7 @@ static int affine_move_task(struct rq *rq, struct task_struct *p, int dest_cpu,
 		if (is_migration_disabled(p))
 			__migrate_force_enable(p, rq);
 
-		if (task_on_cpu(p) || READ_ONCE(p->__state) == TASK_WAKING) {
+		if (task_on_cpu(task_rq(p), p) || READ_ONCE(p->__state) == TASK_WAKING) {
 			struct migration_arg arg = { p, dest_cpu };
 
 			/* Need help from migration thread: drop lock and wait. */
@@ -2243,7 +2259,7 @@ int __set_cpus_allowed_ptr(struct task_struct *p,
 	 * flags are set.
 	 */
 	if (p->user_cpus_ptr &&
-	    !(ctx->flags & SCA_USER) &&
+	    !(ctx->flags & (SCA_USER | SCA_MIGRATE_ENABLE | SCA_MIGRATE_DISABLE)) &&
 	    cpumask_and(rq->scratch_mask, ctx->new_mask, p->user_cpus_ptr))
 		ctx->new_mask = rq->scratch_mask;
 
@@ -2403,6 +2419,8 @@ static inline void ttwu_do_wakeup(struct task_struct *p)
 static inline void
 ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags)
 {
+	lockdep_assert_rq_held(rq);
+
 	if (p->sched_contributes_to_load)
 		rq->nr_uninterruptible--;
 
@@ -2450,7 +2468,7 @@ static int ttwu_runnable(struct task_struct *p, int wake_flags)
 
 	rq = __task_access_lock(p, &lock);
 	if (task_on_rq_queued(p)) {
-		if (!task_on_cpu(p)) {
+		if (!task_on_cpu(task_rq(p), p)) {
 			/*
 			 * When on_rq && !on_cpu the task is preempted, see if
 			 * it should preempt the task that is current now.
@@ -2532,11 +2550,16 @@ static void __ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags
 	p->sched_remote_wakeup = !!(wake_flags & WF_MIGRATED);
 
 	WRITE_ONCE(rq->ttwu_pending, 1);
+#ifdef CONFIG_SMP
 	__smp_call_single_queue(cpu, &p->wake_entry.llist);
+#endif
 }
 
 static inline bool ttwu_queue_cond(struct task_struct *p, int cpu)
 {
+	if (p == cpu_rq(cpu)->stop)
+		return false;
+
 	/*
 	 * Do not complicate things with the async wake_list while the CPU is
 	 * in hotplug state.
@@ -2959,6 +2982,7 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 			}
 
 			wake_flags |= WF_MIGRATED;
+			psi_ttwu_dequeue(p);
 			set_task_cpu(p, cpu);
 		}
 
@@ -4088,6 +4112,7 @@ void sched_tick(void)
 	sched_clock_tick();
 
 	raw_spin_lock(&rq->lock);
+	psi_account_irqtime(rq, curr, NULL);
 	update_rq_clock(rq);
 
 	if (dynamic_preempt_lazy() && tif_test_bit(TIF_NEED_RESCHED_LAZY))
@@ -4431,10 +4456,12 @@ migrate_pending_tasks(struct rq *rq, struct rq *dest_rq, const int dest_cpu)
 	       (p = sched_rq_next_task(skip, rq)) != rq->idle) {
 		skip = sched_rq_next_task(p, rq);
 		if (cpumask_test_cpu(dest_cpu, p->cpus_ptr)) {
+			psi_dequeue(p, 0);
 			__SCHED_DEQUEUE_TASK(p, rq, 0, );
 			set_task_cpu(p, dest_cpu);
 			sched_task_sanity_check(p, dest_rq);
 			__SCHED_ENQUEUE_TASK(p, dest_rq, 0, );
+			psi_enqueue(p, ENQUEUE_MIGRATED);
 			nr_migrated++;
 		}
 		nr_tries--;
@@ -4524,7 +4551,7 @@ __move_queued_task(struct rq *rq, struct task_struct *p, struct rq *dest_rq, int
 	set_task_cpu(p, dest_cpu);
 
 	sched_task_sanity_check(p, dest_rq);
-	enqueue_task(p, dest_rq, 0);
+	enqueue_task(p, dest_rq, ENQUEUE_MIGRATED);
 	WRITE_ONCE(p->on_rq, TASK_ON_RQ_QUEUED);
 	wakeup_preempt(dest_rq);
 }
@@ -4719,7 +4746,7 @@ static void __sched notrace __schedule(int sched_mode)
 	int cpu;
 
 	/* Trace preemptions consistently with task switches */
-	trace_sched_entry_tp(preempt);
+	trace_sched_entry_tp(sched_mode == SM_PREEMPT);
 
 	cpu = smp_processor_id();
 	rq = cpu_rq(cpu);
@@ -4819,6 +4846,9 @@ picked:
 		 * the inline comments in membarrier_arch_switch_mm().
 		 */
 		++*switch_count;
+
+		psi_account_irqtime(rq, prev, next);
+		psi_sched_switch(prev, next, !task_on_rq_queued(prev));
 
 		trace_sched_switch(preempt, prev, next, prev_state);
 
@@ -6156,6 +6186,11 @@ int sched_cpu_activate(unsigned int cpu)
 	 */
 	balance_push_set(cpu, false);
 
+	/*
+	 * When going up, increment the number of cores with SMT present.
+	 */
+	sched_smt_present_inc(cpu);
+
 	set_cpu_active(cpu, true);
 
 	if (sched_smp_initialized)
@@ -6171,11 +6206,6 @@ int sched_cpu_activate(unsigned int cpu)
 	 *    domains.
 	 */
 	sched_set_rq_online(rq, cpu);
-
-	/*
-	 * When going up, increment the number of cores with SMT present.
-	 */
-	sched_smt_present_inc(cpu);
 
 	return 0;
 }
@@ -6494,6 +6524,8 @@ void __init sched_init(void)
 	balance_push_set(smp_processor_id(), false);
 
 	sched_init_topology_cpumask_early();
+
+	psi_init();
 
 	preempt_dynamic_init();
 }

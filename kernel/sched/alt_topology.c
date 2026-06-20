@@ -55,7 +55,8 @@ static int active_balance_cpu_stop(void *data)
 	if (task_on_rq_queued(p) && task_rq(p) == rq &&
 	    cpumask_and(&tmp, p->cpus_ptr, arg->cpumask) &&
 	    !is_migration_disabled(p)) {
-		int dcpu = __best_mask_cpu(&tmp, per_cpu(sched_cpu_llc_mask, cpu_of(rq)));
+		int dcpu = __best_mask_cpu(&tmp, per_cpu(sched_cpu_llc_mask, cpu_of(rq)),
+					   per_cpu(sched_cpu_topo_end_mask, cpu_of(rq)));
 		rq = move_queued_task(rq, p, dcpu);
 	}
 

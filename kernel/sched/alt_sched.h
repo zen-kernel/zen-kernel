@@ -4,6 +4,7 @@
 #include <linux/context_tracking.h>
 #include <linux/memblock.h>
 #include <linux/profile.h>
+#include <linux/psi.h>
 #include <linux/stop_machine.h>
 #include <linux/sched/rseq_api.h>
 #include <linux/syscalls.h>
@@ -244,6 +245,7 @@ struct rq {
 
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
 	u64 prev_irq_time;
+	u64 psi_irq_time;
 #endif /* CONFIG_IRQ_TIME_ACCOUNTING */
 #ifdef CONFIG_PARAVIRT
 	u64 prev_steal_time;
@@ -374,21 +376,28 @@ enum {
 };
 
 DECLARE_PER_CPU_ALIGNED(cpumask_t [NR_CPU_AFFINITY_LEVELS], sched_cpu_topo_masks);
+DECLARE_PER_CPU_ALIGNED(cpumask_t *, sched_cpu_topo_end_mask);
 
 static inline int
-__best_mask_cpu(const cpumask_t *cpumask, const cpumask_t *mask)
+__best_mask_cpu(const cpumask_t *cpumask, const cpumask_t *mask,
+		const cpumask_t *end_mask)
 {
 	int cpu;
 
-	while ((cpu = cpumask_any_and(cpumask, mask)) >= nr_cpu_ids)
+	while (mask < end_mask) {
+		cpu = cpumask_any_and(cpumask, mask);
+		if (cpu < nr_cpu_ids)
+			return cpu;
 		mask++;
+	}
 
-	return cpu;
+	return cpumask_any(cpumask);
 }
 
 static inline int best_mask_cpu(int cpu, const cpumask_t *mask)
 {
-	return __best_mask_cpu(mask, per_cpu(sched_cpu_topo_masks, cpu));
+	return __best_mask_cpu(mask, per_cpu(sched_cpu_topo_masks, cpu),
+			       per_cpu(sched_cpu_topo_end_mask, cpu));
 }
 
 extern void resched_latency_warn(int cpu, u64 latency);
@@ -562,7 +571,7 @@ static inline int task_current(struct rq *rq, struct task_struct *p)
 	return rq->curr == p;
 }
 
-static inline bool task_on_cpu(struct task_struct *p)
+static inline bool task_on_cpu(struct rq *rq, struct task_struct *p)
 {
 	return p->on_cpu;
 }
