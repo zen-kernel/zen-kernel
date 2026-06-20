@@ -259,6 +259,22 @@ static int ivpu_fw_parse(struct ivpu_device *vdev)
 		return -EINVAL;
 	}
 
+	if (!PAGE_ALIGNED(runtime_addr)) {
+		ivpu_err(vdev, "Runtime address 0x%llx not page aligned\n", runtime_addr);
+		return -EINVAL;
+	}
+
+	if (!PAGE_ALIGNED(runtime_size)) {
+		ivpu_err(vdev, "Runtime size %llu not page aligned\n", runtime_size);
+		return -EINVAL;
+	}
+
+	if (runtime_size < image_size) {
+		ivpu_err(vdev, "Runtime size too small: %llu, image size: %llu\n",
+			 runtime_size, image_size);
+		return -EINVAL;
+	}
+
 	if (!ivpu_is_within_range(image_load_addr, image_size, &vdev->hw->ranges.runtime)) {
 		ivpu_err(vdev, "Invalid firmware load address: 0x%llx and size %llu\n",
 			 image_load_addr, image_size);

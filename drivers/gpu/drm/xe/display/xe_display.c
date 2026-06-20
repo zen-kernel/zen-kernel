@@ -119,6 +119,15 @@ int xe_display_init_early(struct xe_device *xe)
 
 	intel_display_driver_early_probe(display);
 
+	intel_display_device_info_runtime_init(display);
+
+	/* Display may have been disabled at runtime init */
+	if (!intel_display_device_present(display)) {
+		xe->info.probe_display = false;
+		unset_display_features(xe);
+		return 0;
+	}
+
 	/* Early display init.. */
 	intel_opregion_setup(display);
 
@@ -131,8 +140,6 @@ int xe_display_init_early(struct xe_device *xe)
 		goto err_opregion;
 
 	intel_bw_init_hw(display);
-
-	intel_display_device_info_runtime_init(display);
 
 	err = intel_display_driver_probe_noirq(display);
 	if (err)

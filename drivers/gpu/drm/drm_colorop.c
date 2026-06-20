@@ -321,7 +321,6 @@ int drm_plane_colorop_curve_1d_lut_init(struct drm_device *dev, struct drm_color
 
 	colorop->lut1d_interpolation_property = prop;
 	drm_object_attach_property(&colorop->base, prop, interpolation);
-	colorop->lut1d_interpolation = interpolation;
 
 	/* data */
 	ret = drm_colorop_create_data_prop(dev, colorop);
@@ -417,7 +416,6 @@ int drm_plane_colorop_3dlut_init(struct drm_device *dev, struct drm_colorop *col
 
 	colorop->lut3d_interpolation_property = prop;
 	drm_object_attach_property(&colorop->base, prop, interpolation);
-	colorop->lut3d_interpolation = interpolation;
 
 	/* data */
 	ret = drm_colorop_create_data_prop(dev, colorop);
@@ -495,6 +493,20 @@ static void __drm_colorop_state_reset(struct drm_colorop_state *colorop_state,
 						      colorop->curve_1d_type_property,
 						      &val);
 		colorop_state->curve_1d_type = val;
+	}
+
+	if (colorop->lut1d_interpolation_property) {
+		if (!drm_object_property_get_default_value(&colorop->base,
+							   colorop->lut1d_interpolation_property,
+							   &val))
+			colorop_state->lut1d_interpolation = val;
+	}
+
+	if (colorop->lut3d_interpolation_property) {
+		if (!drm_object_property_get_default_value(&colorop->base,
+							   colorop->lut3d_interpolation_property,
+							   &val))
+			colorop_state->lut3d_interpolation = val;
 	}
 }
 

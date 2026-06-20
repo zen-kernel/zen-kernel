@@ -313,8 +313,11 @@ static int v3d_perfmon_idr_del(int id, void *elem, void *data)
 	if (perfmon == v3d->active_perfmon)
 		v3d_perfmon_stop(v3d, perfmon, false);
 
-	/* If the global perfmon is being destroyed, set it to NULL */
-	cmpxchg(&v3d->global_perfmon, perfmon, NULL);
+	/* If the global perfmon is being destroyed, clean it and release
+	 * the reference stashed in v3d_perfmon_set_global_ioctl().
+	 */
+	if (cmpxchg(&v3d->global_perfmon, perfmon, NULL) == perfmon)
+		v3d_perfmon_put(perfmon);
 
 	v3d_perfmon_put(perfmon);
 
@@ -480,16 +483,27 @@ int v3d_perfmon_set_global_ioctl(struct drm_device *dev, void *data,
 
 	/* If the request is to clear the global performance monitor */
 	if (req->flags & DRM_V3D_PERFMON_CLEAR_GLOBAL) {
-		if (!v3d->global_perfmon)
+		struct v3d_perfmon *old;
+
+		/* DRM_V3D_PERFMON_CLEAR_GLOBAL doesn't check if
+		 * v3d->global_perfmon == perfmon. Therefore, there
+		 * is no need to keep perfmon's reference.
+		 */
+		v3d_perfmon_put(perfmon);
+
+		old = xchg(&v3d->global_perfmon, NULL);
+		if (!old)
 			return -EINVAL;
 
-		xchg(&v3d->global_perfmon, NULL);
+		v3d_perfmon_put(old);
 
 		return 0;
 	}
 
-	if (cmpxchg(&v3d->global_perfmon, NULL, perfmon))
+	if (cmpxchg(&v3d->global_perfmon, NULL, perfmon)) {
+		v3d_perfmon_put(perfmon);
 		return -EBUSY;
+	}
 
 	return 0;
 }

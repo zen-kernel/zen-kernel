@@ -723,15 +723,9 @@ static int stratix10_rsu_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	priv->client.dev = dev;
-	priv->client.receive_cb = NULL;
 	priv->client.priv = priv;
-	priv->status.current_image = 0;
-	priv->status.fail_image = 0;
-	priv->status.error_location = 0;
-	priv->status.error_details = 0;
-	priv->status.version = 0;
-	priv->status.state = 0;
 	priv->retry_counter = INVALID_RETRY_COUNTER;
+	priv->max_retry = INVALID_RETRY_COUNTER;
 	priv->dcmf_version.dcmf0 = INVALID_DCMF_VERSION;
 	priv->dcmf_version.dcmf1 = INVALID_DCMF_VERSION;
 	priv->dcmf_version.dcmf2 = INVALID_DCMF_VERSION;
@@ -740,11 +734,11 @@ static int stratix10_rsu_probe(struct platform_device *pdev)
 	priv->dcmf_status.dcmf1 = INVALID_DCMF_STATUS;
 	priv->dcmf_status.dcmf2 = INVALID_DCMF_STATUS;
 	priv->dcmf_status.dcmf3 = INVALID_DCMF_STATUS;
-	priv->max_retry = INVALID_RETRY_COUNTER;
-	priv->spt0_address = INVALID_SPT_ADDRESS;
-	priv->spt1_address = INVALID_SPT_ADDRESS;
+	/* spt0/1_address and status fields default to 0 from kzalloc */
 
 	mutex_init(&priv->lock);
+	init_completion(&priv->completion);
+
 	priv->chan = stratix10_svc_request_channel_byname(&priv->client,
 							  SVC_CLIENT_RSU);
 	if (IS_ERR(priv->chan)) {
@@ -756,11 +750,9 @@ static int stratix10_rsu_probe(struct platform_device *pdev)
 	ret = stratix10_svc_add_async_client(priv->chan, false);
 	if (ret) {
 		dev_err(dev, "failed to add async client\n");
-		stratix10_svc_free_channel(priv->chan);
-		return ret;
+		goto free_channel;
 	}
 
-	init_completion(&priv->completion);
 	platform_set_drvdata(pdev, priv);
 
 	/* get the initial state from firmware */
@@ -768,41 +760,44 @@ static int stratix10_rsu_probe(struct platform_device *pdev)
 				 rsu_async_status_callback);
 	if (ret) {
 		dev_err(dev, "Error, getting RSU status %i\n", ret);
-		stratix10_svc_remove_async_client(priv->chan);
-		stratix10_svc_free_channel(priv->chan);
-		return ret;
+		goto remove_async_client;
 	}
 
 	/* get DCMF version from firmware */
-	ret = rsu_send_msg(priv, COMMAND_RSU_DCMF_VERSION,
-			   0, rsu_dcmf_version_callback);
+	ret = rsu_send_msg(priv, COMMAND_RSU_DCMF_VERSION, 0,
+			   rsu_dcmf_version_callback);
 	if (ret) {
 		dev_err(dev, "Error, getting DCMF version %i\n", ret);
-		stratix10_svc_free_channel(priv->chan);
+		goto remove_async_client;
 	}
 
-	ret = rsu_send_msg(priv, COMMAND_RSU_DCMF_STATUS,
-			   0, rsu_dcmf_status_callback);
+	ret = rsu_send_msg(priv, COMMAND_RSU_DCMF_STATUS, 0,
+			   rsu_dcmf_status_callback);
 	if (ret) {
 		dev_err(dev, "Error, getting DCMF status %i\n", ret);
-		stratix10_svc_free_channel(priv->chan);
+		goto remove_async_client;
 	}
 
 	ret = rsu_send_msg(priv, COMMAND_RSU_MAX_RETRY, 0,
 			   rsu_max_retry_callback);
 	if (ret) {
 		dev_err(dev, "Error, getting RSU max retry %i\n", ret);
-		stratix10_svc_free_channel(priv->chan);
+		goto remove_async_client;
 	}
-
 
 	ret = rsu_send_async_msg(dev, priv, COMMAND_RSU_GET_SPT_TABLE, 0,
 				 rsu_async_get_spt_table_callback);
 	if (ret) {
 		dev_err(dev, "Error, getting SPT table %i\n", ret);
-		stratix10_svc_free_channel(priv->chan);
+		goto remove_async_client;
 	}
 
+	return 0;
+
+remove_async_client:
+	stratix10_svc_remove_async_client(priv->chan);
+free_channel:
+	stratix10_svc_free_channel(priv->chan);
 	return ret;
 }
 

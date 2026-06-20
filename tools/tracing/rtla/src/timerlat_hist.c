@@ -789,6 +789,7 @@ static struct common_params
 
 	while (1) {
 		static struct option long_options[] = {
+			COMMON_OPTIONS,
 			{"auto",		required_argument,	0, 'a'},
 			{"bucket-size",		required_argument,	0, 'b'},
 			{"entries",		required_argument,	0, 'E'},
@@ -822,10 +823,10 @@ static struct common_params
 			{0, 0, 0, 0}
 		};
 
-		if (common_parse_options(argc, argv, &params->common))
-			continue;
-
 		c = getopt_auto(argc, argv, long_options);
+
+		if (set_common_option(c, argc, argv, &params->common))
+			continue;
 
 		/* detect the end of the options. */
 		if (c == -1)

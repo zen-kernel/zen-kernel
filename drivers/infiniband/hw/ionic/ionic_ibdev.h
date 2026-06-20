@@ -4,9 +4,9 @@
 #ifndef _IONIC_IBDEV_H_
 #define _IONIC_IBDEV_H_
 
-#include <rdma/ib_umem.h>
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_pack.h>
+#include <rdma/iter.h>
 #include <rdma/uverbs_ioctl.h>
 
 #include <rdma/ionic-abi.h>

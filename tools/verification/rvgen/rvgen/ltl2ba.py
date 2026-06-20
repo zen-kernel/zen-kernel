@@ -121,10 +121,8 @@ class ASTNode:
         return self.op.expand(self, node, node_set)
 
     def __str__(self):
-        if isinstance(self.op, Literal):
-            return str(self.op.value)
-        if isinstance(self.op, Variable):
-            return self.op.name.lower()
+        if isinstance(self.op, (Literal, Variable)):
+            return str(self.op)
         return "val" + str(self.id)
 
     def normalize(self):
@@ -380,6 +378,9 @@ class Variable:
 
     def __iter__(self):
         yield from ()
+
+    def __str__(self):
+        return self.name.lower()
 
     def negate(self):
         new = ASTNode(self)

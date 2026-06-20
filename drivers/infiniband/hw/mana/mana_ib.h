@@ -8,7 +8,7 @@
 
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_mad.h>
-#include <rdma/ib_umem.h>
+#include <rdma/iter.h>
 #include <rdma/mana-abi.h>
 #include <rdma/uverbs_ioctl.h>
 #include <linux/dmapool.h>

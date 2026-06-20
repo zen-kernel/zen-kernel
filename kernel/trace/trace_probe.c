@@ -962,8 +962,6 @@ static int parse_probe_vars(char *orig_arg, const struct fetch_type *t,
 			code->op = FETCH_OP_COMM;
 			return 0;
 		}
-		/* backward compatibility */
-		ctx->offset = 0;
 		goto inval;
 	}
 

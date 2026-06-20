@@ -420,6 +420,15 @@ ieee80211_verify_sta_ht_mcs_support(struct ieee80211_sub_if_data *sdata,
 	ieee80211_apply_htcap_overrides(sdata, &sta_ht_cap);
 
 	/*
+	 * Some Xfinity XB8 firmware advertises >1 spatial stream MCS indexes in
+	 * their basic HT-MCS set. On cards with lower spatial streams, the check
+	 * would fail, and we'd be stuck with no HT when it in fact work fine with
+	 * its own supported rate. So check it only in strict mode.
+	 */
+	if (!ieee80211_hw_check(&sdata->local->hw, STRICT))
+		return true;
+
+	/*
 	 * P802.11REVme/D7.0 - 6.5.4.2.4
 	 * ...
 	 * If the MLME of an HT STA receives an MLME-JOIN.request primitive

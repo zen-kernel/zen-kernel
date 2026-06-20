@@ -5002,6 +5002,7 @@ struct file *dentry_create(struct path *path, int flags, umode_t mode,
 {
 	struct file *file __free(fput) = NULL;
 	struct dentry *dentry = path->dentry;
+	struct dentry *orig_dentry = dentry;
 	struct dentry *dir = dentry->d_parent;
 	struct inode *dir_inode = d_inode(dir);
 	struct mnt_idmap *idmap;
@@ -5021,8 +5022,17 @@ struct file *dentry_create(struct path *path, int flags, umode_t mode,
 		if (create_error)
 			flags &= ~O_CREAT;
 
+		/* atomic_open will dput(dentry) on error */
+		dget(orig_dentry);
 		dentry = atomic_open(path, dentry, file, flags, mode);
 		error = PTR_ERR_OR_ZERO(dentry);
+
+		if (IS_ERR(dentry))
+			/* keep the original */
+			dentry = orig_dentry;
+		else
+			/* Drop the extra reference */
+			dput(orig_dentry);
 
 		if (unlikely(create_error) && error == -ENOENT)
 			error = create_error;

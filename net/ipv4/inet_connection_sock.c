@@ -1151,6 +1151,9 @@ static bool reqsk_queue_hash_req(struct request_sock *req)
 	/* The timer needs to be setup after a successful insertion. */
 	req->timeout = tcp_timeout_init((struct sock *)req);
 	timer_setup(&req->rsk_timer, reqsk_timer_handler, TIMER_PINNED);
+
+	preempt_disable_nested();
+
 	mod_timer(&req->rsk_timer, jiffies + req->timeout);
 
 	/* before letting lookups find us, make sure all req fields
@@ -1158,6 +1161,9 @@ static bool reqsk_queue_hash_req(struct request_sock *req)
 	 */
 	smp_wmb();
 	refcount_set(&req->rsk_refcnt, 2 + 1);
+
+	preempt_enable_nested();
+
 	return true;
 }
 

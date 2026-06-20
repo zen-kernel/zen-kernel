@@ -400,6 +400,11 @@ void iomap_finish_folio_read(struct folio *folio, size_t off, size_t len,
 	bool uptodate = !error;
 	bool finished = true;
 
+	if (error)
+		fserror_report_io(folio->mapping->host, FSERR_BUFFERED_READ,
+				  folio_pos(folio) + off, len, error,
+				  GFP_ATOMIC);
+
 	if (ifs) {
 		unsigned long flags;
 
@@ -410,11 +415,6 @@ void iomap_finish_folio_read(struct folio *folio, size_t off, size_t len,
 		finished = !ifs->read_bytes_pending;
 		spin_unlock_irqrestore(&ifs->state_lock, flags);
 	}
-
-	if (error)
-		fserror_report_io(folio->mapping->host, FSERR_BUFFERED_READ,
-				  folio_pos(folio) + off, len, error,
-				  GFP_ATOMIC);
 
 	if (finished)
 		folio_end_read(folio, uptodate);

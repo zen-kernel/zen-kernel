@@ -72,7 +72,6 @@ exec_queue_to_guc(struct xe_exec_queue *q)
 #define EXEC_QUEUE_STATE_WEDGED			(1 << 8)
 #define EXEC_QUEUE_STATE_BANNED			(1 << 9)
 #define EXEC_QUEUE_STATE_PENDING_RESUME		(1 << 10)
-#define EXEC_QUEUE_STATE_IDLE_SKIP_SUSPEND	(1 << 11)
 
 static bool exec_queue_registered(struct xe_exec_queue *q)
 {
@@ -159,6 +158,11 @@ static void set_exec_queue_banned(struct xe_exec_queue *q)
 	atomic_or(EXEC_QUEUE_STATE_BANNED, &q->guc->state);
 }
 
+static void clear_exec_queue_banned(struct xe_exec_queue *q)
+{
+	atomic_andnot(EXEC_QUEUE_STATE_BANNED, &q->guc->state);
+}
+
 static bool exec_queue_suspended(struct xe_exec_queue *q)
 {
 	return atomic_read(&q->guc->state) & EXEC_QUEUE_STATE_SUSPENDED;
@@ -217,21 +221,6 @@ static void set_exec_queue_pending_resume(struct xe_exec_queue *q)
 static void clear_exec_queue_pending_resume(struct xe_exec_queue *q)
 {
 	atomic_and(~EXEC_QUEUE_STATE_PENDING_RESUME, &q->guc->state);
-}
-
-static bool exec_queue_idle_skip_suspend(struct xe_exec_queue *q)
-{
-	return atomic_read(&q->guc->state) & EXEC_QUEUE_STATE_IDLE_SKIP_SUSPEND;
-}
-
-static void set_exec_queue_idle_skip_suspend(struct xe_exec_queue *q)
-{
-	atomic_or(EXEC_QUEUE_STATE_IDLE_SKIP_SUSPEND, &q->guc->state);
-}
-
-static void clear_exec_queue_idle_skip_suspend(struct xe_exec_queue *q)
-{
-	atomic_and(~EXEC_QUEUE_STATE_IDLE_SKIP_SUSPEND, &q->guc->state);
 }
 
 static bool exec_queue_killed_or_banned_or_wedged(struct xe_exec_queue *q)
@@ -1105,7 +1094,7 @@ static void submit_exec_queue(struct xe_exec_queue *q, struct xe_sched_job *job)
 	if (!job->restore_replay || job->last_replay) {
 		if (xe_exec_queue_is_parallel(q))
 			wq_item_append(q);
-		else if (!exec_queue_idle_skip_suspend(q))
+		else
 			xe_lrc_set_ring_tail(lrc, lrc->ring.tail);
 		job->last_replay = false;
 	}
@@ -1115,9 +1104,12 @@ static void submit_exec_queue(struct xe_exec_queue *q, struct xe_sched_job *job)
 
 	/*
 	 * All queues in a multi-queue group will use the primary queue
-	 * of the group to interface with GuC.
+	 * of the group to interface with GuC. If primay is suspended,
+	 * just return. Jobs will get scheduled once primary is resumed.
 	 */
 	q = xe_exec_queue_multi_queue_primary(q);
+	if (exec_queue_suspended(q))
+		return;
 
 	if (!exec_queue_enabled(q) && !exec_queue_suspended(q)) {
 		action[len++] = XE_GUC_ACTION_SCHED_CONTEXT_MODE_SET;
@@ -1326,7 +1318,8 @@ static bool check_timeout(struct xe_exec_queue *q, struct xe_sched_job *job)
 			   xe_sched_job_seqno(job), xe_sched_job_lrc_seqno(job),
 			   q->guc->id);
 
-		return xe_sched_invalidate_job(job, 2);
+		/* GuC never scheduled this job - let the caller trigger a GT reset. */
+		return true;
 	}
 
 	ctx_timestamp = lower_32_bits(xe_lrc_timestamp(q->lrc[0]));
@@ -1421,6 +1414,21 @@ static void disable_scheduling(struct xe_exec_queue *q, bool immediate)
 	else
 		xe_guc_ct_send(&guc->ct, action, ARRAY_SIZE(action),
 			       G2H_LEN_DW_SCHED_CONTEXT_MODE_SET, 1);
+}
+
+/*
+ * Recover via GT reset for a kernel queue, or for a GuC scheduling failure (job
+ * never started) on a queue that was not already killed or banned. An already
+ * banned queue must stay banned, so its unstarted jobs do not clear the ban or
+ * trigger a reset.
+ */
+static bool timeout_needs_gt_reset(struct xe_exec_queue *q, struct xe_sched_job *job,
+				   bool skip_timeout_check)
+{
+	if (q->flags & EXEC_QUEUE_FLAG_KERNEL)
+		return true;
+
+	return !skip_timeout_check && !xe_sched_job_started(job);
 }
 
 static enum drm_gpu_sched_stat
@@ -1573,19 +1581,19 @@ trigger_reset:
 			       xe_sched_job_seqno(job), xe_sched_job_lrc_seqno(job),
 			       q->guc->id, q->flags);
 
-	/*
-	 * Kernel jobs should never fail, nor should VM jobs if they do
-	 * somethings has gone wrong and the GT needs a reset
-	 */
-	xe_gt_WARN(q->gt, q->flags & EXEC_QUEUE_FLAG_KERNEL,
-		   "Kernel-submitted job timed out\n");
-	xe_gt_WARN(q->gt, q->flags & EXEC_QUEUE_FLAG_VM && !exec_queue_killed(q),
-		   "VM job timed out on non-killed execqueue\n");
-	if (!wedged && (q->flags & EXEC_QUEUE_FLAG_KERNEL ||
-			(q->flags & EXEC_QUEUE_FLAG_VM && !exec_queue_killed(q)))) {
-		if (!xe_sched_invalidate_job(job, 2)) {
-			xe_gt_reset_async(q->gt);
-			goto rearm;
+	if (!wedged) {
+		if (timeout_needs_gt_reset(q, job, skip_timeout_check)) {
+			if (!xe_sched_invalidate_job(job, 2)) {
+				clear_exec_queue_banned(q);
+				xe_gt_reset_async(q->gt);
+				goto rearm;
+			}
+			if (q->flags & EXEC_QUEUE_FLAG_KERNEL) {
+				xe_gt_WARN(q->gt, true, "Kernel-submitted job timed out\n");
+				xe_device_declare_wedged(gt_to_xe(q->gt));
+			}
+		} else if (q->flags & EXEC_QUEUE_FLAG_VM && !exec_queue_killed(q)) {
+			xe_gt_WARN(q->gt, true, "VM job timed out on non-killed execqueue\n");
 		}
 	}
 
@@ -1760,10 +1768,9 @@ static void __guc_exec_queue_process_msg_suspend(struct xe_sched_msg *msg)
 {
 	struct xe_exec_queue *q = msg->private_data;
 	struct xe_guc *guc = exec_queue_to_guc(q);
-	bool idle_skip_suspend = xe_exec_queue_idle_skip_suspend(q);
 
-	if (!idle_skip_suspend && guc_exec_queue_allowed_to_change_state(q) &&
-	    !exec_queue_suspended(q) && exec_queue_enabled(q)) {
+	if (guc_exec_queue_allowed_to_change_state(q) && !exec_queue_suspended(q) &&
+	    exec_queue_enabled(q)) {
 		wait_event(guc->ct.wq, vf_recovery(guc) ||
 			   ((q->guc->resume_time != RESUME_PENDING ||
 			   xe_guc_read_stopped(guc)) && !exec_queue_pending_disable(q)));
@@ -1782,31 +1789,9 @@ static void __guc_exec_queue_process_msg_suspend(struct xe_sched_msg *msg)
 			disable_scheduling(q, false);
 		}
 	} else if (q->guc->suspend_pending) {
-		if (idle_skip_suspend)
-			set_exec_queue_idle_skip_suspend(q);
 		set_exec_queue_suspended(q);
 		suspend_fence_signal(q);
 	}
-}
-
-static void sched_context(struct xe_exec_queue *q)
-{
-	struct xe_guc *guc = exec_queue_to_guc(q);
-	struct xe_lrc *lrc = q->lrc[0];
-	u32 action[] = {
-		XE_GUC_ACTION_SCHED_CONTEXT,
-		q->guc->id,
-	};
-
-	xe_gt_assert(guc_to_gt(guc), !xe_exec_queue_is_parallel(q));
-	xe_gt_assert(guc_to_gt(guc), !exec_queue_destroyed(q));
-	xe_gt_assert(guc_to_gt(guc), exec_queue_registered(q));
-	xe_gt_assert(guc_to_gt(guc), !exec_queue_pending_disable(q));
-
-	trace_xe_exec_queue_submit(q);
-
-	xe_lrc_set_ring_tail(lrc, lrc->ring.tail);
-	xe_guc_ct_send(&guc->ct, action, ARRAY_SIZE(action), 0, 0);
 }
 
 static void __guc_exec_queue_process_msg_resume(struct xe_sched_msg *msg)
@@ -1816,22 +1801,12 @@ static void __guc_exec_queue_process_msg_resume(struct xe_sched_msg *msg)
 	if (guc_exec_queue_allowed_to_change_state(q)) {
 		clear_exec_queue_suspended(q);
 		if (!exec_queue_enabled(q)) {
-			if (exec_queue_idle_skip_suspend(q)) {
-				struct xe_lrc *lrc = q->lrc[0];
-
-				clear_exec_queue_idle_skip_suspend(q);
-				xe_lrc_set_ring_tail(lrc, lrc->ring.tail);
-			}
 			q->guc->resume_time = RESUME_PENDING;
 			set_exec_queue_pending_resume(q);
 			enable_scheduling(q);
-		} else if (exec_queue_idle_skip_suspend(q)) {
-			clear_exec_queue_idle_skip_suspend(q);
-			sched_context(q);
 		}
 	} else {
 		clear_exec_queue_suspended(q);
-		clear_exec_queue_idle_skip_suspend(q);
 	}
 }
 
@@ -2785,8 +2760,8 @@ static void handle_sched_done(struct xe_guc *guc, struct xe_exec_queue *q,
 		xe_gt_assert(guc_to_gt(guc), exec_queue_pending_disable(q));
 
 		if (q->guc->suspend_pending) {
-			suspend_fence_signal(q);
 			clear_exec_queue_pending_disable(q);
+			suspend_fence_signal(q);
 		} else {
 			if (exec_queue_banned(q)) {
 				smp_wmb();

@@ -714,11 +714,16 @@ out:
  */
 static int smb2_oplock_break_noti(struct oplock_info *opinfo)
 {
-	struct ksmbd_conn *conn = opinfo->conn;
+	struct ksmbd_conn *conn;
 	struct oplock_break_info *br_info;
 	int ret = 0;
-	struct ksmbd_work *work = ksmbd_alloc_work_struct();
+	struct ksmbd_work *work;
 
+	conn = READ_ONCE(opinfo->conn);
+	if (!conn)
+		return 0;
+
+	work = ksmbd_alloc_work_struct();
 	if (!work)
 		return -ENOMEM;
 
@@ -818,10 +823,14 @@ out:
  */
 static int smb2_lease_break_noti(struct oplock_info *opinfo)
 {
-	struct ksmbd_conn *conn = opinfo->conn;
+	struct ksmbd_conn *conn;
 	struct ksmbd_work *work;
 	struct lease_break_info *br_info;
 	struct lease *lease = opinfo->o_lease;
+
+	conn = READ_ONCE(opinfo->conn);
+	if (!conn)
+		return 0;
 
 	work = ksmbd_alloc_work_struct();
 	if (!work)

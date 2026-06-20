@@ -377,7 +377,12 @@ static const struct x86_cpu_id snc_cpu_ids[] __initconst = {
 
 static __init int snc_get_config(void)
 {
-	int ret = topology_num_nodes_per_package();
+	int ret;
+
+	if (boot_cpu_data.x86_vendor != X86_VENDOR_INTEL)
+		return 1;
+
+	ret = topology_num_nodes_per_package();
 
 	if (ret > 1 && !x86_match_cpu(snc_cpu_ids)) {
 		pr_warn("CoD enabled system? Resctrl not supported\n");

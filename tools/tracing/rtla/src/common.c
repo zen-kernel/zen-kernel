@@ -82,37 +82,20 @@ int getopt_auto(int argc, char **argv, const struct option *long_opts)
 }
 
 /*
- * common_parse_options - parse common command line options
+ * set_common_option - set common options
  *
+ * @c: option character
  * @argc: argument count
  * @argv: argument vector
  * @common: common parameters structure
  *
  * Parse command line options that are common to all rtla tools.
  *
- * Returns: non zero if a common option was parsed, or 0
- * if the option should be handled by tool-specific parsing.
+ * Returns: 1 if the option was set, 0 otherwise.
  */
-int common_parse_options(int argc, char **argv, struct common_params *common)
+int set_common_option(int c, int argc, char **argv, struct common_params *common)
 {
 	struct trace_events *tevent;
-	int saved_state = optind;
-	int c;
-
-	static struct option long_options[] = {
-		{"cpus",                required_argument,      0, 'c'},
-		{"cgroup",              optional_argument,      0, 'C'},
-		{"debug",               no_argument,            0, 'D'},
-		{"duration",            required_argument,      0, 'd'},
-		{"event",               required_argument,      0, 'e'},
-		{"house-keeping",       required_argument,      0, 'H'},
-		{"priority",            required_argument,      0, 'P'},
-		{0, 0, 0, 0}
-	};
-
-	opterr = 0;
-	c = getopt_auto(argc, argv, long_options);
-	opterr = 1;
 
 	switch (c) {
 	case 'c':
@@ -152,11 +135,10 @@ int common_parse_options(int argc, char **argv, struct common_params *common)
 		common->set_sched = 1;
 		break;
 	default:
-		optind = saved_state;
 		return 0;
 	}
 
-	return c;
+	return 1;
 }
 
 /*

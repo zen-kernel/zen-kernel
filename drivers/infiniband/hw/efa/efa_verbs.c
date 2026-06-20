@@ -9,9 +9,9 @@
 #include <linux/log2.h>
 
 #include <rdma/ib_addr.h>
-#include <rdma/ib_umem.h>
 #include <rdma/ib_user_verbs.h>
 #include <rdma/ib_verbs.h>
+#include <rdma/iter.h>
 #include <rdma/uverbs_ioctl.h>
 #define UVERBS_MODULE_NAME efa_ib
 #include <rdma/uverbs_named_ioctl.h>

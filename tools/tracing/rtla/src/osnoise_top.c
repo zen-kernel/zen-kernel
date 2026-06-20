@@ -337,6 +337,7 @@ struct common_params *osnoise_top_parse_args(int argc, char **argv)
 
 	while (1) {
 		static struct option long_options[] = {
+			COMMON_OPTIONS,
 			{"auto",		required_argument,	0, 'a'},
 			{"help",		no_argument,		0, 'h'},
 			{"period",		required_argument,	0, 'p'},
@@ -355,14 +356,14 @@ struct common_params *osnoise_top_parse_args(int argc, char **argv)
 			{0, 0, 0, 0}
 		};
 
-		if (common_parse_options(argc, argv, &params->common))
-			continue;
-
 		c = getopt_auto(argc, argv, long_options);
 
 		/* Detect the end of the options. */
 		if (c == -1)
 			break;
+
+		if (set_common_option(c, argc, argv, &params->common))
+			continue;
 
 		switch (c) {
 		case 'a':

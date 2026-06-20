@@ -12,12 +12,11 @@
 #if defined(CONFIG_BUG) && defined(CONFIG_CC_HAS_ASM_IMMEDIATE_STRINGS)
 
 #ifdef CONFIG_DEBUG_BUGVERBOSE
-#define __BUG_ENTRY_VERBOSE(format, file, line)				\
-	"	.long	" format " - .	# bug_entry::format\n"		\
+#define __BUG_ENTRY_VERBOSE(file, line)					\
 	"	.long	" file " - .	# bug_entry::file\n"		\
 	"	.short	" line "	# bug_entry::line\n"
 #else
-#define __BUG_ENTRY_VERBOSE(format, file, line)
+#define __BUG_ENTRY_VERBOSE(file, line)
 #endif
 
 #ifdef CONFIG_DEBUG_BUGVERBOSE_DETAILED
@@ -28,9 +27,10 @@
 
 #define __BUG_ENTRY(format, file, line, flags, size)			\
 		"	.section __bug_table,\"aw\"\n"			\
-		"1:	.long	0b - .	# bug_entry::bug_addr\n"	\
-		__BUG_ENTRY_VERBOSE(format, file, line)			\
-		"	.short	"flags"	# bug_entry::flags\n"		\
+		"1:	.long	0b - .		# bug_entry::bug_addr\n"\
+		"	.long	" format " - .	# bug_entry::format\n"	\
+		__BUG_ENTRY_VERBOSE(file, line)				\
+		"	.short	"flags"		# bug_entry::flags\n"	\
 		"	.org	1b+"size"\n"				\
 		"	.previous"
 
