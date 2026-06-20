@@ -526,7 +526,7 @@ static void update_rq_clock_task(struct rq *rq, s64 delta)
 #endif
 }
 
-static inline void update_rq_clock(struct rq *rq)
+static __always_inline void update_rq_clock(struct rq *rq)
 {
 	s64 delta = sched_clock_cpu(cpu_of(rq)) - rq->clock;
 
@@ -1156,7 +1156,7 @@ static void nohz_csd_func(void *info)
 
 #endif /* CONFIG_NO_HZ_COMMON */
 
-static inline void wakeup_preempt(struct rq *rq)
+static __always_inline void wakeup_preempt(struct rq *rq)
 {
 	if (sched_rq_first_task(rq) != rq->curr)
 		resched_curr(rq);
@@ -4040,7 +4040,7 @@ DEFINE_PER_CPU(struct kernel_cpustat, kernel_cpustat) = {
 EXPORT_PER_CPU_SYMBOL(kstat);
 EXPORT_PER_CPU_SYMBOL(kernel_cpustat);
 
-static inline void update_curr(struct rq *rq, struct task_struct *p)
+static __always_inline void update_curr(struct rq *rq, struct task_struct *p)
 {
 	s64 ns = rq->clock_task - p->last_ran;
 
