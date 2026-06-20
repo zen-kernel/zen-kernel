@@ -194,6 +194,26 @@ bool amdgpu_vm_is_bo_always_valid(struct amdgpu_vm *vm, struct amdgpu_bo *bo)
 	return bo && bo->tbo.base.resv == vm->root.bo->tbo.base.resv;
 }
 
+static void amdgpu_vm_bo_insert_soft_evicted(struct amdgpu_vm_bo_status *lists,
+					     struct amdgpu_vm_bo_base *vm_bo)
+{
+	struct amdgpu_vm_bo_base *insert_point;
+
+	struct amdgpu_bo_va *bo_va =
+		container_of(vm_bo, struct amdgpu_bo_va, base);
+
+	list_for_each_entry(insert_point, &lists->soft_evicted, vm_status) {
+		struct amdgpu_bo_va *insert_va =
+			container_of(insert_point, struct amdgpu_bo_va, base);
+		if (insert_va->priority < bo_va->priority)
+			return list_move_tail(&vm_bo->vm_status,
+					      &insert_point->vm_status);
+	}
+
+	list_move_tail(&vm_bo->vm_status, &lists->soft_evicted);
+}
+
+
 /**
  * amdgpu_vm_bo_evicted - vm_bo is evicted
  *
@@ -211,7 +231,7 @@ static void amdgpu_vm_bo_evicted(struct amdgpu_vm_bo_base *vm_bo, bool soft)
 	lists = amdgpu_vm_bo_lock_lists(vm_bo);
 	vm_bo->moved = true;
 	if (soft)
-		list_move_tail(&vm_bo->vm_status, &lists->soft_evicted);
+		amdgpu_vm_bo_insert_soft_evicted(lists, vm_bo);
 	else
 		list_move_tail(&vm_bo->vm_status, &lists->evicted);
 	amdgpu_vm_bo_unlock_lists(vm_bo);
@@ -466,7 +486,7 @@ void amdgpu_vm_bo_base_init(struct amdgpu_device *adev,
 		return;
 	}
 
-	ttm_bo_set_bulk_move(&bo->tbo, &vm->lru_bulk_move);
+	ttm_bo_set_bulk_move_ordered(&bo->tbo, &vm->lru_bulk_move, U32_MAX);
 
 	current_domain = amdgpu_mem_type_to_domain(bo->tbo.resource->mem_type);
 
@@ -1813,6 +1833,7 @@ struct amdgpu_bo_va *amdgpu_vm_bo_add(struct amdgpu_device *adev,
 
 	bo_va->ref_count = 1;
 	bo_va->last_pt_update = dma_fence_get_stub();
+	bo_va->priority = U32_MAX;
 	INIT_LIST_HEAD(&bo_va->valids);
 	INIT_LIST_HEAD(&bo_va->invalids);
 
@@ -2649,7 +2670,7 @@ int amdgpu_vm_init(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 	if (r)
 		return r;
 
-	ttm_lru_bulk_move_init(&vm->lru_bulk_move);
+	ttm_lru_bulk_move_init(&vm->lru_bulk_move, true);
 
 	vm->is_compute_context = false;
 	vm->need_tlb_fence = amdgpu_userq_enabled(&adev->ddev);

@@ -824,11 +824,30 @@ static int amdgpu_cs_bo_validate(void *param, struct amdgpu_bo *bo)
 		.no_wait_gpu = false,
 		.exec = &p->exec,
 	};
+	struct amdgpu_fpriv *fpriv = p->filp->driver_priv;
+	struct amdgpu_bo_va *bo_va;
+	bool in_allowed_domains;
 	uint32_t domain;
 	int r;
 
 	if (bo->tbo.pin_count)
 		return 0;
+
+	in_allowed_domains =
+		bo->tbo.resource &&
+		amdgpu_mem_type_to_domain(bo->tbo.resource->mem_type) &
+			bo->allowed_domains;
+
+	if (amdgpu_vm_is_bo_always_valid(&fpriv->vm, bo) &&
+	    bo->tbo.type != ttm_bo_type_kernel) {
+		ctx.allow_bulk_evict = true;
+		bo_va = amdgpu_vm_bo_find(&fpriv->vm, bo);
+		if (bo_va->priority == 0 && in_allowed_domains) {
+			drm_dbg(adev_to_drm(p->adev),
+				"priority 0, skipping validation\n");
+			return 0;
+		}
+	}
 
 	/* Don't move this buffer if we have depleted our allowance
 	 * to move it. Don't move anything if the threshold is zero.

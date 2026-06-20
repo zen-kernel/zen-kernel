@@ -81,6 +81,13 @@ struct amdgpu_bo_va {
 	/* protected by bo being reserved */
 	unsigned			ref_count;
 
+	/* For VM_ALWAYS_VALID buffers - eviction priority.
+	 * Opaque value passed by userspace. May only be compared to
+	 * other priority values from VM_ALWAYS_VALID buffers of the
+	 * same VM. UINT32_MAX means unset.
+	 */
+	uint32_t			priority;
+
 	/* all other members protected by the VM PD being reserved */
 	struct dma_fence	        *last_pt_update;
 

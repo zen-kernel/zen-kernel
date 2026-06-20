@@ -806,6 +806,7 @@ union drm_amdgpu_wait_fences {
 #define AMDGPU_GEM_OP_GET_GEM_CREATE_INFO	0
 #define AMDGPU_GEM_OP_SET_PLACEMENT		1
 #define AMDGPU_GEM_OP_GET_MAPPING_INFO		2
+#define AMDGPU_GEM_OP_SET_PRIORITY              3
 
 struct drm_amdgpu_gem_vm_entry {
 	/* Start of mapping (in bytes) */
