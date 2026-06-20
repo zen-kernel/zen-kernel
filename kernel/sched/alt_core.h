@@ -146,7 +146,7 @@ static inline struct task_struct *sched_rq_first_task(struct rq *rq)
 	return list_first_entry(head, struct task_struct, sq_node);
 }
 
-static inline struct task_struct * sched_rq_next_task(struct task_struct *p, struct rq *rq)
+static __always_inline struct task_struct * sched_rq_next_task(struct task_struct *p, struct rq *rq)
 {
 	struct list_head *next = p->sq_node.next;
 
