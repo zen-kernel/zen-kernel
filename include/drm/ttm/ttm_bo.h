@@ -178,6 +178,8 @@ struct ttm_operation_ctx {
 	 * when multiple BOs share the same reservation object @resv.
 	 */
 	bool allow_res_evict;
+	/** @cgroup_throttle: Avoid claiming protected memory aggressively. */
+	bool cgroup_throttle;
 	/**
 	 * @resv: Reservation object to be used together with
 	 * @allow_res_evict.

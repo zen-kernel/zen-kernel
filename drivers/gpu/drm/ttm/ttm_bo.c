@@ -530,7 +530,9 @@ static int ttm_bo_alloc_at_place(struct ttm_buffer_object *bo,
 		may_evict |= dmem_cgroup_below_min(NULL, alloc_state->charge_pool);
 		alloc_state->may_try_low = may_evict;
 
-		may_evict |= dmem_cgroup_below_low(NULL, alloc_state->charge_pool);
+		may_evict |=
+			dmem_cgroup_below_low(NULL, alloc_state->charge_pool) &&
+			!ctx->cgroup_throttle;
 	}
 
 	ret = ttm_resource_alloc(bo, place, res, alloc_state->charge_pool);
