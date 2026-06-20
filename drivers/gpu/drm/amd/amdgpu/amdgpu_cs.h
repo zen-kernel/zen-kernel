@@ -71,6 +71,9 @@ struct amdgpu_cs_parser {
 	uint64_t			bytes_moved_vis_threshold;
 	uint64_t			bytes_moved;
 	uint64_t			bytes_moved_vis;
+	uint32_t			num_unsuccessful_evicts;
+	bool				vm_eviction_throttle_soft;
+	bool				vm_eviction_throttle_hard;
 
 	/* user fence */
 	struct amdgpu_bo		*uf_bo;

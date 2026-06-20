@@ -358,6 +358,11 @@ struct amdgpu_mem_stats {
 	uint64_t evicted;
 };
 
+/* TODO: Make these module parameters? */
+#define VM_EVICT_THROTTLE_SOFT_ALLOWED_DEADLOCKS 4
+#define VM_EVICT_THROTTLE_SOFT_TIMEOUT 200000
+#define VM_EVICT_THROTTLE_HARD_TIMEOUT 50000
+
 struct amdgpu_vm {
 	/* tree of virtual addresses mapped */
 	struct rb_root_cached	va;
@@ -375,6 +380,8 @@ struct amdgpu_vm {
 
 	/* BO's belonging to PD/PT which are internal to the kernel. */
 	struct amdgpu_vm_bo_status	kernel;
+	/* Timestamp for tracking when to throttle VM allocations. */
+	u64			last_evict_throttle_start_us;
 
 	/*
 	 * BOs allocated by userspace where the dma_resv is shared with the
