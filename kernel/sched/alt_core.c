@@ -4608,6 +4608,7 @@ static inline void prio_balance(struct rq *rq, const int cpu)
 {
 	struct task_struct *p, *next;
 	cpumask_t mask;
+	int nr_tries = min(rq->nr_running / 2, sysctl_sched_nr_migrate);
 
 	if (!rq->online)
 		return;
@@ -4627,7 +4628,7 @@ static inline void prio_balance(struct rq *rq, const int cpu)
 	cpumask_clear_cpu(cpu, &mask);
 
 	p = sched_rq_next_task(rq->curr, rq);
-	while (p != rq->idle) {
+	while (p != rq->idle && nr_tries--) {
 		next = sched_rq_next_task(p, rq);
 		if (!is_migration_disabled(p)) {
 			int dest_cpu;
