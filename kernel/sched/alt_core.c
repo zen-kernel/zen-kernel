@@ -4427,6 +4427,7 @@ static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 
 			if ((nr_migrated = migrate_pending_tasks(src_rq, rq, cpu))) {
 				sub_nr_running(src_rq, nr_migrated);
+				update_sched_preempt_mask(src_rq);
 
 				spin_release(&rq_lockp(src_rq)->dep_map, _RET_IP_);
 				do_raw_spin_unlock(rq_lockp(src_rq));
