@@ -1280,7 +1280,10 @@ void amdgpu_bo_move_notify(struct ttm_buffer_object *bo,
 		return;
 
 	abo = ttm_to_amdgpu_bo(bo);
-	amdgpu_vm_bo_move(abo, new_mem, evict);
+	bool soft_evict = new_mem &&
+			  amdgpu_mem_type_to_domain(new_mem->mem_type) &
+				  abo->allowed_domains;
+	amdgpu_vm_bo_move(abo, new_mem, evict, soft_evict);
 
 	amdgpu_bo_kunmap(abo);
 

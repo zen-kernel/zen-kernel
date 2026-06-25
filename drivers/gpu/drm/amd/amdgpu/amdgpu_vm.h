@@ -553,7 +553,7 @@ void amdgpu_vm_update_stats(struct amdgpu_vm_bo_base *base,
 			    struct ttm_resource *new_res, int sign);
 void amdgpu_vm_bo_update_shared(struct amdgpu_bo *bo);
 void amdgpu_vm_bo_move(struct amdgpu_bo *bo, struct ttm_resource *new_mem,
-		       bool evicted);
+		       bool evicted, bool soft_evicted);
 uint64_t amdgpu_vm_map_gart(const dma_addr_t *pages_addr, uint64_t addr);
 struct amdgpu_bo_va *amdgpu_vm_bo_find(struct amdgpu_vm *vm,
 				       struct amdgpu_bo *bo);
