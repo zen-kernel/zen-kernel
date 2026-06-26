@@ -562,8 +562,7 @@ static int ttm_bo_alloc_at_place(struct ttm_buffer_object *bo,
 		alloc_state->may_try_low = may_evict;
 
 		may_evict |=
-			dmem_cgroup_below_low(NULL, alloc_state->charge_pool) &&
-			!ctx->cgroup_throttle;
+			dmem_cgroup_below_low(NULL, alloc_state->charge_pool);
 	}
 
 	ret = ttm_resource_alloc(bo, place, res, alloc_state->charge_pool);
@@ -601,6 +600,9 @@ struct ttm_bo_evict_walk {
 	/** @hit_low: If we cannot evict a bo when @try_low is false (first pass) */
 	bool hit_low;
 
+	/** @from_bulk: True if we're evicting from the same ordered bulk move. */
+	bool from_bulk;
+
 	/** @alloc_state: State associated with the allocation attempt. */
 	struct ttm_bo_alloc_state *alloc_state;
 };
@@ -621,7 +623,8 @@ static s64 ttm_bo_evict_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *
 	 * cgroup is always allowed to evict from itself even if it is protected.
 	 */
 	if (!evict_walk->alloc_state->may_try_low &&
-			bo->resource->css == evict_walk->alloc_state->charge_pool)
+	    bo->resource->css == evict_walk->alloc_state->charge_pool &&
+	    !evict_walk->from_bulk)
 		return 0;
 
 	limit_pool = evict_walk->alloc_state->limit_pool;
@@ -647,6 +650,12 @@ static s64 ttm_bo_evict_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *
 	evict_valuable = dmem_cgroup_state_evict_valuable(limit_pool, bo->resource->css,
 							  evict_walk->try_low,
 							  &evict_walk->hit_low);
+	/* FIXME: Buffers from the same bulk move always belong to the same VM, but the charged
+	 * owner may errnoneously change when the buffer is evicted. That should be fixed instead
+	 * of having this condition here!
+	 */
+	evict_valuable |= evict_walk->from_bulk;
+
 	if (ancestor)
 		dmem_cgroup_pool_state_put(ancestor);
 
@@ -701,6 +710,23 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
 	s64 lret;
 
 	state->in_evict = true;
+
+	if (ctx->allow_bulk_evict && evictor->bulk_move &&
+	    evictor->bulk_move_order != U32_MAX) {
+		evict_walk.from_bulk = true;
+		lret = ttm_lru_walk_ordered_bulk_for_evict(&evict_walk.walk,
+							   bdev, man,
+							   place->mem_type,
+							   evictor, 1);
+		if (lret)
+			goto out;
+		evict_walk.from_bulk = false;
+	}
+
+	if (!state->may_try_low && ctx->cgroup_throttle) {
+		lret = 0;
+		goto out;
+	}
 
 	evict_walk.walk.arg.trylock_only = true;
 	lret = ttm_lru_walk_for_evict(&evict_walk.walk, bdev, man, 1);
