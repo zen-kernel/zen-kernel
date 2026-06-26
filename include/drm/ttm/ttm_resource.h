@@ -265,6 +265,7 @@ struct ttm_resource {
 	size_t size;
 	uint32_t mem_type;
 	uint32_t placement;
+	bool needs_contiguous;
 	struct ttm_bus_placement bus;
 	struct ttm_buffer_object *bo;
 

@@ -397,6 +397,7 @@ void ttm_resource_init(struct ttm_buffer_object *bo,
 	res->size = bo->base.size;
 	res->mem_type = place->mem_type;
 	res->placement = place->flags;
+	res->needs_contiguous = place->flags & TTM_PL_FLAG_CONTIGUOUS;
 	res->bus.addr = NULL;
 	res->bus.offset = 0;
 	res->bus.is_iomem = false;

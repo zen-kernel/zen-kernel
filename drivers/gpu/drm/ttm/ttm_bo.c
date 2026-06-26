@@ -603,6 +603,11 @@ struct ttm_bo_evict_walk {
 	/** @from_bulk: True if we're evicting from the same ordered bulk move. */
 	bool from_bulk;
 
+	/** @try_contiguous: True if we should try evicting contiguous resources. */
+	bool try_contiguous;
+	/** @hit_contiguous: True if we hit a contiguous resources we refused to evict. */
+	bool hit_contiguous;
+
 	/** @alloc_state: State associated with the allocation attempt. */
 	struct ttm_bo_alloc_state *alloc_state;
 };
@@ -614,6 +619,14 @@ static s64 ttm_bo_evict_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *
 	struct dmem_cgroup_pool_state *limit_pool, *ancestor = NULL;
 	bool evict_valuable;
 	s64 lret;
+
+	if (bo->resource && bo->resource->needs_contiguous &&
+	    ktime_to_us(ktime_get()) - bo->last_pin_us <=
+		    TTM_CONTIGUOUS_PIN_TIMEOUT) {
+		evict_walk->hit_contiguous = true;
+		if (!evict_walk->try_contiguous)
+			return 0;
+	}
 
 	/*
 	 * If may_try_low is not set, then we're trying to evict unprotected
@@ -762,6 +775,13 @@ retry:
 		evict_walk.try_low = true;
 		goto retry;
 	}
+
+	if (!lret && !evict_walk.try_contiguous && !evict_walk.hit_contiguous &&
+	    state->may_try_low) {
+		evict_walk.try_contiguous = true;
+		goto retry;
+	}
+
 out:
 	state->in_evict = false;
 	if (lret < 0)
@@ -782,6 +802,7 @@ void ttm_bo_pin(struct ttm_buffer_object *bo)
 {
 	dma_resv_assert_held(bo->base.resv);
 	spin_lock(&bo->bdev->lru_lock);
+	bo->last_pin_us = ktime_to_us(ktime_get());
 	if (bo->resource)
 		ttm_resource_del_bulk_move(bo->resource, bo);
 	if (!bo->pin_count++ && bo->resource)
@@ -1098,6 +1119,7 @@ int ttm_bo_init_reserved(struct ttm_device *bdev, struct ttm_buffer_object *bo,
 	bo->page_alignment = alignment;
 	bo->destroy = destroy;
 	bo->pin_count = 0;
+	bo->last_pin_us = 0;
 	bo->sg = sg;
 	bo->bulk_move = NULL;
 	if (resv)

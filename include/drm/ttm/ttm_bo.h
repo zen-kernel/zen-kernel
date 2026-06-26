@@ -70,6 +70,8 @@ enum ttm_bo_type {
 	ttm_bo_type_sg
 };
 
+#define TTM_CONTIGUOUS_PIN_TIMEOUT 20000000L
+
 /**
  * struct ttm_buffer_object
  *
@@ -115,6 +117,8 @@ struct ttm_buffer_object {
 	uint32_t bulk_move_order;
 	unsigned priority;
 	unsigned pin_count;
+
+	s64 last_pin_us;
 
 	/**
 	 * @delayed_delete: Work item used when we can't delete the BO
