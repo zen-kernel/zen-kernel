@@ -733,6 +733,9 @@ choice
 	config DEFAULT_BBR
 		bool "BBR" if TCP_CONG_BBR=y
 
+	config DEFAULT_BBR3
+		bool "BBR3" if TCP_CONG_BBR3=y
+
 	config DEFAULT_RENO
 		bool "Reno"
 endchoice
@@ -757,6 +760,7 @@ config DEFAULT_TCP_CONG
 	default "dctcp" if DEFAULT_DCTCP
 	default "cdg" if DEFAULT_CDG
 	default "bbr" if DEFAULT_BBR
+	default "bbr3" if DEFAULT_BBR3
 	default "cubic"
 
 config TCP_SIGPOOL
