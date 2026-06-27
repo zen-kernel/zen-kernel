@@ -205,7 +205,7 @@ static inline void __mm_zero_struct_page(struct page *page)
  * that.
  */
 #define MAPCOUNT_ELF_CORE_MARGIN	(5)
-#define DEFAULT_MAX_MAP_COUNT	(USHRT_MAX - MAPCOUNT_ELF_CORE_MARGIN)
+#define DEFAULT_MAX_MAP_COUNT	(INT_MAX - MAPCOUNT_ELF_CORE_MARGIN)
 
 extern unsigned long sysctl_user_reserve_kbytes;
 extern unsigned long sysctl_admin_reserve_kbytes;
