@@ -8,6 +8,7 @@ extern void bbr_init(struct sock *sk) __ksym;
 extern void bbr_main(struct sock *sk, u32 ack, int flag, const struct rate_sample *rs) __ksym;
 extern u32 bbr_sndbuf_expand(struct sock *sk) __ksym;
 extern u32 bbr_undo_cwnd(struct sock *sk) __ksym;
+extern void bbr_cwnd_event(struct sock *sk, enum tcp_ca_event event) __ksym;
 extern void bbr_cwnd_event_tx_start(struct sock *sk) __ksym;
 extern u32 bbr_ssthresh(struct sock *sk) __ksym;
 extern u32 bbr_min_tso_segs(struct sock *sk) __ksym;
@@ -70,6 +71,7 @@ u32 BPF_PROG(undo_cwnd, struct sock *sk)
 SEC("struct_ops")
 void BPF_PROG(cwnd_event, struct sock *sk, enum tcp_ca_event event)
 {
+	bbr_cwnd_event(sk, event);
 	dctcp_cwnd_event(sk, event);
 }
 
