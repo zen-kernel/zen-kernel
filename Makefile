@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 7
 PATCHLEVEL = 1
-SUBLEVEL = 0
+SUBLEVEL = 2
 EXTRAVERSION = -zen
 NAME = Channeling Inner Peace for Peak Performance
 
