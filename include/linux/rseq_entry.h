@@ -729,7 +729,10 @@ static __always_inline void rseq_syscall_exit_to_user_mode(void)
 
 	/* Needed to remove the store for the !lockdep case */
 	if (IS_ENABLED(CONFIG_LOCKDEP)) {
+#ifndef CONFIG_SCHED_ALT
+/* WA for sched/alt: [Sync] 9a723ed7facf sched/mmcid: Provide new scheduler CID mechanism */
 		WARN_ON_ONCE(ev->sched_switch);
+#endif /* !CONFIG_SCHED_ALT */
 		ev->events = 0;
 	}
 }

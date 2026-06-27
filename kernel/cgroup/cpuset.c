@@ -767,7 +767,7 @@ out:
 	return ret;
 }
 
-#ifdef CONFIG_SMP
+#if defined(CONFIG_SMP) && !defined(CONFIG_SCHED_ALT)
 
 /*
  * generate_sched_domains()
@@ -1011,7 +1011,7 @@ void rebuild_sched_domains_locked(void)
 	/* Have scheduler rebuild the domains */
 	partition_sched_domains(ndoms, doms, attr);
 }
-#else /* !CONFIG_SMP */
+#else /* !CONFIG_SMP || CONFIG_SCHED_ALT */
 void rebuild_sched_domains_locked(void)
 {
 }
@@ -2995,7 +2995,7 @@ static int cpuset_can_attach(struct cgroup_taskset *tset)
 	struct cpuset *cs, *oldcs;
 	struct task_struct *task;
 	bool setsched_check;
-	int cpu, ret;
+	int ret;
 
 	/* used later by cpuset_attach() */
 	cpuset_attach_old_cs = task_cs(cgroup_taskset_first(tset, &css));
@@ -3039,6 +3039,7 @@ static int cpuset_can_attach(struct cgroup_taskset *tset)
 				goto out_unlock;
 		}
 
+#ifndef CONFIG_SCHED_ALT
 		if (dl_task(task)) {
 			/*
 			 * Count all migrating DL tasks for cpuset task accounting.
@@ -3049,12 +3050,14 @@ static int cpuset_can_attach(struct cgroup_taskset *tset)
 			if (dl_task_needs_bw_move(task, cs->effective_cpus))
 				cs->sum_migrate_dl_bw += task->dl.dl_bw;
 		}
+#endif
 	}
 
+#ifndef CONFIG_SCHED_ALT
 	if (!cs->sum_migrate_dl_bw)
 		goto out_success;
 
-	cpu = cpumask_any_and(cpu_active_mask, cs->effective_cpus);
+	int cpu = cpumask_any_and(cpu_active_mask, cs->effective_cpus);
 	if (unlikely(cpu >= nr_cpu_ids)) {
 		ret = -EINVAL;
 		goto out_unlock;
@@ -3067,6 +3070,7 @@ static int cpuset_can_attach(struct cgroup_taskset *tset)
 	cs->dl_bw_cpu = cpu;
 
 out_success:
+#endif
 	/*
 	 * Mark attach is in progress.  This makes validate_change() fail
 	 * changes which zero cpus/mems_allowed.
@@ -3091,11 +3095,13 @@ static void cpuset_cancel_attach(struct cgroup_taskset *tset)
 	mutex_lock(&cpuset_mutex);
 	dec_attach_in_progress_locked(cs);
 
+#ifndef CONFIG_SCHED_ALT
 	if (cs->dl_bw_cpu >= 0)
 		dl_bw_free(cs->dl_bw_cpu, cs->sum_migrate_dl_bw);
 
 	if (cs->nr_migrate_dl_tasks)
 		reset_migrate_dl_data(cs);
+#endif
 
 	mutex_unlock(&cpuset_mutex);
 }

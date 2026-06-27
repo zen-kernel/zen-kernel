@@ -89,6 +89,7 @@ static inline void rq_sched_info_depart  (struct rq *rq, unsigned long long delt
 
 #endif /* CONFIG_SCHEDSTATS */
 
+#ifndef CONFIG_SCHED_ALT
 #ifdef CONFIG_FAIR_GROUP_SCHED
 struct sched_entity_stats {
 	struct sched_entity     se;
@@ -105,6 +106,7 @@ __schedstats_from_se(struct sched_entity *se)
 #endif
 	return &task_of(se)->stats;
 }
+#endif /* CONFIG_SCHED_ALT */
 
 #ifdef CONFIG_PSI
 void psi_task_change(struct task_struct *task, int clear, int set);
@@ -142,6 +144,7 @@ static inline void psi_enqueue(struct task_struct *p, int flags)
 	if (task_on_cpu(task_rq(p), p))
 		return;
 
+#ifndef CONFIG_SCHED_ALT
 	if (p->se.sched_delayed) {
 		/* CPU migration of "sleeping" task */
 		WARN_ON_ONCE(!(flags & ENQUEUE_MIGRATED));
@@ -149,7 +152,9 @@ static inline void psi_enqueue(struct task_struct *p, int flags)
 			set |= TSK_MEMSTALL;
 		if (p->in_iowait)
 			set |= TSK_IOWAIT;
-	} else if (flags & ENQUEUE_MIGRATED) {
+	} else
+#endif
+	if (flags & ENQUEUE_MIGRATED) {
 		/* CPU migration of runnable task */
 		set = TSK_RUNNING;
 		if (p->in_memstall)
