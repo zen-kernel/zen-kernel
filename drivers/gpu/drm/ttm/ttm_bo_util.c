@@ -29,6 +29,7 @@
  * Authors: Thomas Hellstrom <thellstrom-at-vmware-dot-com>
  */
 
+#include "drm/ttm/ttm_resource.h"
 #include <linux/export.h>
 #include <linux/swap.h>
 #include <linux/vmalloc.h>
@@ -846,7 +847,9 @@ static bool ttm_lru_walk_trylock(struct ttm_bo_lru_cursor *curs,
 		return true;
 	}
 
-	if (bo->base.resv == ctx->resv && ctx->allow_res_evict) {
+	if (bo->base.resv == ctx->resv &&
+	    (ctx->allow_res_evict ||
+	     (ctx->allow_bulk_evict && curs->bulk_move))) {
 		dma_resv_assert_held(bo->base.resv);
 		return true;
 	}
@@ -883,10 +886,51 @@ static int ttm_lru_walk_ticketlock(struct ttm_bo_lru_cursor *curs,
 	} else if (!arg->ctx->exec && ret == -EDEADLK) {
 		/* Caller needs to exit the ww transaction. */
 		ret = -ENOSPC;
+	} else if (arg->ctx->exec && ret == -EALREADY &&
+		   (arg->ctx->allow_res_evict ||
+		    (arg->ctx->allow_bulk_evict && curs->bulk_move))) {
+		ret = 0;
 	}
 
 	return ret;
 }
+
+s64 ttm_lru_walk_ordered_bulk_for_evict(struct ttm_lru_walk *walk,
+					struct ttm_device *bdev,
+					struct ttm_resource_manager *man,
+					u32 mem_type,
+					struct ttm_buffer_object *evictor,
+					s64 target)
+{
+	struct ttm_bo_lru_cursor cursor;
+	struct ttm_buffer_object *bo;
+	s64 progress = 0;
+	s64 lret;
+
+	if (!evictor->bulk_move || !evictor->bulk_move->ordered)
+		return 0;
+
+	ttm_bo_lru_for_each_on_bulk_reserved_guarded(
+		&cursor, man, &walk->arg, bo, mem_type, evictor->bulk_move)
+	{
+		/* FIXME: We would actually need to hold bdev->lru_lock to read the orders safely here??? */
+		if (READ_ONCE(bo->bulk_move_order) >=
+		    READ_ONCE(evictor->bulk_move_order))
+			break;
+
+		lret = walk->process_bo(walk, bo);
+		if (lret == -EBUSY)
+			lret = 0;
+		progress = (lret < 0) ? lret : progress + lret;
+		if (progress < 0 || progress >= target)
+			break;
+	}
+	if (IS_ERR(bo))
+		return PTR_ERR(bo);
+
+	return progress;
+}
+EXPORT_SYMBOL(ttm_lru_walk_ordered_bulk_for_evict);
 
 /**
  * ttm_lru_walk_for_evict() - Perform a LRU list walk, with actions taken on
@@ -980,6 +1024,8 @@ EXPORT_SYMBOL(ttm_bo_lru_cursor_fini);
  * @curs: The ttm_bo_lru_cursor to initialize.
  * @man: The ttm resource_manager whose LRU lists to iterate over.
  * @arg: The ttm_lru_walk_arg to govern the walk.
+ * @bulk: Optional ttm_lru_bulk_move; if set, only resource from that
+ * bulk are included in iteration.
  *
  * Initialize a struct ttm_bo_lru_cursor.
  *
@@ -988,11 +1034,14 @@ EXPORT_SYMBOL(ttm_bo_lru_cursor_fini);
 struct ttm_bo_lru_cursor *
 ttm_bo_lru_cursor_init(struct ttm_bo_lru_cursor *curs,
 		       struct ttm_resource_manager *man,
-		       struct ttm_lru_walk_arg *arg)
+		       struct ttm_lru_walk_arg *arg, u32 mem_type,
+		       struct ttm_lru_bulk_move *bulk)
 {
 	memset(curs, 0, sizeof(*curs));
 	ttm_resource_cursor_init(&curs->res_curs, man);
+	curs->res_curs.mem_type = mem_type;
 	curs->arg = arg;
+	curs->bulk_move = bulk;
 
 	return curs;
 }
@@ -1015,10 +1064,16 @@ __ttm_bo_lru_cursor_next(struct ttm_bo_lru_cursor *curs)
 		bool bo_locked = false;
 
 		if (first) {
-			res = ttm_resource_manager_first(&curs->res_curs);
+			if (curs->bulk_move)
+				res = ttm_resource_manager_first_on_bulk(&curs->res_curs, curs->bulk_move);
+			else
+				res = ttm_resource_manager_first(&curs->res_curs);
 			first = false;
 		} else {
-			res = ttm_resource_manager_next(&curs->res_curs);
+			if (curs->bulk_move)
+				res = ttm_resource_manager_next_on_bulk(&curs->res_curs);
+			else
+				res = ttm_resource_manager_next(&curs->res_curs);
 		}
 		if (!res)
 			break;
