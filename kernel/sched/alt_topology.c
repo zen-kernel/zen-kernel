@@ -62,6 +62,8 @@ static int active_balance_cpu_stop(void *data)
 	raw_spin_unlock(&rq->lock);
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 
+	put_task_struct(p);
+
 	return 0;
 }
 
@@ -85,6 +87,7 @@ trigger_active_balance(struct rq *src_rq, struct rq *rq, cpumask_t *target_mask)
 	if (res) {
 		arg->task = p;
 		arg->cpumask = target_mask;
+		get_task_struct(p);
 
 		arg->active = 1;
 	}
