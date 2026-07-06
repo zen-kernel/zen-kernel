@@ -187,6 +187,11 @@ struct ttm_operation_ctx {
 	 * @bytes_moved: Statistics on how many bytes have been moved.
 	 */
 	uint64_t bytes_moved;
+	/**
+	 * @exec: optional drm_exec object to use for locking BOs and
+	 * tracking which are locked.
+	 */
+	struct drm_exec *exec;
 };
 
 /**
