@@ -127,7 +127,7 @@ static void ttm_bo_init_reserved_sys_man(struct kunit *test)
 	dma_resv_unlock(bo->base.resv);
 
 	KUNIT_EXPECT_EQ(test, err, 0);
-	KUNIT_EXPECT_EQ(test, kref_read(&bo->kref), 1);
+	KUNIT_EXPECT_EQ(test, kref_read(&bo->base.refcount), 1);
 	KUNIT_EXPECT_PTR_EQ(test, bo->bdev, priv->ttm_dev);
 	KUNIT_EXPECT_EQ(test, bo->type, bo_type);
 	KUNIT_EXPECT_EQ(test, bo->page_alignment, PAGE_SIZE);
@@ -176,7 +176,7 @@ static void ttm_bo_init_reserved_mock_man(struct kunit *test)
 	dma_resv_unlock(bo->base.resv);
 
 	KUNIT_EXPECT_EQ(test, err, 0);
-	KUNIT_EXPECT_EQ(test, kref_read(&bo->kref), 1);
+	KUNIT_EXPECT_EQ(test, kref_read(&bo->base.refcount), 1);
 	KUNIT_EXPECT_PTR_EQ(test, bo->bdev, priv->ttm_dev);
 	KUNIT_EXPECT_EQ(test, bo->type, bo_type);
 	KUNIT_EXPECT_EQ(test, ctx.bytes_moved, size);
@@ -969,6 +969,8 @@ static void ttm_bo_validate_allowed_only_evict(struct kunit *test)
 	ttm_mock_manager_fini(priv->ttm_dev, mem_multihop);
 }
 
+extern const struct drm_gem_object_funcs ttm_deleted_object_funcs;
+
 static void ttm_bo_validate_deleted_evict(struct kunit *test)
 {
 	struct ttm_operation_ctx ctx_init = { }, ctx_val  = { };
@@ -999,7 +1001,7 @@ static void ttm_bo_validate_deleted_evict(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, ttm_resource_manager_usage(man), big);
 
 	dma_resv_unlock(bo_big->base.resv);
-	bo_big->deleted = true;
+	bo_big->base.funcs = &ttm_deleted_object_funcs;
 
 	bo_small = ttm_bo_kunit_init(test, test->priv, small, NULL);
 	bo_small->type = bo_type;

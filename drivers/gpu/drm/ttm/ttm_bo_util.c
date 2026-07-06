@@ -41,6 +41,18 @@
 
 #include "ttm_bo_internal.h"
 
+static void ttm_transfer_object_free(struct drm_gem_object *obj)
+{
+	struct ttm_buffer_object *bo =
+		container_of(obj, struct ttm_buffer_object, base);
+
+	ttm_bo_fini(bo);
+}
+
+const struct drm_gem_object_funcs ttm_transfer_object_funcs = {
+	.free = ttm_transfer_object_free,
+};
+
 struct ttm_transfer_obj {
 	struct ttm_buffer_object base;
 	struct ttm_buffer_object *bo;
@@ -247,7 +259,8 @@ static int ttm_buffer_object_transfer(struct ttm_buffer_object *bo,
 	atomic_inc(&ttm_glob.bo_count);
 	drm_vma_node_reset(&fbo->base.base.vma_node);
 
-	kref_init(&fbo->base.kref);
+	kref_init(&fbo->base.base.refcount);
+	fbo->base.base.funcs = &ttm_transfer_object_funcs;
 	fbo->base.destroy = &ttm_transfered_destroy;
 	fbo->base.pin_count = 0;
 	if (bo->type != ttm_bo_type_sg)
