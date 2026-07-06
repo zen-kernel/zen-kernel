@@ -82,7 +82,7 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(sched_set_need_resched_tp);
 __read_mostly int sysctl_resched_latency_warn_ms = 100;
 __read_mostly int sysctl_resched_latency_warn_once = 1;
 
-#define ALT_SCHED_VERSION "v7.1-r0"
+#define ALT_SCHED_VERSION "v7.1-r1"
 
 #define STOP_PRIO		(MAX_RT_PRIO - 1)
 
