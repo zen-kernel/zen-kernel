@@ -190,18 +190,9 @@ error_dropref:
 	return ret;
 }
 
-/**
- * drm_exec_lock_obj - lock a GEM object for use
- * @exec: the drm_exec object with the state
- * @obj: the GEM object to lock
- *
- * Lock a GEM object for use and grab a reference to it.
- *
- * Returns: -EDEADLK if a contention is detected, -EALREADY when object is
- * already locked (can be suppressed by setting the DRM_EXEC_IGNORE_DUPLICATES
- * flag), -ENOMEM when memory allocation failed and zero for success.
- */
-int drm_exec_lock_obj(struct drm_exec *exec, struct drm_gem_object *obj)
+static int __drm_exec_lock_obj(struct drm_exec *exec,
+			       struct drm_gem_object *obj,
+			       bool ignore_duplicates)
 {
 	int ret;
 
@@ -226,8 +217,7 @@ int drm_exec_lock_obj(struct drm_exec *exec, struct drm_gem_object *obj)
 		return -EDEADLK;
 	}
 
-	if (unlikely(ret == -EALREADY) &&
-	    exec->flags & DRM_EXEC_IGNORE_DUPLICATES)
+	if (unlikely(ret == -EALREADY) && ignore_duplicates)
 		return 0;
 
 	if (unlikely(ret))
@@ -243,7 +233,43 @@ error_unlock:
 	dma_resv_unlock(obj->resv);
 	return ret;
 }
+
+/**
+ * drm_exec_lock_obj - lock a GEM object for use
+ * @exec: the drm_exec object with the state
+ * @obj: the GEM object to lock
+ *
+ * Lock a GEM object for use and grab a reference to it.
+ *
+ * Returns: -EDEADLK if a contention is detected, -EALREADY when object is
+ * already locked (can be suppressed by setting the DRM_EXEC_IGNORE_DUPLICATES
+ * flag), -ENOMEM when memory allocation failed and zero for success.
+ */
+int drm_exec_lock_obj(struct drm_exec *exec, struct drm_gem_object *obj)
+{
+	return __drm_exec_lock_obj(exec, obj,
+				   exec->flags & DRM_EXEC_IGNORE_DUPLICATES);
+}
 EXPORT_SYMBOL(drm_exec_lock_obj);
+
+/**
+ * drm_exec_lock_obj_report_dup - lock a GEM object for use, but always report duplicates
+ * @exec: the drm_exec object with the state
+ * @obj: the GEM object to lock
+ *
+ * Like drm_exec_lock_obj, lock a GEM object for use and grab a reference to it.
+ * Unlike drm_exec_lock_obj, DRM_EXEC_IGNORE_DUPLICATES is ignored and duplicates are
+ * always reported.
+ *
+ * Returns: -EDEADLK if a contention is detected, -EALREADY when object is
+ * already locked, -ENOMEM when memory allocation failed and zero for success.
+ */
+int drm_exec_lock_obj_report_dup(struct drm_exec *exec,
+				 struct drm_gem_object *obj)
+{
+	return __drm_exec_lock_obj(exec, obj, false);
+}
+EXPORT_SYMBOL(drm_exec_lock_obj_report_dup);
 
 /**
  * drm_exec_unlock_obj - unlock a GEM object in this exec context
