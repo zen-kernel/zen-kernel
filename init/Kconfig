@@ -949,7 +949,7 @@ menuconfig SCHED_ALT
 	bool "Alternative CPU Schedulers"
 	default n
 	help
-	  This feature enables the ProjectC alternative CPU schedulers."
+	  This feature enables the ProjectC alternative CPU schedulers.
 
 if SCHED_ALT
 
