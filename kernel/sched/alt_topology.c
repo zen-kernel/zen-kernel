@@ -63,6 +63,8 @@ static int active_balance_cpu_stop(void *data)
 	raw_spin_unlock(&rq->lock);
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 
+	put_task_struct(p);
+
 	return 0;
 }
 
@@ -86,6 +88,7 @@ trigger_active_balance(struct rq *src_rq, struct rq *rq, cpumask_t *target_mask)
 	if (res) {
 		arg->task = p;
 		arg->cpumask = target_mask;
+		get_task_struct(p);
 
 		arg->active = 1;
 	}
@@ -96,8 +99,15 @@ trigger_active_balance(struct rq *src_rq, struct rq *rq, cpumask_t *target_mask)
 		preempt_disable();
 		raw_spin_unlock(&src_rq->lock);
 
-		stop_one_cpu_nowait(cpu_of(rq), active_balance_cpu_stop, arg,
-				    &rq->active_balance_work);
+		if (!stop_one_cpu_nowait(cpu_of(rq), active_balance_cpu_stop, arg,
+					 &rq->active_balance_work)) {
+			raw_spin_lock_irqsave(&rq->lock, flags);
+			if (arg->active) {
+				put_task_struct(arg->task);
+				arg->active = 0;
+			}
+			raw_spin_unlock_irqrestore(&rq->lock, flags);
+		}
 
 		preempt_enable();
 		raw_spin_lock(&src_rq->lock);
