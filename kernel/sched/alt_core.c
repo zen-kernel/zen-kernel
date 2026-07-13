@@ -1396,10 +1396,6 @@ static inline void hrtick_start(struct rq *rq, u64 delay)
 	 */
 	delta = max_t(s64, delay, 10000LL);
 
-	rq->hrtick_time = ktime_add_ns(ktime_get(), delta);
-	if (!hrtick_needs_rearm(&rq->hrtick_timer, rq->hrtick_time))
-		return;
-
 	/*
 	 * If this is in the middle of schedule() only note the delay
 	 * and let hrtick_schedule_exit() deal with it.
@@ -1409,6 +1405,10 @@ static inline void hrtick_start(struct rq *rq, u64 delay)
 		rq->hrtick_delay = delta;
 		return;
 	}
+
+	rq->hrtick_time = ktime_add_ns(ktime_get(), delta);
+	if (!hrtick_needs_rearm(&rq->hrtick_timer, rq->hrtick_time))
+		return;
 
 	if (rq == this_rq())
 		hrtimer_start(&rq->hrtick_timer, rq->hrtick_time, HRTIMER_MODE_ABS_PINNED_HARD);
