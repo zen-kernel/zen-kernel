@@ -957,7 +957,7 @@ menuconfig SCHED_ALT
 	bool "Alternative CPU Schedulers"
 	default y
 	help
-	  This feature enable alternative CPU scheduler"
+	  This feature enable alternative CPU scheduler
 
 if SCHED_ALT
 
