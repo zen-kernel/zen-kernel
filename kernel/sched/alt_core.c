@@ -727,7 +727,7 @@ unsigned long get_wchan(struct task_struct *p)
 static inline void __dequeue_task(struct task_struct *p, struct rq *rq)
 {
 #ifdef ALT_SCHED_DEBUG
-	lockdep_assert_held(&rq->lock);
+	lockdep_assert_rq_held(rq);
 
 	/*printk(KERN_INFO "sched: dequeue(%d) %px %016llx\n", cpu_of(rq), p, p->deadline);*/
 	WARN_ONCE(task_rq(p) != rq, "sched: dequeue task reside on cpu%d from cpu%d\n",
@@ -747,7 +747,7 @@ static inline void dequeue_task(struct task_struct *p, struct rq *rq, int flags)
 static inline void __enqueue_task(struct task_struct *p, struct rq *rq)
 {
 #ifdef ALT_SCHED_DEBUG
-	lockdep_assert_held(&rq->lock);
+	lockdep_assert_rq_held(rq);
 
 	/*printk(KERN_INFO "sched: enqueue(%d) %px %d\n", cpu_of(rq), p, p->prio);*/
 	WARN_ONCE(task_rq(p) != rq, "sched: enqueue task reside on cpu%d to cpu%d\n",
@@ -771,7 +771,7 @@ void requeue_task(struct task_struct *p, struct rq *rq)
 
 	TASK_SCHED_PRIO_IDX(p, rq, idx, prio);
 #ifdef ALT_SCHED_DEBUG
-	lockdep_assert_held(&rq->lock);
+	lockdep_assert_rq_held(rq);
 	/*printk(KERN_INFO "sched: requeue(%d) %px %016llx\n", cpu_of(rq), p, p->deadline);*/
 	WARN_ONCE(task_rq(p) != rq, "sched: cpu[%d] requeue task reside on cpu%d\n",
 		  cpu_of(rq), task_cpu(p));
@@ -948,7 +948,7 @@ static inline void __resched_curr(struct rq *rq, int tif)
 	struct thread_info *cti = task_thread_info(curr);
 	int cpu;
 
-	lockdep_assert_held(&rq->lock);
+	lockdep_assert_rq_held(rq);
 
 	/*
 	 * Always immediately preempt the idle task; no point in delaying doing
@@ -1671,7 +1671,7 @@ static inline bool is_cpu_allowed(struct task_struct *p, int cpu)
  */
 struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int new_cpu)
 {
-	lockdep_assert_held(&rq->lock);
+	lockdep_assert_rq_held(rq);
 
 	WRITE_ONCE(p->on_rq, TASK_ON_RQ_MIGRATING);
 	dequeue_task(p, rq, 0);
@@ -3577,7 +3577,7 @@ static __always_inline void do_balance_callbacks(struct rq *rq, struct balance_c
 	void (*func)(struct rq *rq);
 	struct balance_callback *next;
 
-	lockdep_assert_held(&rq->lock);
+	lockdep_assert_rq_held(rq);
 
 	while (head) {
 		func = (void (*)(struct rq *))head->func;
@@ -6056,7 +6056,7 @@ static void balance_push(struct rq *rq)
 {
 	struct task_struct *push_task = rq->curr;
 
-	lockdep_assert_held(&rq->lock);
+	lockdep_assert_rq_held(rq);
 
 	/*
 	 * Ensure the thing is persistent until balance_push_set(.on = false);
@@ -6387,7 +6387,7 @@ static void dump_rq_tasks(struct rq *rq, const char *loglvl)
 	struct task_struct *g, *p;
 	int cpu = cpu_of(rq);
 
-	lockdep_assert_held(&rq->lock);
+	lockdep_assert_rq_held(rq);
 
 	printk("%sCPU%d enqueued tasks (%u total):\n", loglvl, cpu, rq->nr_running);
 	for_each_process_thread(g, p) {
