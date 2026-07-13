@@ -1246,7 +1246,7 @@ unsigned long wait_task_inactive(struct task_struct *p, unsigned int match_state
 		task_access_lock_irqsave(p, &lock, &flags);
 		trace_sched_wait_task(p);
 		running = task_on_cpu(task_rq(p), p);
-		queued = p->on_rq;
+		queued = task_on_rq_queued(p);
 		ncsw = 0;
 		if ((match = __task_state_match(p, match_state))) {
 			/*
