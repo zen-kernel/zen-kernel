@@ -90,7 +90,7 @@ static inline void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
 
 static inline void sched_task_ttwu(struct task_struct *p)
 {
-	s64 delta = this_rq()->clock_task > p->last_ran;
+	s64 delta = this_rq()->clock_task - p->last_ran;
 
 	if (likely(delta > 0))
 		boost_task(p, delta  >> 22);
