@@ -6,6 +6,7 @@
 #include <linux/profile.h>
 #include <linux/stop_machine.h>
 #include <linux/sched/rseq_api.h>
+#include <linux/sched/stat.h>
 #include <linux/syscalls.h>
 #include <linux/tick.h>
 
