@@ -23,7 +23,7 @@ task_sched_prio_normal(const struct task_struct *p, const struct rq *rq)
 	u64 sched_dl = max(p->deadline, rq->time_edge);
 
 #ifdef ALT_SCHED_DEBUG
-	if (WARN_ONCE(sched_dl - rq->time_edge > NORMAL_PRIO_NUM - 1,
+	if (WARN_ONCE(sched_dl - rq->time_edge > SCHED_NORMAL_PRIO_NUM - 1,
 		      "pds: task_sched_prio_normal() delta %lld\n", sched_dl - rq->time_edge))
 		return SCHED_NORMAL_PRIO_NUM - 1;
 #endif

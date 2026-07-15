@@ -978,6 +978,7 @@ config SCHED_PROXY_EXEC
 	depends on !SCHED_CLASS_EXT
 	# Not particularly useful until we get to multi-rq proxying
 	depends on EXPERT
+	depends on !SCHED_ALT
 	help
 	  This option enables proxy execution, a mechanism for mutex-owning
 	  tasks to inherit the scheduling context of higher priority waiters.
@@ -986,7 +987,7 @@ menuconfig SCHED_ALT
 	bool "Alternative CPU Schedulers"
 	default n
 	help
-	  This feature enables the ProjectC alternative CPU schedulers."
+	  This feature enables the ProjectC alternative CPU schedulers.
 
 if SCHED_ALT
 
