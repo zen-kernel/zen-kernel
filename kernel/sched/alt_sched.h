@@ -195,7 +195,7 @@ struct balance_arg {
  */
 struct rq {
 	/* runqueue lock: */
-	raw_spinlock_t			lock;
+	raw_spinlock_t			__lock;
 
 	struct task_struct __rcu	*curr;
 	struct task_struct		*idle;
@@ -326,7 +326,12 @@ extern long calc_load_fold_active(struct rq *this_rq, long adjust);
 
 DECLARE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 #define cpu_rq(cpu)		(&per_cpu(runqueues, (cpu)))
-#define this_rq()		this_cpu_ptr(&runqueues)
+static __always_inline struct rq *__this_rq(void)
+{
+	return this_cpu_ptr(&runqueues);
+}
+
+#define this_rq()		__this_rq()
 #define task_rq(p)		cpu_rq(task_cpu(p))
 #define cpu_curr(cpu)		(cpu_rq(cpu)->curr)
 #define raw_rq()		raw_cpu_ptr(&runqueues)
@@ -445,37 +450,115 @@ static inline u64 rq_clock_task(struct rq *rq)
 	return rq->clock_task;
 }
 
-/*
- * Below are scheduler API which using in other kernel code
- * It use the dummy rq_flags
- * ToDo : BMQ need to support these APIs for compatibility with mainline
- * scheduler code.
- */
+static __always_inline raw_spinlock_t *rq_lockp(struct rq *rq)
+{
+	return &rq->__lock;
+}
+
+static __always_inline raw_spinlock_t *__rq_lockp(struct rq *rq)
+	__returns_ctx_lock(rq_lockp(rq)) /* alias them */
+{
+	return &rq->__lock;
+}
+
+static inline void lockdep_assert_rq_held(struct rq *rq)
+	__assumes_ctx_lock(__rq_lockp(rq))
+{
+	lockdep_assert_held(__rq_lockp(rq));
+}
+
+extern void raw_spin_rq_lock_nested(struct rq *rq, int subclass)
+	__acquires(__rq_lockp(rq));
+
+extern bool raw_spin_rq_trylock(struct rq *rq)
+	__cond_acquires(true, __rq_lockp(rq));
+
+static __always_inline void raw_spin_rq_lock(struct rq *rq)
+	__acquires(__rq_lockp(rq))
+{
+	raw_spin_rq_lock_nested(rq, 0);
+}
+
+static __always_inline void raw_spin_rq_unlock(struct rq *rq)
+	__releases(__rq_lockp(rq))
+{
+	raw_spin_unlock(rq_lockp(rq));
+}
+
+static __always_inline void raw_spin_rq_lock_irq(struct rq *rq)
+	__acquires(__rq_lockp(rq))
+{
+	local_irq_disable();
+	raw_spin_rq_lock(rq);
+}
+
+static __always_inline void raw_spin_rq_unlock_irq(struct rq *rq)
+	__releases(__rq_lockp(rq))
+{
+	raw_spin_rq_unlock(rq);
+	local_irq_enable();
+}
+
+static inline unsigned long _raw_spin_rq_lock_irqsave(struct rq *rq)
+	__acquires(__rq_lockp(rq))
+{
+	unsigned long flags;
+
+	local_irq_save(flags);
+	raw_spin_rq_lock(rq);
+
+	return flags;
+}
+
+static inline void raw_spin_rq_unlock_irqrestore(struct rq *rq,
+						 unsigned long flags)
+	__releases(__rq_lockp(rq))
+{
+	raw_spin_rq_unlock(rq);
+	local_irq_restore(flags);
+}
+
+#define raw_spin_rq_lock_irqsave(rq, flags)	\
+do {						\
+	flags = _raw_spin_rq_lock_irqsave(rq);	\
+} while (0)
+
 struct rq_flags {
 	unsigned long flags;
+	struct pin_cookie cookie;
 	raw_spinlock_t *lock;
 };
 
-struct rq *__task_rq_lock(struct task_struct *p, struct rq_flags *rf)
-	__acquires(rq->lock);
+static inline void rq_pin_lock(struct rq *rq, struct rq_flags *rf)
+{
+	rf->cookie = lockdep_pin_lock(__rq_lockp(rq));
+}
 
-struct rq *task_rq_lock(struct task_struct *p, struct rq_flags *rf)
-	__acquires(p->pi_lock)
-	__acquires(rq->lock);
+static inline void rq_unpin_lock(struct rq *rq, struct rq_flags *rf)
+{
+	lockdep_unpin_lock(__rq_lockp(rq), rf->cookie);
+}
+
+#define __task_rq_lock(...) __acquire_ret(___task_rq_lock(__VA_ARGS__), __rq_lockp(__ret))
+extern struct rq *___task_rq_lock(struct task_struct *p, struct rq_flags *rf) __acquires_ret;
+
+#define task_rq_lock(...) __acquire_ret(_task_rq_lock(__VA_ARGS__), __rq_lockp(__ret))
+extern struct rq *_task_rq_lock(struct task_struct *p, struct rq_flags *rf)
+	__acquires(&p->pi_lock) __acquires_ret;
 
 static inline void
 __task_rq_unlock(struct rq *rq, struct task_struct *p, struct rq_flags *rf)
-	__releases(rq->lock)
+	__releases(__rq_lockp(rq))
 {
-	raw_spin_unlock(&rq->lock);
+	rq_unpin_lock(rq, rf);
+	raw_spin_rq_unlock(rq);
 }
 
 static inline void
 task_rq_unlock(struct rq *rq, struct task_struct *p, struct rq_flags *rf)
-	__releases(rq->lock)
-	__releases(p->pi_lock)
+	__releases(__rq_lockp(rq), &p->pi_lock)
 {
-	raw_spin_unlock(&rq->lock);
+	__task_rq_unlock(rq, p, rf);
 	raw_spin_unlock_irqrestore(&p->pi_lock, rf->flags);
 }
 
@@ -483,90 +566,95 @@ DEFINE_LOCK_GUARD_1(task_rq_lock, struct task_struct,
 		    _T->rq = task_rq_lock(_T->lock, &_T->rf),
 		    task_rq_unlock(_T->rq, _T->lock, &_T->rf),
 		    struct rq *rq; struct rq_flags rf)
+DECLARE_LOCK_GUARD_1_ATTRS(task_rq_lock, __acquires(&_T->pi_lock),
+			   __releases(&(*(struct task_struct **)_T)->pi_lock))
+#define class_task_rq_lock_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(task_rq_lock, _T)
+
+DEFINE_LOCK_GUARD_1(__task_rq_lock, struct task_struct,
+		    _T->rq = __task_rq_lock(_T->lock, &_T->rf),
+		    __task_rq_unlock(_T->rq, _T->lock, &_T->rf),
+		    struct rq *rq; struct rq_flags rf)
 
 static inline void
 rq_lock(struct rq *rq, struct rq_flags *rf)
-	__acquires(rq->lock)
+	__acquires(__rq_lockp(rq))
 {
-	raw_spin_lock(&rq->lock);
+	raw_spin_rq_lock(rq);
+	rq_pin_lock(rq, rf);
 }
 
 static inline void
 rq_unlock(struct rq *rq, struct rq_flags *rf)
-	__releases(rq->lock)
+	__releases(__rq_lockp(rq))
 {
-	raw_spin_unlock(&rq->lock);
+	rq_unpin_lock(rq, rf);
+	raw_spin_rq_unlock(rq);
 }
 
 static inline void
 rq_lock_irq(struct rq *rq, struct rq_flags *rf)
-	__acquires(rq->lock)
+	__acquires(__rq_lockp(rq))
 {
-	raw_spin_lock_irq(&rq->lock);
+	raw_spin_rq_lock_irq(rq);
+	rq_pin_lock(rq, rf);
 }
 
 static inline void
 rq_unlock_irq(struct rq *rq, struct rq_flags *rf)
-	__releases(rq->lock)
+	__releases(__rq_lockp(rq))
 {
-	raw_spin_unlock_irq(&rq->lock);
+	rq_unpin_lock(rq, rf);
+	raw_spin_rq_unlock_irq(rq);
 }
+
+DEFINE_LOCK_GUARD_1(rq_lock, struct rq,
+		    rq_lock(_T->lock, &_T->rf),
+		    rq_unlock(_T->lock, &_T->rf),
+		    struct rq_flags rf)
+DECLARE_LOCK_GUARD_1_ATTRS(rq_lock, __acquires(__rq_lockp(_T)),
+			   __releases(__rq_lockp(*(struct rq **)_T)))
+#define class_rq_lock_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(rq_lock, _T)
 
 DEFINE_LOCK_GUARD_1(rq_lock_irq, struct rq,
 		    rq_lock_irq(_T->lock, &_T->rf),
 		    rq_unlock_irq(_T->lock, &_T->rf),
 		    struct rq_flags rf)
+DECLARE_LOCK_GUARD_1_ATTRS(rq_lock_irq, __acquires(__rq_lockp(_T)),
+			   __releases(__rq_lockp(*(struct rq **)_T)))
+#define class_rq_lock_irq_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(rq_lock_irq, _T)
 
-static inline struct rq *
-this_rq_lock_irq(struct rq_flags *rf)
-	__acquires(rq->lock)
+static inline void rq_lock_irqsave(struct rq *rq, struct rq_flags *rf)
+	__acquires(__rq_lockp(rq))
+{
+	raw_spin_rq_lock_irqsave(rq, rf->flags);
+	rq_pin_lock(rq, rf);
+}
+
+static inline void rq_unlock_irqrestore(struct rq *rq, struct rq_flags *rf)
+	__releases(__rq_lockp(rq))
+{
+	rq_unpin_lock(rq, rf);
+	raw_spin_rq_unlock_irqrestore(rq, rf->flags);
+}
+
+DEFINE_LOCK_GUARD_1(rq_lock_irqsave, struct rq,
+		    rq_lock_irqsave(_T->lock, &_T->rf),
+		    rq_unlock_irqrestore(_T->lock, &_T->rf),
+		    struct rq_flags rf)
+DECLARE_LOCK_GUARD_1_ATTRS(rq_lock_irqsave, __acquires(__rq_lockp(_T)),
+			   __releases(__rq_lockp(*(struct rq **)_T)))
+#define class_rq_lock_irqsave_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(rq_lock_irqsave, _T)
+
+#define this_rq_lock_irq(...) __acquire_ret(_this_rq_lock_irq(__VA_ARGS__), __rq_lockp(__ret))
+static inline struct rq *_this_rq_lock_irq(struct rq_flags *rf) __acquires_ret
 {
 	struct rq *rq;
 
 	local_irq_disable();
 	rq = this_rq();
-	raw_spin_lock(&rq->lock);
+	rq_lock(rq, rf);
 
 	return rq;
-}
-
-static __always_inline raw_spinlock_t *__rq_lockp(struct rq *rq)
-{
-	return &rq->lock;
-}
-
-static __always_inline raw_spinlock_t *rq_lockp(struct rq *rq)
-{
-	return __rq_lockp(rq);
-}
-
-static inline void lockdep_assert_rq_held(struct rq *rq)
-{
-	lockdep_assert_held(__rq_lockp(rq));
-}
-
-extern void raw_spin_rq_lock_nested(struct rq *rq, int subclass);
-
-static __always_inline void raw_spin_rq_lock(struct rq *rq)
-{
-	raw_spin_rq_lock_nested(rq, 0);
-}
-
-static __always_inline void raw_spin_rq_unlock(struct rq *rq)
-{
-	raw_spin_unlock(rq_lockp(rq));
-}
-
-static __always_inline void raw_spin_rq_lock_irq(struct rq *rq)
-{
-	local_irq_disable();
-	raw_spin_rq_lock(rq);
-}
-
-static __always_inline void raw_spin_rq_unlock_irq(struct rq *rq)
-{
-	raw_spin_rq_unlock(rq);
-	local_irq_enable();
 }
 
 static inline int task_current(struct rq *rq, struct task_struct *p)

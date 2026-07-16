@@ -98,17 +98,18 @@ extern int __sched_setaffinity(struct task_struct *p, struct affinity_context *c
  * Context API
  */
 static inline struct rq *__task_access_lock(struct task_struct *p, raw_spinlock_t **plock)
+	__context_unsafe(/* conditionally returns with the rq lock held */)
 {
 	struct rq *rq;
 	for (;;) {
 		rq = task_rq(p);
 		if (p->on_cpu || task_on_rq_queued(p)) {
-			raw_spin_lock(&rq->lock);
+			raw_spin_rq_lock(rq);
 			if (likely((p->on_cpu || task_on_rq_queued(p)) && rq == task_rq(p))) {
-				*plock = &rq->lock;
+				*plock = rq_lockp(rq);
 				return rq;
 			}
-			raw_spin_unlock(&rq->lock);
+			raw_spin_rq_unlock(rq);
 		} else if (task_on_rq_migrating(p)) {
 			do {
 				cpu_relax();
@@ -121,18 +122,23 @@ static inline struct rq *__task_access_lock(struct task_struct *p, raw_spinlock_
 }
 
 static inline void __task_access_unlock(struct task_struct *p, raw_spinlock_t *lock)
+	__context_unsafe(/* conditionally releases the returned rq lock */)
 {
 	if (NULL != lock)
 		raw_spin_unlock(lock);
 }
 
 static inline struct rq *task_access_lock(struct task_struct *p, struct rq_flags *rf)
+	__context_unsafe(/* conditionally returns with the rq lock held */)
+	__acquires(&p->pi_lock)
 {
 	raw_spin_lock_irqsave(&p->pi_lock, rf->flags);
 	return __task_access_lock(p, &rf->lock);
 }
 
 static inline void task_access_unlock(struct task_struct *p, struct rq_flags *rf)
+	__context_unsafe(/* conditionally releases the returned rq lock */)
+	__releases(&p->pi_lock)
 {
 	__task_access_unlock(p, rf->lock);
 	raw_spin_unlock_irqrestore(&p->pi_lock, rf->flags);
@@ -142,6 +148,9 @@ DEFINE_LOCK_GUARD_1(task_access_lock, struct task_struct,
 		    _T->rq = task_access_lock(_T->lock, &_T->rf),
 		    task_access_unlock(_T->lock, &_T->rf),
 		    struct rq *rq; struct rq_flags rf)
+DECLARE_LOCK_GUARD_1_ATTRS(task_access_lock, __acquires(&_T->pi_lock),
+			   __releases(&(*(struct task_struct **)_T)->pi_lock))
+#define class_task_access_lock_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(task_access_lock, _T)
 
 void check_task_changed(struct task_struct *p, struct rq *rq);
 
@@ -199,7 +208,9 @@ extern cpumask_t *const sched_sg_idle_mask;
 extern cpumask_t *const sched_pcore_idle_mask;
 extern cpumask_t *const sched_ecore_idle_mask;
 
-extern struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int new_cpu);
+extern struct rq *move_queued_task(struct rq *rq, struct rq_flags *rf,
+				   struct task_struct *p, int new_cpu)
+	__must_hold(__rq_lockp(rq));
 
 DECLARE_STATIC_CALL(sched_idle_select_func, cpumask_and);
 

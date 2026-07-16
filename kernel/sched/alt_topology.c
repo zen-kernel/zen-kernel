@@ -42,13 +42,13 @@ static int active_balance_cpu_stop(void *data)
 	struct balance_arg *arg = data;
 	struct task_struct *p = arg->task;
 	struct rq *rq = this_rq();
-	unsigned long flags;
+	struct rq_flags rf;
 	cpumask_t tmp;
 
-	local_irq_save(flags);
+	local_irq_save(rf.flags);
 
 	raw_spin_lock(&p->pi_lock);
-	raw_spin_lock(&rq->lock);
+	rq_lock(rq, &rf);
 
 	arg->active = 0;
 
@@ -57,11 +57,11 @@ static int active_balance_cpu_stop(void *data)
 	    !is_migration_disabled(p)) {
 		int dcpu = __best_mask_cpu(&tmp, per_cpu(sched_cpu_llc_mask, cpu_of(rq)),
 					   per_cpu(sched_cpu_topo_end_mask, cpu_of(rq)));
-		rq = move_queued_task(rq, p, dcpu);
+		rq = move_queued_task(rq, &rf, p, dcpu);
 	}
 
-	raw_spin_unlock(&rq->lock);
-	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
+	rq_unlock(rq, &rf);
+	raw_spin_unlock_irqrestore(&p->pi_lock, rf.flags);
 
 	put_task_struct(p);
 
@@ -77,8 +77,11 @@ trigger_active_balance(struct rq *src_rq, struct rq *rq, cpumask_t *target_mask)
 	struct task_struct *p;
 	int res;
 
-	if (!raw_spin_trylock_irqsave(&rq->lock, flags))
+	local_irq_save(flags);
+	if (!raw_spin_rq_trylock(rq)) {
+		local_irq_restore(flags);
 		return 0;
+	}
 
 	arg = &rq->active_balance_arg;
 	res = (1 == rq->nr_running) &&					\
@@ -93,24 +96,24 @@ trigger_active_balance(struct rq *src_rq, struct rq *rq, cpumask_t *target_mask)
 		arg->active = 1;
 	}
 
-	raw_spin_unlock_irqrestore(&rq->lock, flags);
+	raw_spin_rq_unlock_irqrestore(rq, flags);
 
 	if (res) {
 		preempt_disable();
-		raw_spin_unlock(&src_rq->lock);
+		raw_spin_rq_unlock(src_rq);
 
 		if (!stop_one_cpu_nowait(cpu_of(rq), active_balance_cpu_stop, arg,
 					 &rq->active_balance_work)) {
-			raw_spin_lock_irqsave(&rq->lock, flags);
+			raw_spin_rq_lock_irqsave(rq, flags);
 			if (arg->active) {
 				put_task_struct(arg->task);
 				arg->active = 0;
 			}
-			raw_spin_unlock_irqrestore(&rq->lock, flags);
+			raw_spin_rq_unlock_irqrestore(rq, flags);
 		}
 
 		preempt_enable();
-		raw_spin_lock(&src_rq->lock);
+		raw_spin_rq_lock(src_rq);
 	}
 
 	return res;
