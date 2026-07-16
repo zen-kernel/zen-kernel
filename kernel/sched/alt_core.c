@@ -2067,8 +2067,8 @@ void sched_set_stop_task(int cpu, struct task_struct *stop)
 	}
 }
 
-static int affine_move_task(struct rq *rq, struct task_struct *p, int dest_cpu,
-			    raw_spinlock_t *lock, unsigned long irq_flags)
+static int affine_move_task(struct rq *rq, struct task_struct *p,
+			    struct rq_flags *rf, int dest_cpu)
 	__releases(rq->lock)
 	__releases(p->pi_lock)
 {
@@ -2081,8 +2081,7 @@ static int affine_move_task(struct rq *rq, struct task_struct *p, int dest_cpu,
 			struct migration_arg arg = { p, dest_cpu };
 
 			/* Need help from migration thread: drop lock and wait. */
-			__task_access_unlock(p, lock);
-			raw_spin_unlock_irqrestore(&p->pi_lock, irq_flags);
+			task_rq_unlock(rq, p, rf);
 			stop_one_cpu(cpu_of(rq), migration_cpu_stop, &arg);
 			return 0;
 		}
@@ -2093,19 +2092,16 @@ static int affine_move_task(struct rq *rq, struct task_struct *p, int dest_cpu,
 			 */
 			update_rq_clock(rq);
 			rq = move_queued_task(rq, p, dest_cpu);
-			lock = &rq->lock;
 		}
 	}
-	__task_access_unlock(p, lock);
-	raw_spin_unlock_irqrestore(&p->pi_lock, irq_flags);
+	task_rq_unlock(rq, p, rf);
 	return 0;
 }
 
 static int __set_cpus_allowed_ptr_locked(struct task_struct *p,
 					 struct affinity_context *ctx,
 					 struct rq *rq,
-					 raw_spinlock_t *lock,
-					 unsigned long irq_flags)
+					 struct rq_flags *rf)
 {
 	const struct cpumask *cpu_allowed_mask = task_cpu_possible_mask(p);
 	const struct cpumask *cpu_valid_mask = cpu_active_mask;
@@ -2152,11 +2148,10 @@ static int __set_cpus_allowed_ptr_locked(struct task_struct *p,
 
 	do_set_cpus_allowed(p, ctx);
 
-	return affine_move_task(rq, p, dest_cpu, lock, irq_flags);
+	return affine_move_task(rq, p, rf, dest_cpu);
 
 out:
-	__task_access_unlock(p, lock);
-	raw_spin_unlock_irqrestore(&p->pi_lock, irq_flags);
+	task_rq_unlock(rq, p, rf);
 
 	return ret;
 }
@@ -2172,12 +2167,10 @@ out:
 int __set_cpus_allowed_ptr(struct task_struct *p,
 			   struct affinity_context *ctx)
 {
-	unsigned long irq_flags;
+	struct rq_flags rf;
 	struct rq *rq;
-	raw_spinlock_t *lock;
 
-	raw_spin_lock_irqsave(&p->pi_lock, irq_flags);
-	rq = __task_access_lock(p, &lock);
+	rq = task_rq_lock(p, &rf);
 	/*
 	 * Masking should be skipped if SCA_USER or any of the SCA_MIGRATE_*
 	 * flags are set.
@@ -2188,7 +2181,7 @@ int __set_cpus_allowed_ptr(struct task_struct *p,
 		ctx->new_mask = rq->scratch_mask;
 
 
-	return __set_cpus_allowed_ptr_locked(p, ctx, rq, lock, irq_flags);
+	return __set_cpus_allowed_ptr_locked(p, ctx, rq, &rf);
 }
 
 int set_cpus_allowed_ptr(struct task_struct *p, const struct cpumask *new_mask)
@@ -2219,24 +2212,21 @@ static int restrict_cpus_allowed_ptr(struct task_struct *p,
 		.new_mask  = new_mask,
 		.flags     = 0,
 	};
-	unsigned long irq_flags;
-	raw_spinlock_t *lock;
+	struct rq_flags rf;
 	struct rq *rq;
 	int err;
 
-	raw_spin_lock_irqsave(&p->pi_lock, irq_flags);
-	rq = __task_access_lock(p, &lock);
+	rq = task_rq_lock(p, &rf);
 
 	if (!cpumask_and(new_mask, task_user_cpus(p), subset_mask)) {
 		err = -EINVAL;
 		goto err_unlock;
 	}
 
-	return __set_cpus_allowed_ptr_locked(p, &ac, rq, lock, irq_flags);
+	return __set_cpus_allowed_ptr_locked(p, &ac, rq, &rf);
 
 err_unlock:
-	__task_access_unlock(p, lock);
-	raw_spin_unlock_irqrestore(&p->pi_lock, irq_flags);
+	task_rq_unlock(rq, p, &rf);
 	return err;
 }
 
