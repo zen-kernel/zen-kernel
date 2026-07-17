@@ -425,6 +425,8 @@ unsigned long arch_scale_freq_capacity(int cpu)
 }
 #endif
 
+extern void update_rq_clock(struct rq *rq);
+
 static inline u64 __rq_clock_broken(struct rq *rq)
 {
 	return READ_ONCE(rq->clock);

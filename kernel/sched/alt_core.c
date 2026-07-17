@@ -471,7 +471,7 @@ static void update_rq_clock_task(struct rq *rq, s64 delta)
 #endif
 }
 
-static __always_inline void update_rq_clock(struct rq *rq)
+__always_inline void update_rq_clock(struct rq *rq)
 {
 	s64 delta = sched_clock_cpu(cpu_of(rq)) - rq->clock;
 
@@ -1482,7 +1482,7 @@ static void block_task(struct rq *rq, struct task_struct *p, unsigned long task_
 static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
 {
 	/*
-	 * After ->cpu is set up to a new value, task_access_lock(p, ...) can be
+	 * After ->cpu is set up to a new value, task_rq_lock(p, ...) can be
 	 * successfully executed on another CPU. We must ensure that updates of
 	 * per-task data have been completed by this moment.
 	 */
