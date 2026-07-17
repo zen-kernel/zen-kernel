@@ -425,33 +425,6 @@ unsigned long arch_scale_freq_capacity(int cpu)
 }
 #endif
 
-extern void update_rq_clock(struct rq *rq);
-
-static inline u64 __rq_clock_broken(struct rq *rq)
-{
-	return READ_ONCE(rq->clock);
-}
-
-static inline u64 rq_clock(struct rq *rq)
-{
-	/*
-	 * Relax lockdep_assert_held() checking as in VRQ, call to
-	 * sched_info_xxxx() may not held rq->lock
-	 * lockdep_assert_held(&rq->lock);
-	 */
-	return rq->clock;
-}
-
-static inline u64 rq_clock_task(struct rq *rq)
-{
-	/*
-	 * Relax lockdep_assert_held() checking as in VRQ, call to
-	 * sched_info_xxxx() may not held rq->lock
-	 * lockdep_assert_held(&rq->lock);
-	 */
-	return rq->clock_task;
-}
-
 static __always_inline raw_spinlock_t *rq_lockp(struct rq *rq)
 {
 	return &rq->__lock;
@@ -544,6 +517,22 @@ static inline void rq_unpin_lock(struct rq *rq, struct rq_flags *rf)
 static inline void rq_repin_lock(struct rq *rq, struct rq_flags *rf)
 {
 	lockdep_repin_lock(__rq_lockp(rq), rf->cookie);
+}
+
+extern void update_rq_clock(struct rq *rq);
+
+static inline u64 rq_clock(struct rq *rq)
+{
+	lockdep_assert_rq_held(rq);
+
+	return rq->clock;
+}
+
+static inline u64 rq_clock_task(struct rq *rq)
+{
+	lockdep_assert_rq_held(rq);
+
+	return rq->clock_task;
 }
 
 #define __task_rq_lock(...) __acquire_ret(___task_rq_lock(__VA_ARGS__), __rq_lockp(__ret))

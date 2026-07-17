@@ -473,8 +473,11 @@ static void update_rq_clock_task(struct rq *rq, s64 delta)
 
 __always_inline void update_rq_clock(struct rq *rq)
 {
-	s64 delta = sched_clock_cpu(cpu_of(rq)) - rq->clock;
+	s64 delta;
 
+	lockdep_assert_rq_held(rq);
+
+	delta = sched_clock_cpu(cpu_of(rq)) - rq->clock;
 	if (unlikely(delta <= 0))
 		return;
 	rq->clock += delta;
