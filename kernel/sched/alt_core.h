@@ -128,30 +128,6 @@ static inline void __task_access_unlock(struct task_struct *p, raw_spinlock_t *l
 		raw_spin_unlock(lock);
 }
 
-static inline struct rq *task_access_lock(struct task_struct *p, struct rq_flags *rf)
-	__context_unsafe(/* conditionally returns with the rq lock held */)
-	__acquires(&p->pi_lock)
-{
-	raw_spin_lock_irqsave(&p->pi_lock, rf->flags);
-	return __task_access_lock(p, &rf->lock);
-}
-
-static inline void task_access_unlock(struct task_struct *p, struct rq_flags *rf)
-	__context_unsafe(/* conditionally releases the returned rq lock */)
-	__releases(&p->pi_lock)
-{
-	__task_access_unlock(p, rf->lock);
-	raw_spin_unlock_irqrestore(&p->pi_lock, rf->flags);
-}
-
-DEFINE_LOCK_GUARD_1(task_access_lock, struct task_struct,
-		    _T->rq = task_access_lock(_T->lock, &_T->rf),
-		    task_access_unlock(_T->lock, &_T->rf),
-		    struct rq *rq; struct rq_flags rf)
-DECLARE_LOCK_GUARD_1_ATTRS(task_access_lock, __acquires(&_T->pi_lock),
-			   __releases(&(*(struct task_struct **)_T)->pi_lock))
-#define class_task_access_lock_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(task_access_lock, _T)
-
 void check_task_changed(struct task_struct *p, struct rq *rq);
 
 /*
