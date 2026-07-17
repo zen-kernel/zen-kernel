@@ -191,6 +191,7 @@ extern struct rq *move_queued_task(struct rq *rq, struct rq_flags *rf,
 DECLARE_STATIC_CALL(sched_idle_select_func, cpumask_and);
 
 /* balance callback */
+extern void __balance_callbacks(struct rq *rq, struct rq_flags *rf);
 extern struct balance_callback *splice_balance_callbacks(struct rq *rq);
 extern void balance_callbacks(struct rq *rq, struct balance_callback *head);
 
