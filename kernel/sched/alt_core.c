@@ -642,7 +642,7 @@ unsigned long get_wchan(struct task_struct *p)
  * Add/Remove/Requeue task to/from the runqueue routines
  * Context: rq->lock
  */
-#define __SCHED_DEQUEUE_TASK(p, rq, flags, func)					\
+#define __SCHED_DEQUEUE_TASK(p, rq, func)						\
 	sched_info_dequeue(rq, p);							\
 											\
 	__list_del_entry(&p->sq_node);							\
@@ -652,7 +652,7 @@ unsigned long get_wchan(struct task_struct *p)
 		func;									\
 	}
 
-#define __SCHED_ENQUEUE_TASK(p, rq, flags, func)					\
+#define __SCHED_ENQUEUE_TASK(p, rq, func)						\
 	sched_info_enqueue(rq, p);							\
 	{										\
 	int idx, prio;									\
@@ -674,7 +674,7 @@ static inline void __dequeue_task(struct task_struct *p, struct rq *rq)
 		  task_cpu(p), cpu_of(rq));
 #endif
 
-	__SCHED_DEQUEUE_TASK(p, rq, flags, update_sched_preempt_mask(rq));
+	__SCHED_DEQUEUE_TASK(p, rq, update_sched_preempt_mask(rq));
 }
 
 static inline void dequeue_task(struct task_struct *p, struct rq *rq, int flags)
@@ -694,7 +694,7 @@ static inline void __enqueue_task(struct task_struct *p, struct rq *rq)
 		  task_cpu(p), cpu_of(rq));
 #endif
 
-	__SCHED_ENQUEUE_TASK(p, rq, flags, update_sched_preempt_mask(rq));
+	__SCHED_ENQUEUE_TASK(p, rq, update_sched_preempt_mask(rq));
 }
 
 static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
@@ -975,7 +975,7 @@ void resched_cpu(int cpu)
 
 	raw_spin_rq_lock_irqsave(rq, flags);
 	if (cpu_online(cpu) || cpu == smp_processor_id())
-		resched_curr(cpu_rq(cpu));
+		resched_curr(rq);
 	raw_spin_rq_unlock_irqrestore(rq, flags);
 }
 
@@ -3055,7 +3055,7 @@ int sched_fork(u64 clone_flags, struct task_struct *p)
 	}
 
 #ifdef CONFIG_SCHED_INFO
-	if (unlikely(sched_info_on()))
+	if (likely(sched_info_on()))
 		memset(&p->sched_info, 0, sizeof(p->sched_info));
 #endif
 	init_task_preempt_count(p);
@@ -4357,10 +4357,10 @@ migrate_pending_tasks(struct rq *rq, struct rq *dest_rq, const int dest_cpu)
 		skip = sched_rq_next_task(p, rq);
 		if (cpumask_test_cpu(dest_cpu, p->cpus_ptr)) {
 			psi_dequeue(p, 0);
-			__SCHED_DEQUEUE_TASK(p, rq, 0, );
+			__SCHED_DEQUEUE_TASK(p, rq, );
 			set_task_cpu(p, dest_cpu);
 			sched_task_sanity_check(p, dest_rq);
-			__SCHED_ENQUEUE_TASK(p, dest_rq, 0, );
+			__SCHED_ENQUEUE_TASK(p, dest_rq, );
 			psi_enqueue(p, ENQUEUE_MIGRATED);
 			nr_migrated++;
 		}
@@ -5611,11 +5611,8 @@ void io_schedule_finish(int token)
 }
 
 /*
- * This task is about to go to sleep on IO.  Increment rq->nr_iowait so
+ * This task is about to go to sleep on IO. Increment rq->nr_iowait so
  * that process accounting knows that this is a task in IO wait state.
- *
- * But don't do that if it is a deliberate, throttling IO wait (this task
- * has set its backing_dev_info: the queue against which it should throttle)
  */
 
 long __sched io_schedule_timeout(long timeout)
@@ -6390,7 +6387,6 @@ void __init sched_init(void)
 		rq->online = false;
 		rq->cpu = i;
 
-		rq->balance_func = NULL;
 		rq->active_balance_arg.active = 0;
 
 #ifdef CONFIG_NO_HZ_COMMON

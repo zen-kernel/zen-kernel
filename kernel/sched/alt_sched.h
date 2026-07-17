@@ -183,8 +183,6 @@ struct balance_callback {
 	void (*func)(struct rq *rq);
 };
 
-typedef void (*balance_func_t)(struct rq *rq, int cpu);
-
 struct balance_arg {
 	struct task_struct	*task;
 	int			active;
@@ -235,7 +233,6 @@ struct rq {
 	struct sched_avg	avg_irq;
 #endif
 
-	balance_func_t		balance_func;
 	struct balance_arg	active_balance_arg		____cacheline_aligned;
 	struct cpu_stop_work	active_balance_work;
 
@@ -293,7 +290,6 @@ struct rq {
 	unsigned int yld_count;
 
 	/* schedule() stats */
-	unsigned int sched_switch;
 	unsigned int sched_count;
 	unsigned int sched_goidle;
 
