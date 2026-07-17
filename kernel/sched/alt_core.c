@@ -3183,7 +3183,7 @@ int sched_fork(u64 clone_flags, struct task_struct *p)
 	}
 
 #ifdef CONFIG_SCHED_INFO
-	if (unlikely(sched_info_on()))
+	if (likely(sched_info_on()))
 		memset(&p->sched_info, 0, sizeof(p->sched_info));
 #endif
 	init_task_preempt_count(p);
@@ -5708,11 +5708,8 @@ void io_schedule_finish(int token)
 }
 
 /*
- * This task is about to go to sleep on IO.  Increment rq->nr_iowait so
+ * This task is about to go to sleep on IO. Increment rq->nr_iowait so
  * that process accounting knows that this is a task in IO wait state.
- *
- * But don't do that if it is a deliberate, throttling IO wait (this task
- * has set its backing_dev_info: the queue against which it should throttle)
  */
 
 long __sched io_schedule_timeout(long timeout)
