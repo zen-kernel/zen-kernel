@@ -2674,7 +2674,7 @@ void wake_up_if_idle(int cpu)
 
 	guard(rcu)();
 	if (is_idle_task(rcu_dereference(rq->curr))) {
-		guard(raw_spinlock_irqsave)(rq_lockp(rq));
+		guard(rq_lock_irqsave)(rq);
 		if (is_idle_task(rq->curr))
 			resched_curr(rq);
 	}
@@ -4191,6 +4191,7 @@ void sched_tick(void)
 	int cpu __maybe_unused = smp_processor_id();
 	struct rq *rq = cpu_rq(cpu);
 	struct task_struct *curr = rq->curr;
+	struct rq_flags rf;
 	u64 resched_latency;
 
 	if (housekeeping_cpu(cpu, HK_TYPE_KERNEL_NOISE))
@@ -4198,7 +4199,7 @@ void sched_tick(void)
 
 	sched_clock_tick();
 
-	raw_spin_rq_lock(rq);
+	rq_lock(rq, &rf);
 	psi_account_irqtime(rq, curr, NULL);
 	update_rq_clock(rq);
 
@@ -4210,7 +4211,7 @@ void sched_tick(void)
 		resched_latency = cpu_resched_latency(rq);
 	calc_global_load_tick(rq);
 
-	raw_spin_rq_unlock(rq);
+	rq_unlock(rq, &rf);
 
 	if (sched_feat(LATENCY_WARN) && resched_latency)
 		resched_latency_warn(cpu, resched_latency);
@@ -4274,7 +4275,7 @@ static void sched_tick_remote(struct work_struct *work)
 	 * of when exactly it is running.
 	 */
 	if (tick_nohz_tick_stopped_cpu(cpu)) {
-		guard(raw_spinlock_irqsave)(rq_lockp(rq));
+		guard(rq_lock_irq)(rq);
 		struct task_struct *curr = rq->curr;
 
 		if (cpu_online(cpu)) {
