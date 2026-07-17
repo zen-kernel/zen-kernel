@@ -333,45 +333,6 @@ EXPORT_SYMBOL(__trace_set_current_state);
  */
 
 /*
- * Context: p->pi_lock
- */
-static inline struct rq *
-task_access_lock_irqsave(struct task_struct *p, raw_spinlock_t **plock, unsigned long *flags)
-	__context_unsafe(/* conditionally returns with one of two locks held */)
-{
-	struct rq *rq;
-	for (;;) {
-		rq = task_rq(p);
-		if (p->on_cpu || task_on_rq_queued(p)) {
-			raw_spin_rq_lock_irqsave(rq, *flags);
-			if (likely((p->on_cpu || task_on_rq_queued(p)) && rq == task_rq(p))) {
-				*plock = rq_lockp(rq);
-				return rq;
-			}
-			raw_spin_rq_unlock_irqrestore(rq, *flags);
-		} else if (task_on_rq_migrating(p)) {
-			do {
-				cpu_relax();
-			} while (unlikely(task_on_rq_migrating(p)));
-		} else {
-			raw_spin_lock_irqsave(&p->pi_lock, *flags);
-			if (likely(!p->on_cpu && !p->on_rq && rq == task_rq(p))) {
-				*plock = &p->pi_lock;
-				return rq;
-			}
-			raw_spin_unlock_irqrestore(&p->pi_lock, *flags);
-		}
-	}
-}
-
-static inline void
-task_access_unlock_irqrestore(struct task_struct *p, raw_spinlock_t *lock, unsigned long *flags)
-	__context_unsafe(/* releases the conditionally selected lock */)
-{
-	raw_spin_unlock_irqrestore(lock, *flags);
-}
-
-/*
  * __task_rq_lock - lock the rq @p resides on.
  */
 struct rq *___task_rq_lock(struct task_struct *p, struct rq_flags *rf)
@@ -1192,11 +1153,10 @@ int task_state_match(struct task_struct *p, unsigned int state)
  */
 unsigned long wait_task_inactive(struct task_struct *p, unsigned int match_state)
 {
-	unsigned long flags;
 	int running, queued, match;
+	struct rq_flags rf;
 	unsigned long ncsw;
 	struct rq *rq;
-	raw_spinlock_t *lock;
 
 	for (;;) {
 		rq = task_rq(p);
@@ -1212,7 +1172,7 @@ unsigned long wait_task_inactive(struct task_struct *p, unsigned int match_state
 		 * if the runqueue has changed and p is actually now
 		 * running somewhere else!
 		 */
-		while (task_on_cpu(task_rq(p), p)) {
+		while (task_on_cpu(rq, p)) {
 			if (!task_state_match(p, match_state))
 				return 0;
 			cpu_relax();
@@ -1223,9 +1183,9 @@ unsigned long wait_task_inactive(struct task_struct *p, unsigned int match_state
 		 * lock now, to be *sure*. If we're wrong, we'll
 		 * just go back and repeat.
 		 */
-		task_access_lock_irqsave(p, &lock, &flags);
+		rq = task_rq_lock(p, &rf);
 		trace_sched_wait_task(p);
-		running = task_on_cpu(task_rq(p), p);
+		running = task_on_cpu(rq, p);
 		queued = task_on_rq_queued(p);
 		ncsw = 0;
 		if ((match = __task_state_match(p, match_state))) {
@@ -1237,7 +1197,7 @@ unsigned long wait_task_inactive(struct task_struct *p, unsigned int match_state
 				queued = 1;
 			ncsw = p->nvcsw | LONG_MIN; /* sets MSB */
 		}
-		task_access_unlock_irqrestore(p, lock, &flags);
+		task_rq_unlock(rq, p, &rf);
 
 		/*
 		 * If it changed from the expected state, bail out now.
