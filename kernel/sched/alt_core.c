@@ -3581,9 +3581,13 @@ struct balance_callback *splice_balance_callbacks(struct rq *rq)
 	return __splice_balance_callbacks(rq, true);
 }
 
-static __always_inline void __balance_callbacks(struct rq *rq)
+__always_inline void __balance_callbacks(struct rq *rq, struct rq_flags *rf)
 {
+	if (rf)
+		rq_unpin_lock(rq, rf);
 	do_balance_callbacks(rq, __splice_balance_callbacks(rq, false));
+	if (rf)
+		rq_repin_lock(rq, rf);
 }
 
 void balance_callbacks(struct rq *rq, struct balance_callback *head)
@@ -3631,7 +3635,7 @@ static __always_inline void finish_lock_switch(struct rq *rq)
 	 * prev into current:
 	 */
 	spin_acquire(&__rq_lockp(rq)->dep_map, 0, 0, _THIS_IP_);
-	__balance_callbacks(rq);
+	__balance_callbacks(rq, NULL);
 	hrtick_schedule_exit(rq);
 	raw_spin_rq_unlock_irq(rq);
 }
@@ -4900,7 +4904,7 @@ picked:
 		cpu = cpu_of(rq);
 	} else {
 		rq_unpin_lock(rq, &rf);
-		__balance_callbacks(rq);
+		__balance_callbacks(rq, NULL);
 		prio_balance(rq, cpu);
 		hrtick_schedule_exit(rq);
 		raw_spin_rq_unlock_irq(rq);
@@ -5337,7 +5341,7 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
 out_unlock:
 	/* Caller holds task_struct::pi_lock, IRQs are still disabled */
 
-	__balance_callbacks(rq);
+	__balance_callbacks(rq, NULL);
 	__task_access_unlock(p, lock);
 }
 #endif /* CONFIG_RT_MUTEXES */

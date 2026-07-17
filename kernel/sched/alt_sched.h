@@ -541,6 +541,11 @@ static inline void rq_unpin_lock(struct rq *rq, struct rq_flags *rf)
 	lockdep_unpin_lock(__rq_lockp(rq), rf->cookie);
 }
 
+static inline void rq_repin_lock(struct rq *rq, struct rq_flags *rf)
+{
+	lockdep_repin_lock(__rq_lockp(rq), rf->cookie);
+}
+
 #define __task_rq_lock(...) __acquire_ret(___task_rq_lock(__VA_ARGS__), __rq_lockp(__ret))
 extern struct rq *___task_rq_lock(struct task_struct *p, struct rq_flags *rf) __acquires_ret;
 
