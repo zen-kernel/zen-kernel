@@ -14,12 +14,25 @@ static inline bool is_migration_disabled(struct task_struct *p)
 	return p->migration_disabled;
 }
 
-/* rt_prio(prio) defined in include/linux/sched/rt.h */
-#define rt_task(p)		rt_prio((p)->prio)
-#define rt_policy(policy)	((policy) == SCHED_FIFO || (policy) == SCHED_RR)
-#define task_has_rt_policy(p)	(rt_policy((p)->policy))
+static inline int normal_policy(int policy)
+{
+	return policy == SCHED_NORMAL;
+}
 
-#define fair_policy(policy)	((policy) == SCHED_NORMAL || (policy) == SCHED_BATCH)
+static inline int fair_policy(int policy)
+{
+	return normal_policy(policy) || policy == SCHED_BATCH;
+}
+
+static inline int rt_policy(int policy)
+{
+	return policy == SCHED_FIFO || policy == SCHED_RR;
+}
+
+static inline int task_has_rt_policy(struct task_struct *p)
+{
+	return rt_policy(p->policy);
+}
 
 #define valid_policy(policy)	((policy) <= SCHED_IDLE)
 
