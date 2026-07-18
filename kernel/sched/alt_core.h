@@ -6,106 +6,8 @@
  * #define ALT_SCHED_DEBUG
  */
 
-/*
- * Task related inlined functions
- */
-static inline bool is_migration_disabled(struct task_struct *p)
-{
-	return p->migration_disabled;
-}
-
-static inline int normal_policy(int policy)
-{
-	return policy == SCHED_NORMAL;
-}
-
-static inline int fair_policy(int policy)
-{
-	return normal_policy(policy) || policy == SCHED_BATCH;
-}
-
-static inline int rt_policy(int policy)
-{
-	return policy == SCHED_FIFO || policy == SCHED_RR;
-}
-
-static inline int task_has_rt_policy(struct task_struct *p)
-{
-	return rt_policy(p->policy);
-}
-
-#define valid_policy(policy)	((policy) <= SCHED_IDLE)
-
-#define task_has_dl_policy(p)	(false)
-#define dl_prio(prio)		(false)
-
-struct affinity_context {
-	const struct cpumask	*new_mask;
-	struct cpumask		*user_mask;
-	unsigned int		flags;
-};
-
 /* CONFIG_SCHED_CLASS_EXT is not supported */
 #define scx_switched_all()	false
-
-#define SCA_CHECK		0x01
-#define SCA_MIGRATE_DISABLE	0x02
-#define SCA_MIGRATE_ENABLE	0x04
-#define SCA_USER		0x08
-
-extern int __set_cpus_allowed_ptr(struct task_struct *p, struct affinity_context *ctx);
-
-static inline bool task_allowed_on_cpu(struct task_struct *p, int cpu)
-{
-	/* When not in the task's cpumask, no point in looking further. */
-	if (!cpumask_test_cpu(cpu, p->cpus_ptr))
-		return false;
-
-	/* Can @cpu run a user thread? */
-	if (!(p->flags & PF_KTHREAD) && !task_cpu_possible(cpu, p))
-		return false;
-
-	return true;
-}
-
-static inline cpumask_t *alloc_user_cpus_ptr(int node)
-{
-	/*
-	 * See set_cpus_allowed_force() above for the rcu_head usage.
-	 */
-	int size = max_t(int, cpumask_size(), sizeof(struct rcu_head));
-
-	return kmalloc_node(size, GFP_KERNEL, node);
-}
-
-#ifdef CONFIG_RT_MUTEXES
-
-static inline int __rt_effective_prio(struct task_struct *pi_task, int prio)
-{
-	if (pi_task)
-		prio = min(prio, pi_task->prio);
-
-	return prio;
-}
-
-static inline int rt_effective_prio(struct task_struct *p, int prio)
-{
-	struct task_struct *pi_task = rt_mutex_get_top_task(p);
-
-	return __rt_effective_prio(pi_task, prio);
-}
-
-#else /* !CONFIG_RT_MUTEXES: */
-
-static inline int rt_effective_prio(struct task_struct *p, int prio)
-{
-	return prio;
-}
-
-#endif /* !CONFIG_RT_MUTEXES */
-
-extern int __sched_setscheduler(struct task_struct *p, const struct sched_attr *attr, bool user, bool pi);
-extern int __sched_setaffinity(struct task_struct *p, struct affinity_context *ctx);
 
 /*
  * Context API
@@ -202,10 +104,5 @@ extern struct rq *move_queued_task(struct rq *rq, struct rq_flags *rf,
 	__must_hold(__rq_lockp(rq));
 
 DECLARE_STATIC_CALL(sched_idle_select_func, cpumask_and);
-
-/* balance callback */
-extern void __balance_callbacks(struct rq *rq, struct rq_flags *rf);
-extern struct balance_callback *splice_balance_callbacks(struct rq *rq);
-extern void balance_callbacks(struct rq *rq, struct balance_callback *head);
 
 #endif /* _KERNEL_SCHED_ALT_CORE_H */

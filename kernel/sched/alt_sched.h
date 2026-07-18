@@ -4,6 +4,7 @@
 #include <linux/context_tracking.h>
 #include <linux/delayacct.h>
 #include <linux/memblock.h>
+#include <linux/mmu_context.h>
 #include <linux/profile.h>
 #include <linux/psi.h>
 #include <linux/stop_machine.h>
@@ -88,6 +89,31 @@ extern void sched_release_group(struct task_group *tg);
 # define scale_load(w)		(w)
 # define scale_load_down(w)	(w)
 #endif
+
+static inline int normal_policy(int policy)
+{
+	return policy == SCHED_NORMAL;
+}
+
+static inline int fair_policy(int policy)
+{
+	return normal_policy(policy) || policy == SCHED_BATCH;
+}
+
+static inline int rt_policy(int policy)
+{
+	return policy == SCHED_FIFO || policy == SCHED_RR;
+}
+
+#define valid_policy(policy)	((policy) <= SCHED_IDLE)
+
+static inline int task_has_rt_policy(struct task_struct *p)
+{
+	return rt_policy(p->policy);
+}
+
+#define task_has_dl_policy(p)	(false)
+#define dl_prio(prio)		(false)
 
 #define cap_scale(v, s) ((v)*(s) >> SCHED_CAPACITY_SHIFT)
 
@@ -252,6 +278,11 @@ struct rq {
 static inline int cpu_of(const struct rq *rq)
 {
 	return rq->cpu;
+}
+
+static inline bool is_migration_disabled(struct task_struct *p)
+{
+	return p->migration_disabled;
 }
 
 extern unsigned int sysctl_sched_base_slice;
@@ -670,6 +701,42 @@ static_assert(WF_TTWU == SD_BALANCE_WAKE);
 #define ENQUEUE_INITIAL		0x00080000
 #define ENQUEUE_RQ_SELECTED	0x00100000
 
+
+struct affinity_context {
+	const struct cpumask	*new_mask;
+	struct cpumask		*user_mask;
+	unsigned int		flags;
+};
+
+#define SCA_CHECK		0x01
+#define SCA_MIGRATE_DISABLE	0x02
+#define SCA_MIGRATE_ENABLE	0x04
+#define SCA_USER		0x08
+
+extern int __set_cpus_allowed_ptr(struct task_struct *p, struct affinity_context *ctx);
+
+static inline bool task_allowed_on_cpu(struct task_struct *p, int cpu)
+{
+	/* When not in the task's cpumask, no point in looking further. */
+	if (!cpumask_test_cpu(cpu, p->cpus_ptr))
+		return false;
+
+	/* Can @cpu run a user thread? */
+	if (!(p->flags & PF_KTHREAD) && !task_cpu_possible(cpu, p))
+		return false;
+
+	return true;
+}
+
+static inline cpumask_t *alloc_user_cpus_ptr(int node)
+{
+	/*
+	 * See set_cpus_allowed_force() above for the rcu_head usage.
+	 */
+	int size = max_t(int, cpumask_size(), sizeof(struct rcu_head));
+
+	return kmalloc_node(size, GFP_KERNEL, node);
+}
 
 #ifdef CONFIG_CPU_IDLE
 static inline void idle_set_state(struct rq *rq,
@@ -1178,6 +1245,40 @@ queue_balance_callback(struct rq *rq,
 	head->next = rq->balance_callback;
 	rq->balance_callback = head;
 }
+
+#ifdef CONFIG_RT_MUTEXES
+
+static inline int __rt_effective_prio(struct task_struct *pi_task, int prio)
+{
+	if (pi_task)
+		prio = min(prio, pi_task->prio);
+
+	return prio;
+}
+
+static inline int rt_effective_prio(struct task_struct *p, int prio)
+{
+	struct task_struct *pi_task = rt_mutex_get_top_task(p);
+
+	return __rt_effective_prio(pi_task, prio);
+}
+
+#else /* !CONFIG_RT_MUTEXES: */
+
+static inline int rt_effective_prio(struct task_struct *p, int prio)
+{
+	return prio;
+}
+
+#endif /* !CONFIG_RT_MUTEXES */
+
+extern int __sched_setscheduler(struct task_struct *p, const struct sched_attr *attr, bool user, bool pi);
+extern int __sched_setaffinity(struct task_struct *p, struct affinity_context *ctx);
+
+/* balance callback */
+extern void __balance_callbacks(struct rq *rq, struct rq_flags *rf);
+extern struct balance_callback *splice_balance_callbacks(struct rq *rq);
+extern void balance_callbacks(struct rq *rq, struct balance_callback *head);
 
 /*
  * The 'sched_change' pattern is the safe, easy and slow way of changing a
