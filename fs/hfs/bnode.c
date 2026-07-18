@@ -41,7 +41,7 @@ u32 check_and_correct_requested_length(struct hfs_bnode *node, u32 off, u32 len)
 
 	node_size = node->tree->node_size;
 
-	if ((off + len) > node_size) {
+	if ((u64)off + len > node_size) {
 		u32 new_len = node_size - off;
 
 		pr_err("requested length has been corrected: "
@@ -63,6 +63,8 @@ void hfs_bnode_read(struct hfs_bnode *node, void *buf, u32 off, u32 len)
 	u32 pagenum;
 	u32 bytes_read;
 	u32 bytes_to_read;
+
+	memset(buf, 0, len);
 
 	if (!is_bnode_offset_valid(node, off))
 		return;
