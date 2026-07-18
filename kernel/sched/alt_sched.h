@@ -17,6 +17,9 @@
 
 #include "../workqueue_internal.h"
 
+struct rq;
+struct cpuidle_state;
+
 #include "cpupri.h"
 
 #ifdef CONFIG_CGROUP_SCHED
@@ -52,6 +55,10 @@ extern void sched_release_group(struct task_group *tg);
 
 #define IDLE_TASK_SCHED_PRIO	(SCHED_LEVELS - 1)
 
+/* task_struct::on_rq states: */
+#define TASK_ON_RQ_QUEUED	1
+#define TASK_ON_RQ_MIGRATING	2
+
 /*
  * Increase resolution of nice-level calculations for 64-bit architectures.
  * The extra resolution improves shares distribution and load balancing of
@@ -82,90 +89,21 @@ extern void sched_release_group(struct task_group *tg);
 # define scale_load_down(w)	(w)
 #endif
 
-/* task_struct::on_rq states: */
-#define TASK_ON_RQ_QUEUED	1
-#define TASK_ON_RQ_MIGRATING	2
-
-static inline int task_on_rq_queued(struct task_struct *p)
-{
-	return READ_ONCE(p->on_rq) == TASK_ON_RQ_QUEUED;
-}
-
-static inline int task_on_rq_migrating(struct task_struct *p)
-{
-	return READ_ONCE(p->on_rq) == TASK_ON_RQ_MIGRATING;
-}
-
-/* Wake flags. The first three directly map to some SD flag value */
-#define WF_EXEC         0x02 /* Wakeup after exec; maps to SD_BALANCE_EXEC */
-#define WF_FORK         0x04 /* Wakeup after fork; maps to SD_BALANCE_FORK */
-#define WF_TTWU         0x08 /* Wakeup;            maps to SD_BALANCE_WAKE */
-
-#define WF_SYNC         0x10 /* Waker goes to sleep after wakeup */
-#define WF_MIGRATED     0x20 /* Internal use, task got migrated */
-#define WF_CURRENT_CPU  0x40 /* Prefer to move the wakee to the current CPU. */
-
-static_assert(WF_EXEC == SD_BALANCE_EXEC);
-static_assert(WF_FORK == SD_BALANCE_FORK);
-static_assert(WF_TTWU == SD_BALANCE_WAKE);
+#define cap_scale(v, s) ((v)*(s) >> SCHED_CAPACITY_SHIFT)
 
 /*
- * {de,en}queue flags:
+ * !! For sched_setattr_nocheck() (kernel) only !!
  *
- * SLEEP/WAKEUP - task is no-longer/just-became runnable
+ * This is actually gross. :(
  *
- * SAVE/RESTORE - an otherwise spurious dequeue/enqueue, done to ensure tasks
- *                are in a known state which allows modification. Such pairs
- *                should preserve as much state as possible.
+ * It is used to make schedutil kworker(s) higher priority than SCHED_DEADLINE
+ * tasks, but still be able to sleep. We need this on platforms that cannot
+ * atomically change clock frequency. Remove once fast switching will be
+ * available on such platforms.
  *
- * MOVE - paired with SAVE/RESTORE, explicitly does not preserve the location
- *        in the runqueue.
- *
- * NOCLOCK - skip the update_rq_clock() (avoids double updates)
- *
- * MIGRATION - p->on_rq == TASK_ON_RQ_MIGRATING (used for DEADLINE)
- *
- * DELAYED - de/re-queue a sched_delayed task
- *
- * CLASS - going to update p->sched_class; makes sched_change call the
- *         various switch methods.
- *
- * ENQUEUE_HEAD      - place at front of runqueue (tail if not specified)
- * ENQUEUE_REPLENISH - CBS (replenish runtime and postpone deadline)
- * ENQUEUE_MIGRATED  - the task was migrated during wakeup
- * ENQUEUE_RQ_SELECTED - ->select_task_rq() was called
- *
- * XXX SAVE/RESTORE in combination with CLASS doesn't really make sense, but
- * SCHED_DEADLINE seems to rely on this for now.
+ * SUGOV stands for SchedUtil GOVernor.
  */
-
-#define DEQUEUE_SLEEP		0x0001 /* Matches ENQUEUE_WAKEUP */
-#define DEQUEUE_SAVE		0x0002 /* Matches ENQUEUE_RESTORE */
-#define DEQUEUE_MOVE		0x0004 /* Matches ENQUEUE_MOVE */
-#define DEQUEUE_NOCLOCK		0x0008 /* Matches ENQUEUE_NOCLOCK */
-
-#define DEQUEUE_MIGRATING	0x0010 /* Matches ENQUEUE_MIGRATING */
-#define DEQUEUE_DELAYED		0x0020 /* Matches ENQUEUE_DELAYED */
-#define DEQUEUE_CLASS		0x0040 /* Matches ENQUEUE_CLASS */
-
-#define DEQUEUE_SPECIAL		0x00010000
-#define DEQUEUE_THROTTLE	0x00020000
-
-#define ENQUEUE_WAKEUP		0x0001
-#define ENQUEUE_RESTORE		0x0002
-#define ENQUEUE_MOVE		0x0004
-#define ENQUEUE_NOCLOCK		0x0008
-
-#define ENQUEUE_MIGRATING	0x0010
-#define ENQUEUE_DELAYED		0x0020
-#define ENQUEUE_CLASS		0x0040
-
-#define ENQUEUE_HEAD		0x00010000
-#define ENQUEUE_REPLENISH	0x00020000
-#define ENQUEUE_MIGRATED	0x00040000
-#define ENQUEUE_INITIAL		0x00080000
-#define ENQUEUE_RQ_SELECTED	0x00100000
-
+#define SCHED_FLAG_SUGOV	0x10000000
 
 #define SCHED_QUEUE_BITS	(SCHED_LEVELS - 1)
 
@@ -173,9 +111,6 @@ struct sched_queue {
 	DECLARE_BITMAP(bitmap, SCHED_QUEUE_BITS);
 	struct list_head heads[SCHED_LEVELS];
 };
-
-struct rq;
-struct cpuidle_state;
 
 struct balance_callback {
 	struct balance_callback *next;
@@ -314,6 +249,11 @@ struct rq {
 	cpumask_var_t		scratch_mask;
 };
 
+static inline int cpu_of(const struct rq *rq)
+{
+	return rq->cpu;
+}
+
 extern unsigned int sysctl_sched_base_slice;
 
 extern unsigned long rq_load_util(struct rq *rq, unsigned long max);
@@ -409,21 +349,6 @@ static inline int best_mask_cpu(int cpu, const cpumask_t *mask)
 }
 
 extern void resched_latency_warn(int cpu, u64 latency);
-
-#ifndef arch_scale_freq_tick
-static __always_inline
-void arch_scale_freq_tick(void)
-{
-}
-#endif
-
-#ifndef arch_scale_freq_capacity
-static __always_inline
-unsigned long arch_scale_freq_capacity(int cpu)
-{
-	return SCHED_CAPACITY_SCALE;
-}
-#endif
 
 static __always_inline raw_spinlock_t *rq_lockp(struct rq *rq)
 {
@@ -571,20 +496,11 @@ DEFINE_LOCK_GUARD_1(__task_rq_lock, struct task_struct,
 		    __task_rq_unlock(_T->rq, _T->lock, &_T->rf),
 		    struct rq *rq; struct rq_flags rf)
 
-static inline void
-rq_lock(struct rq *rq, struct rq_flags *rf)
+static inline void rq_lock_irqsave(struct rq *rq, struct rq_flags *rf)
 	__acquires(__rq_lockp(rq))
 {
-	raw_spin_rq_lock(rq);
+	raw_spin_rq_lock_irqsave(rq, rf->flags);
 	rq_pin_lock(rq, rf);
-}
-
-static inline void
-rq_unlock(struct rq *rq, struct rq_flags *rf)
-	__releases(__rq_lockp(rq))
-{
-	rq_unpin_lock(rq, rf);
-	raw_spin_rq_unlock(rq);
 }
 
 static inline void
@@ -596,11 +512,34 @@ rq_lock_irq(struct rq *rq, struct rq_flags *rf)
 }
 
 static inline void
+rq_lock(struct rq *rq, struct rq_flags *rf)
+	__acquires(__rq_lockp(rq))
+{
+	raw_spin_rq_lock(rq);
+	rq_pin_lock(rq, rf);
+}
+
+static inline void rq_unlock_irqrestore(struct rq *rq, struct rq_flags *rf)
+	__releases(__rq_lockp(rq))
+{
+	rq_unpin_lock(rq, rf);
+	raw_spin_rq_unlock_irqrestore(rq, rf->flags);
+}
+
+static inline void
 rq_unlock_irq(struct rq *rq, struct rq_flags *rf)
 	__releases(__rq_lockp(rq))
 {
 	rq_unpin_lock(rq, rf);
 	raw_spin_rq_unlock_irq(rq);
+}
+
+static inline void
+rq_unlock(struct rq *rq, struct rq_flags *rf)
+	__releases(__rq_lockp(rq))
+{
+	rq_unpin_lock(rq, rf);
+	raw_spin_rq_unlock(rq);
 }
 
 DEFINE_LOCK_GUARD_1(rq_lock, struct rq,
@@ -618,20 +557,6 @@ DEFINE_LOCK_GUARD_1(rq_lock_irq, struct rq,
 DECLARE_LOCK_GUARD_1_ATTRS(rq_lock_irq, __acquires(__rq_lockp(_T)),
 			   __releases(__rq_lockp(*(struct rq **)_T)))
 #define class_rq_lock_irq_constructor(_T) WITH_LOCK_GUARD_1_ATTRS(rq_lock_irq, _T)
-
-static inline void rq_lock_irqsave(struct rq *rq, struct rq_flags *rf)
-	__acquires(__rq_lockp(rq))
-{
-	raw_spin_rq_lock_irqsave(rq, rf->flags);
-	rq_pin_lock(rq, rf);
-}
-
-static inline void rq_unlock_irqrestore(struct rq *rq, struct rq_flags *rf)
-	__releases(__rq_lockp(rq))
-{
-	rq_unpin_lock(rq, rf);
-	raw_spin_rq_unlock_irqrestore(rq, rf->flags);
-}
 
 DEFINE_LOCK_GUARD_1(rq_lock_irqsave, struct rq,
 		    rq_lock_irqsave(_T->lock, &_T->rf),
@@ -653,6 +578,8 @@ static inline struct rq *_this_rq_lock_irq(struct rq_flags *rf) __acquires_ret
 	return rq;
 }
 
+extern struct static_key_false sched_schedstats;
+
 static inline int task_current(struct rq *rq, struct task_struct *p)
 {
 	return rq->curr == p;
@@ -662,6 +589,108 @@ static inline bool task_on_cpu(struct rq *rq, struct task_struct *p)
 {
 	return p->on_cpu;
 }
+
+static inline int task_on_rq_queued(struct task_struct *p)
+{
+	return READ_ONCE(p->on_rq) == TASK_ON_RQ_QUEUED;
+}
+
+static inline int task_on_rq_migrating(struct task_struct *p)
+{
+	return READ_ONCE(p->on_rq) == TASK_ON_RQ_MIGRATING;
+}
+
+/* Wake flags. The first three directly map to some SD flag value */
+#define WF_EXEC         0x02 /* Wakeup after exec; maps to SD_BALANCE_EXEC */
+#define WF_FORK         0x04 /* Wakeup after fork; maps to SD_BALANCE_FORK */
+#define WF_TTWU         0x08 /* Wakeup;            maps to SD_BALANCE_WAKE */
+
+#define WF_SYNC         0x10 /* Waker goes to sleep after wakeup */
+#define WF_MIGRATED     0x20 /* Internal use, task got migrated */
+#define WF_CURRENT_CPU  0x40 /* Prefer to move the wakee to the current CPU. */
+
+static_assert(WF_EXEC == SD_BALANCE_EXEC);
+static_assert(WF_FORK == SD_BALANCE_FORK);
+static_assert(WF_TTWU == SD_BALANCE_WAKE);
+
+/*
+ * {de,en}queue flags:
+ *
+ * SLEEP/WAKEUP - task is no-longer/just-became runnable
+ *
+ * SAVE/RESTORE - an otherwise spurious dequeue/enqueue, done to ensure tasks
+ *                are in a known state which allows modification. Such pairs
+ *                should preserve as much state as possible.
+ *
+ * MOVE - paired with SAVE/RESTORE, explicitly does not preserve the location
+ *        in the runqueue.
+ *
+ * NOCLOCK - skip the update_rq_clock() (avoids double updates)
+ *
+ * MIGRATION - p->on_rq == TASK_ON_RQ_MIGRATING (used for DEADLINE)
+ *
+ * DELAYED - de/re-queue a sched_delayed task
+ *
+ * CLASS - going to update p->sched_class; makes sched_change call the
+ *         various switch methods.
+ *
+ * ENQUEUE_HEAD      - place at front of runqueue (tail if not specified)
+ * ENQUEUE_REPLENISH - CBS (replenish runtime and postpone deadline)
+ * ENQUEUE_MIGRATED  - the task was migrated during wakeup
+ * ENQUEUE_RQ_SELECTED - ->select_task_rq() was called
+ *
+ * XXX SAVE/RESTORE in combination with CLASS doesn't really make sense, but
+ * SCHED_DEADLINE seems to rely on this for now.
+ */
+
+#define DEQUEUE_SLEEP		0x0001 /* Matches ENQUEUE_WAKEUP */
+#define DEQUEUE_SAVE		0x0002 /* Matches ENQUEUE_RESTORE */
+#define DEQUEUE_MOVE		0x0004 /* Matches ENQUEUE_MOVE */
+#define DEQUEUE_NOCLOCK		0x0008 /* Matches ENQUEUE_NOCLOCK */
+
+#define DEQUEUE_MIGRATING	0x0010 /* Matches ENQUEUE_MIGRATING */
+#define DEQUEUE_DELAYED		0x0020 /* Matches ENQUEUE_DELAYED */
+#define DEQUEUE_CLASS		0x0040 /* Matches ENQUEUE_CLASS */
+
+#define DEQUEUE_SPECIAL		0x00010000
+#define DEQUEUE_THROTTLE	0x00020000
+
+#define ENQUEUE_WAKEUP		0x0001
+#define ENQUEUE_RESTORE		0x0002
+#define ENQUEUE_MOVE		0x0004
+#define ENQUEUE_NOCLOCK		0x0008
+
+#define ENQUEUE_MIGRATING	0x0010
+#define ENQUEUE_DELAYED		0x0020
+#define ENQUEUE_CLASS		0x0040
+
+#define ENQUEUE_HEAD		0x00010000
+#define ENQUEUE_REPLENISH	0x00020000
+#define ENQUEUE_MIGRATED	0x00040000
+#define ENQUEUE_INITIAL		0x00080000
+#define ENQUEUE_RQ_SELECTED	0x00100000
+
+
+#ifdef CONFIG_CPU_IDLE
+static inline void idle_set_state(struct rq *rq,
+				  struct cpuidle_state *idle_state)
+{
+	rq->idle_state = idle_state;
+}
+#else
+static inline void idle_set_state(struct rq *rq,
+				  struct cpuidle_state *idle_state)
+{
+}
+#endif
+
+extern void resched_cpu(int cpu);
+
+#ifdef CONFIG_NO_HZ_FULL
+extern int __init sched_tick_offload_init(void);
+#else
+static inline int sched_tick_offload_init(void) { return 0; }
+#endif
 
 static inline void __block_task(struct rq *rq, struct task_struct *p)
 {
@@ -706,29 +735,20 @@ static inline void __block_task(struct rq *rq, struct task_struct *p)
 	smp_store_release(&p->on_rq, 0);
 }
 
-extern struct static_key_false sched_schedstats;
-
-#ifdef CONFIG_CPU_IDLE
-static inline void idle_set_state(struct rq *rq,
-				  struct cpuidle_state *idle_state)
-{
-	rq->idle_state = idle_state;
-}
-#else
-static inline void idle_set_state(struct rq *rq,
-				  struct cpuidle_state *idle_state)
+#ifndef arch_scale_freq_tick
+static __always_inline
+void arch_scale_freq_tick(void)
 {
 }
 #endif
 
-static inline int cpu_of(const struct rq *rq)
+#ifndef arch_scale_freq_capacity
+static __always_inline
+unsigned long arch_scale_freq_capacity(int cpu)
 {
-	return rq->cpu;
+	return SCHED_CAPACITY_SCALE;
 }
-
-extern void resched_cpu(int cpu);
-
-#include "stats.h"
+#endif
 
 #ifdef CONFIG_NO_HZ_COMMON
 #define NOHZ_BALANCE_KICK_BIT	0
@@ -747,6 +767,10 @@ extern void nohz_balance_exit_idle(struct rq *rq);
 static inline void nohz_balance_exit_idle(struct rq *rq) { }
 */
 #endif
+
+static inline void nohz_run_idle_balance(int cpu) { }
+
+#include "stats.h"
 
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
 struct irqtime {
@@ -795,12 +819,6 @@ static inline int irqtime_enabled(void)
 DECLARE_PER_CPU(struct update_util_data __rcu *, cpufreq_update_util_data);
 #endif /* CONFIG_CPU_FREQ */
 
-#ifdef CONFIG_NO_HZ_FULL
-extern int __init sched_tick_offload_init(void);
-#else
-static inline int sched_tick_offload_init(void) { return 0; }
-#endif
-
 #ifdef arch_scale_freq_capacity
 #ifndef arch_scale_freq_invariant
 #define arch_scale_freq_invariant()	(true)
@@ -814,22 +832,6 @@ unsigned long sugov_effective_cpu_perf(int cpu, unsigned long actual,
 				 unsigned long max);
 
 extern void schedule_idle(void);
-
-#define cap_scale(v, s) ((v)*(s) >> SCHED_CAPACITY_SHIFT)
-
-/*
- * !! For sched_setattr_nocheck() (kernel) only !!
- *
- * This is actually gross. :(
- *
- * It is used to make schedutil kworker(s) higher priority than SCHED_DEADLINE
- * tasks, but still be able to sleep. We need this on platforms that cannot
- * atomically change clock frequency. Remove once fast switching will be
- * available on such platforms.
- *
- * SUGOV stands for SchedUtil GOVernor.
- */
-#define SCHED_FLAG_SUGOV	0x10000000
 
 #ifdef CONFIG_MEMBARRIER
 /*
@@ -881,8 +883,6 @@ extern int sched_dynamic_mode(const char *str);
 extern void sched_dynamic_update(int mode);
 #endif
 extern const char *preempt_modes[];
-
-static inline void nohz_run_idle_balance(int cpu) { }
 
 static inline unsigned long
 uclamp_eff_value(struct task_struct *p, enum uclamp_id clamp_id)
