@@ -344,17 +344,27 @@ extern bool sched_smp_initialized;
 
 enum {
 #ifdef CONFIG_SCHED_SMT
-	SMT_LEVEL_SPACE_HOLDER,
+	SCHED_CPU_AFFINITY_SMT,
 #endif
-	CLUSTER_LEVEL_SPACE_HOLDER,
-	COREGROUP_LEVEL_SPACE_HOLDER,
-	CORE_LEVEL_SPACE_HOLDER,
-	OTHER_LEVEL_SPACE_HOLDER,
+	SCHED_CPU_AFFINITY_CLUSTER,
+	SCHED_CPU_AFFINITY_LLC,
+	SCHED_CPU_AFFINITY_CORE,
+	SCHED_CPU_AFFINITY_OTHER,
 	NR_CPU_AFFINITY_LEVELS
 };
 
 DECLARE_PER_CPU_ALIGNED(cpumask_t [NR_CPU_AFFINITY_LEVELS], sched_cpu_topo_masks);
 DECLARE_PER_CPU_ALIGNED(cpumask_t *, sched_cpu_topo_end_mask);
+
+/*
+ * Affinity levels are nested, so a level which covers the same CPUs as the
+ * level below it repeats a search which has already failed.
+ */
+static inline bool
+sched_cpu_topo_level_repeats(const cpumask_t *topo_masks, const cpumask_t *mask)
+{
+	return mask > topo_masks && cpumask_equal(mask, mask - 1);
+}
 
 static inline int
 __best_mask_cpu(const cpumask_t *cpumask, const cpumask_t *mask,

@@ -93,6 +93,9 @@ DECLARE_STATIC_KEY_FALSE(sched_smt_present);
 DECLARE_PER_CPU_ALIGNED(cpumask_t *, sched_cpu_llc_mask);
 
 extern cpumask_t sched_smt_mask ____cacheline_aligned_in_smp;
+#ifdef CONFIG_SCHED_SMT
+DECLARE_PER_CPU_ALIGNED(raw_spinlock_t, sched_smt_idle_lock);
+#endif
 
 extern cpumask_t *const sched_idle_mask;
 extern cpumask_t *const sched_sg_idle_mask;
