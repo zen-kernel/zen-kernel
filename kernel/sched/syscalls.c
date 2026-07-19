@@ -87,11 +87,7 @@ void set_user_nice(struct task_struct *p, long nice)
 	 * We have to be careful, if called from sys_setpriority(),
 	 * the task might be in the middle of scheduling on another CPU.
 	 */
-#ifdef CONFIG_SCHED_ALT
-	guard(task_access_lock)(p);
-#else
 	guard(task_rq_lock)(p);
-#endif
 
 	/*
 	 * The RT priorities are set via sched_setscheduler(), but we still
@@ -640,12 +636,8 @@ recheck:
 	 * To be able to change p->policy safely, the appropriate
 	 * runqueue lock must be held.
 	 */
-#ifdef CONFIG_SCHED_ALT
-	rq = task_access_lock(p, &rf);
-#else
 	rq = task_rq_lock(p, &rf);
 	update_rq_clock(rq);
-#endif /* !CONFIG_SCHED_ALT */
 
 	/*
 	 * Changing the policy of the stop threads its a very bad idea:
@@ -725,11 +717,7 @@ change:
 	/* Re-check policy now with rq lock held: */
 	if (unlikely(oldpolicy != -1 && oldpolicy != p->policy)) {
 		policy = oldpolicy = -1;
-#ifdef CONFIG_SCHED_ALT
-		task_access_unlock(p, &rf);
-#else
 		task_rq_unlock(rq, p, &rf);
-#endif /* !CONFIG_SCHED_ALT */
 		if (cpuset_locked)
 			cpuset_unlock();
 		goto recheck;
@@ -803,11 +791,7 @@ change:
 	/* Avoid rq from going away on us: */
 	preempt_disable();
 	head = splice_balance_callbacks(rq);
-#ifdef CONFIG_SCHED_ALT
-	task_access_unlock(p, &rf);
-#else
 	task_rq_unlock(rq, p, &rf);
-#endif /* !CONFIG_SCHED_ALT */
 
 	if (pi) {
 		if (cpuset_locked)
@@ -822,11 +806,7 @@ change:
 	return 0;
 
 unlock:
-#ifdef CONFIG_SCHED_ALT
-	task_access_unlock(p, &rf);
-#else
 	task_rq_unlock(rq, p, &rf);
-#endif /* !CONFIG_SCHED_ALT */
 	if (cpuset_locked)
 		cpuset_unlock();
 	return retval;

@@ -6,109 +6,25 @@
  * #define ALT_SCHED_DEBUG
  */
 
-/*
- * Task related inlined functions
- */
-static inline bool is_migration_disabled(struct task_struct *p)
-{
-	return p->migration_disabled;
-}
-
-/* rt_prio(prio) defined in include/linux/sched/rt.h */
-#define rt_task(p)		rt_prio((p)->prio)
-#define rt_policy(policy)	((policy) == SCHED_FIFO || (policy) == SCHED_RR)
-#define task_has_rt_policy(p)	(rt_policy((p)->policy))
-
-#define fair_policy(policy)	((policy) == SCHED_NORMAL || (policy) == SCHED_BATCH)
-
-#define valid_policy(policy)	((policy) <= SCHED_IDLE)
-
-#define task_has_dl_policy(p)	(false)
-#define dl_prio(prio)		(false)
-
-struct affinity_context {
-	const struct cpumask	*new_mask;
-	struct cpumask		*user_mask;
-	unsigned int		flags;
-};
-
 /* CONFIG_SCHED_CLASS_EXT is not supported */
 #define scx_switched_all()	false
-
-#define SCA_CHECK		0x01
-#define SCA_MIGRATE_DISABLE	0x02
-#define SCA_MIGRATE_ENABLE	0x04
-#define SCA_USER		0x08
-
-extern int __set_cpus_allowed_ptr(struct task_struct *p, struct affinity_context *ctx);
-
-static inline bool task_allowed_on_cpu(struct task_struct *p, int cpu)
-{
-	/* When not in the task's cpumask, no point in looking further. */
-	if (!cpumask_test_cpu(cpu, p->cpus_ptr))
-		return false;
-
-	/* Can @cpu run a user thread? */
-	if (!(p->flags & PF_KTHREAD) && !task_cpu_possible(cpu, p))
-		return false;
-
-	return true;
-}
-
-static inline cpumask_t *alloc_user_cpus_ptr(int node)
-{
-	/*
-	 * See set_cpus_allowed_force() above for the rcu_head usage.
-	 */
-	int size = max_t(int, cpumask_size(), sizeof(struct rcu_head));
-
-	return kmalloc_node(size, GFP_KERNEL, node);
-}
-
-#ifdef CONFIG_RT_MUTEXES
-
-static inline int __rt_effective_prio(struct task_struct *pi_task, int prio)
-{
-	if (pi_task)
-		prio = min(prio, pi_task->prio);
-
-	return prio;
-}
-
-static inline int rt_effective_prio(struct task_struct *p, int prio)
-{
-	struct task_struct *pi_task = rt_mutex_get_top_task(p);
-
-	return __rt_effective_prio(pi_task, prio);
-}
-
-#else /* !CONFIG_RT_MUTEXES: */
-
-static inline int rt_effective_prio(struct task_struct *p, int prio)
-{
-	return prio;
-}
-
-#endif /* !CONFIG_RT_MUTEXES */
-
-extern int __sched_setscheduler(struct task_struct *p, const struct sched_attr *attr, bool user, bool pi);
-extern int __sched_setaffinity(struct task_struct *p, struct affinity_context *ctx);
 
 /*
  * Context API
  */
 static inline struct rq *__task_access_lock(struct task_struct *p, raw_spinlock_t **plock)
+	__context_unsafe(/* conditionally returns with the rq lock held */)
 {
 	struct rq *rq;
 	for (;;) {
 		rq = task_rq(p);
 		if (p->on_cpu || task_on_rq_queued(p)) {
-			raw_spin_lock(&rq->lock);
+			raw_spin_rq_lock(rq);
 			if (likely((p->on_cpu || task_on_rq_queued(p)) && rq == task_rq(p))) {
-				*plock = &rq->lock;
+				*plock = rq_lockp(rq);
 				return rq;
 			}
-			raw_spin_unlock(&rq->lock);
+			raw_spin_rq_unlock(rq);
 		} else if (task_on_rq_migrating(p)) {
 			do {
 				cpu_relax();
@@ -121,27 +37,11 @@ static inline struct rq *__task_access_lock(struct task_struct *p, raw_spinlock_
 }
 
 static inline void __task_access_unlock(struct task_struct *p, raw_spinlock_t *lock)
+	__context_unsafe(/* conditionally releases the returned rq lock */)
 {
 	if (NULL != lock)
 		raw_spin_unlock(lock);
 }
-
-static inline struct rq *task_access_lock(struct task_struct *p, struct rq_flags *rf)
-{
-	raw_spin_lock_irqsave(&p->pi_lock, rf->flags);
-	return __task_access_lock(p, &rf->lock);
-}
-
-static inline void task_access_unlock(struct task_struct *p, struct rq_flags *rf)
-{
-	__task_access_unlock(p, rf->lock);
-	raw_spin_unlock_irqrestore(&p->pi_lock, rf->flags);
-}
-
-DEFINE_LOCK_GUARD_1(task_access_lock, struct task_struct,
-		    _T->rq = task_access_lock(_T->lock, &_T->rf),
-		    task_access_unlock(_T->lock, &_T->rf),
-		    struct rq *rq; struct rq_flags rf)
 
 void check_task_changed(struct task_struct *p, struct rq *rq);
 
@@ -199,12 +99,10 @@ extern cpumask_t *const sched_sg_idle_mask;
 extern cpumask_t *const sched_pcore_idle_mask;
 extern cpumask_t *const sched_ecore_idle_mask;
 
-extern struct rq *move_queued_task(struct rq *rq, struct task_struct *p, int new_cpu);
+extern struct rq *move_queued_task(struct rq *rq, struct rq_flags *rf,
+				   struct task_struct *p, int new_cpu)
+	__must_hold(__rq_lockp(rq));
 
 DECLARE_STATIC_CALL(sched_idle_select_func, cpumask_and);
-
-/* balance callback */
-extern struct balance_callback *splice_balance_callbacks(struct rq *rq);
-extern void balance_callbacks(struct rq *rq, struct balance_callback *head);
 
 #endif /* _KERNEL_SCHED_ALT_CORE_H */
