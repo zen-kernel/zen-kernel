@@ -1057,6 +1057,7 @@ config SCHED_CACHE
 	bool "Cache aware load balance"
 	default y
 	depends on SMP
+	depends on !SCHED_ALT
 	help
 	  When enabled, the scheduler will attempt to aggregate tasks from
 	  the same process onto a single Last Level Cache (LLC) domain when
