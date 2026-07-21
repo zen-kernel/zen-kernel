@@ -108,12 +108,10 @@ DEFINE_PER_CPU_ALIGNED(cpumask_t [NR_CPU_AFFINITY_LEVELS], sched_cpu_topo_masks)
 DEFINE_PER_CPU_ALIGNED(cpumask_t *, sched_cpu_llc_mask);
 DEFINE_PER_CPU_ALIGNED(cpumask_t *, sched_cpu_topo_end_mask);
 
-#ifdef CONFIG_SCHED_SMT
 DEFINE_STATIC_KEY_FALSE(sched_smt_present);
 EXPORT_SYMBOL_GPL(sched_smt_present);
 
 cpumask_t sched_smt_mask ____cacheline_aligned_in_smp;
-#endif
 
 /*
  * Keep a unique ID per domain (we use the first CPUs number in the cpumask of
@@ -6054,24 +6052,20 @@ static void cpuset_cpu_inactive(unsigned int cpu)
 
 static inline void sched_smt_present_inc(int cpu)
 {
-#ifdef CONFIG_SCHED_SMT
 	if (cpumask_weight(cpu_smt_mask(cpu)) == 2) {
 		static_branch_inc_cpuslocked(&sched_smt_present);
 		cpumask_or(&sched_smt_mask, &sched_smt_mask, cpu_smt_mask(cpu));
 	}
-#endif /* CONFIG_SCHED_SMT */
 }
 
 static inline void sched_smt_present_dec(int cpu)
 {
-#ifdef CONFIG_SCHED_SMT
 	if (cpumask_weight(cpu_smt_mask(cpu)) == 2) {
 		static_branch_dec_cpuslocked(&sched_smt_present);
 		if (!static_branch_likely(&sched_smt_present))
 			cpumask_clear(sched_pcore_idle_mask);
 		cpumask_andnot(&sched_smt_mask, &sched_smt_mask, cpu_smt_mask(cpu));
 	}
-#endif /* CONFIG_SCHED_SMT */
 }
 
 int sched_cpu_activate(unsigned int cpu)
@@ -6275,9 +6269,7 @@ static void sched_init_topology_cpumask(void)
 
 		bitmap_complement(cpumask_bits(topo), cpumask_bits(cpumask_of(cpu)),
 				  nr_cpumask_bits);
-#ifdef CONFIG_SCHED_SMT
 		TOPOLOGY_CPUMASK(smt, topology_sibling_cpumask(cpu), false);
-#endif /* CONFIG_SCHED_SMT */
 		TOPOLOGY_CPUMASK(cluster, topology_cluster_cpumask(cpu), false);
 
 		per_cpu(sd_llc_id, cpu) = cpumask_first(cpu_coregroup_mask(cpu));
