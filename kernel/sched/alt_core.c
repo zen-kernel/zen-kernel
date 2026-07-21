@@ -3862,7 +3862,11 @@ void sched_exec(void)
 }
 
 DEFINE_PER_CPU(struct kernel_stat, kstat);
-DEFINE_PER_CPU(struct kernel_cpustat, kernel_cpustat);
+DEFINE_PER_CPU(struct kernel_cpustat, kernel_cpustat) = {
+#ifdef CONFIG_NO_HZ_COMMON
+	.idle_sleeptime_seq = SEQCNT_ZERO(kernel_cpustat.idle_sleeptime_seq)
+#endif
+};
 
 EXPORT_PER_CPU_SYMBOL(kstat);
 EXPORT_PER_CPU_SYMBOL(kernel_cpustat);
