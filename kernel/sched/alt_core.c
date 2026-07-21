@@ -208,10 +208,14 @@ static inline void update_sched_preempt_mask(struct rq *rq)
 /* need a wrapper since we may need to trace from modules */
 EXPORT_TRACEPOINT_SYMBOL(sched_set_state_tp);
 
-/* Call via the helper macro trace_set_current_state. */
+/*
+ * Call via the helper macro trace_set_current_state.
+ * Calls to this function MUST be guarded by a
+ * tracepoint_enabled(sched_set_state_tp)
+ */
 void __trace_set_current_state(int state_value)
 {
-	trace_sched_set_state_tp(current, state_value);
+	trace_call__sched_set_state_tp(current, state_value);
 }
 EXPORT_SYMBOL(__trace_set_current_state);
 
@@ -954,9 +958,13 @@ static inline void __resched_curr(struct rq *rq, int tif)
 	}
 }
 
+/*
+ * Calls to this function MUST be guarded by a
+ * tracepoint_enabled(sched_set_need_resched_tp)
+ */
 void __trace_set_need_resched(struct task_struct *curr, int tif)
 {
-	trace_sched_set_need_resched_tp(curr, smp_processor_id(), tif);
+	trace_call__sched_set_need_resched_tp(curr, smp_processor_id(), tif);
 }
 EXPORT_SYMBOL_GPL(__trace_set_need_resched);
 
