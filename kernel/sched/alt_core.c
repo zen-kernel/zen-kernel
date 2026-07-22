@@ -5471,7 +5471,7 @@ static void __sched_dynamic_update(int mode)
 		break;
 	}
 
-	preempt_dynamic_mode = mode;
+	WRITE_ONCE(preempt_dynamic_mode, mode);
 }
 
 void sched_dynamic_update(int mode)
@@ -5512,12 +5512,13 @@ static void __init preempt_dynamic_init(void)
 	}
 }
 
-# define PREEMPT_MODEL_ACCESSOR(mode) \
-	bool preempt_model_##mode(void)						 \
-	{									 \
-		WARN_ON_ONCE(preempt_dynamic_mode == preempt_dynamic_undefined); \
-		return preempt_dynamic_mode == preempt_dynamic_##mode;		 \
-	}									 \
+# define PREEMPT_MODEL_ACCESSOR(mode)					\
+	bool preempt_model_##mode(void)					\
+	{								\
+		int mode = READ_ONCE(preempt_dynamic_mode);		\
+		WARN_ON_ONCE(mode == preempt_dynamic_undefined);	\
+		return mode == preempt_dynamic_##mode;			\
+	}								\
 	EXPORT_SYMBOL_GPL(preempt_model_##mode)
 
 PREEMPT_MODEL_ACCESSOR(none);
