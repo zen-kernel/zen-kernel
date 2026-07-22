@@ -1456,8 +1456,24 @@ static void activate_task(struct task_struct *p, struct rq *rq)
 	cpufreq_update_util(rq, SCHED_CPUFREQ_IOWAIT * p->in_iowait);
 }
 
-static void block_task(struct rq *rq, struct task_struct *p)
+static void block_task(struct rq *rq, struct task_struct *p, unsigned long task_state)
 {
+	p->sched_contributes_to_load =
+		(task_state & TASK_UNINTERRUPTIBLE) &&
+		!(task_state & TASK_NOLOAD) &&
+		!(task_state & TASK_FROZEN);
+
+	/*
+	 * __schedule()			ttwu()
+	 *   prev_state = prev->state;    if (p->on_rq && ...)
+	 *   if (prev_state)		    goto out;
+	 *     p->on_rq = 0;		  smp_acquire__after_ctrl_dep();
+	 *				  p->state = TASK_WAKING
+	 *
+	 * Where __schedule() and ttwu() have matching control dependencies.
+	 *
+	 * After this, schedule() must not care about p->state any more.
+	 */
 	dequeue_task(p, rq, DEQUEUE_SLEEP);
 
 	if (p->sched_contributes_to_load)
@@ -4567,29 +4583,17 @@ static bool try_to_block_task(struct rq *rq, struct task_struct *p,
 			      unsigned long *task_state_p)
 {
 	unsigned long task_state = *task_state_p;
+
 	if (signal_pending_state(task_state, p)) {
 		WRITE_ONCE(p->__state, TASK_RUNNING);
 		*task_state_p = TASK_RUNNING;
 		return false;
 	}
-	p->sched_contributes_to_load =
-		(task_state & TASK_UNINTERRUPTIBLE) &&
-		!(task_state & TASK_NOLOAD) &&
-		!(task_state & TASK_FROZEN);
 
-	/*
-	 * __schedule()			ttwu()
-	 *   prev_state = prev->state;    if (p->on_rq && ...)
-	 *   if (prev_state)		    goto out;
-	 *     p->on_rq = 0;		  smp_acquire__after_ctrl_dep();
-	 *				  p->state = TASK_WAKING
-	 *
-	 * Where __schedule() and ttwu() have matching control dependencies.
-	 *
-	 * After this, schedule() must not care about p->state any more.
-	 */
 	sched_task_deactivate(p, rq);
-	block_task(rq, p);
+
+	block_task(rq, p, task_state);
+
 	return true;
 }
 
