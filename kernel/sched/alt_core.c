@@ -288,6 +288,12 @@ EXPORT_SYMBOL(__trace_set_current_state);
  *   [ The astute reader will observe that it is possible for two tasks on one
  *     CPU to have ->on_cpu = 1 at the same time. ]
  *
+ * p->is_blocked <- { 0, 1 }:
+ *
+ *   is set by try_to_block_task() and cleared by ttwu_do_wakeup() and tracks
+ *   if the task is blocked. Traditionally this would mirror p->on_rq, however
+ *   due things like DELAY_DEQUEUE and PROXY_EXEC, this can diverge.
+ *
  * task_cpu(p): is changed by set_task_cpu(), the rules are:
  *
  *  - Don't call set_task_cpu() on a blocked task:
@@ -2325,6 +2331,7 @@ ttwu_stat(struct task_struct *p, int cpu, int wake_flags)
  */
 static inline void ttwu_do_wakeup(struct task_struct *p)
 {
+	p->is_blocked = 0;
 	WRITE_ONCE(p->__state, TASK_RUNNING);
 	trace_sched_wakeup(p);
 }
@@ -2763,6 +2770,7 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 		 *  - we're serialized against set_special_state() by virtue of
 		 *    it disabling IRQs (this allows not taking ->pi_lock).
 		 */
+		WARN_ON_ONCE(p->is_blocked);
 		if (!ttwu_state_match(p, state, &success))
 			goto out;
 
@@ -3049,6 +3057,8 @@ static inline void __sched_fork(u64 clone_flags, struct task_struct *p)
 	p->utime			= 0;
 	p->stime			= 0;
 	p->sched_time			= 0;
+
+	WARN_ON_ONCE(p->is_blocked);
 
 #ifdef CONFIG_SCHEDSTATS
 	/* Even if schedstat is disabled, there should not be garbage */
@@ -4585,11 +4595,15 @@ static bool try_to_block_task(struct rq *rq, struct task_struct *p,
 {
 	unsigned long task_state = *task_state_p;
 
+	WARN_ON_ONCE(p->is_blocked);
+
 	if (signal_pending_state(task_state, p)) {
 		WRITE_ONCE(p->__state, TASK_RUNNING);
 		*task_state_p = TASK_RUNNING;
 		return false;
 	}
+
+	p->is_blocked = 1;
 
 	sched_task_deactivate(p, rq);
 
