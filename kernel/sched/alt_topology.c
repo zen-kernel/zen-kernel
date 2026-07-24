@@ -538,6 +538,11 @@ static void sched_rebuild_idle_masks(const struct cpumask *active_mask)
 {
 	int cpu;
 
+	/*
+	 * Every active CPU runs a stopper here, so a remaining bit belongs to
+	 * a CPU which is not active and cannot be a placement candidate.
+	 */
+	cpumask_and(sched_idle_mask, sched_idle_mask, active_mask);
 	cpumask_clear(sched_sg_idle_mask);
 	cpumask_clear(sched_pcore_idle_mask);
 	cpumask_clear(sched_ecore_idle_mask);
