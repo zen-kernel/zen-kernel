@@ -1328,10 +1328,11 @@ static int snp_filter_reserved_mem_regions(struct resource *rs, void *arg)
 	size_t size;
 
 	/*
-	 * Ensure the list of HV_FIXED pages that will be passed to firmware
-	 * do not exceed the page-sized argument buffer.
+	 * Ensure the list of HV_FIXED pages passed to the firmware including
+	 * the one about to be written to do not exceed the page-sized argument
+	 * buffer.
 	 */
-	if ((range_list->num_elements * sizeof(struct sev_data_range) +
+	if (((range_list->num_elements + 1) * sizeof(struct sev_data_range) +
 	     sizeof(struct sev_data_range_list)) > PAGE_SIZE)
 		return -E2BIG;
 
@@ -1355,7 +1356,7 @@ static int __sev_snp_init_locked(int *error, unsigned int max_snp_asid)
 {
 	struct sev_data_range_list *snp_range_list __free(kfree) = NULL;
 	struct psp_device *psp = psp_master;
-	struct sev_data_snp_init_ex data;
+	struct sev_data_snp_init_ex data = {};
 	struct sev_device *sev;
 	void *arg = &data;
 	int cmd, rc = 0;
@@ -1418,8 +1419,6 @@ static int __sev_snp_init_locked(int *error, unsigned int max_snp_asid)
 		 * HV_Fixed page list.
 		 */
 		snp_add_hv_fixed_pages(sev, snp_range_list);
-
-		memset(&data, 0, sizeof(data));
 
 		if (max_snp_asid) {
 			data.ciphertext_hiding_en = 1;
@@ -1487,6 +1486,8 @@ static int __sev_snp_init_locked(int *error, unsigned int max_snp_asid)
 				       &snp_panic_notifier);
 
 	if (data.tio_en) {
+		struct page *page;
+
 		/*
 		 * This executes with the sev_cmd_mutex held so down the stack
 		 * snp_reclaim_pages(locked=false) might be needed (which is extremely
@@ -1494,12 +1495,14 @@ static int __sev_snp_init_locked(int *error, unsigned int max_snp_asid)
 		 * Instead of exporting __snp_alloc_firmware_pages(), allocate a page
 		 * for this one call here.
 		 */
-		void *tio_status = page_address(__snp_alloc_firmware_pages(
-			GFP_KERNEL_ACCOUNT | __GFP_ZERO, 0, true));
+		page = __snp_alloc_firmware_pages(GFP_KERNEL_ACCOUNT | __GFP_ZERO,
+						  0, true);
+		if (page) {
+			void *tio_status = page_address(page);
 
-		if (tio_status) {
 			sev_tsm_init_locked(sev, tio_status);
-			__snp_free_firmware_pages(virt_to_page(tio_status), 0, true);
+
+			__snp_free_firmware_pages(page, 0, true);
 		}
 	}
 
@@ -2283,7 +2286,8 @@ static int sev_ioctl_do_pdh_export(struct sev_issue_cmd *argp, bool writable)
 	/* Userspace wants to query the certificate length. */
 	if (!input.pdh_cert_address ||
 	    !input.pdh_cert_len ||
-	    !input.cert_chain_address)
+	    !input.cert_chain_address ||
+	    !input.cert_chain_len)
 		goto cmd;
 
 	/* Allocate a physically contiguous buffer to store the PDH blob. */

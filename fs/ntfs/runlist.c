@@ -763,7 +763,7 @@ struct runlist_element *ntfs_mapping_pairs_decompress(const struct ntfs_volume *
 	buf = (u8 *)attr +
 		le16_to_cpu(attr->data.non_resident.mapping_pairs_offset);
 	attr_end = (u8 *)attr + le32_to_cpu(attr->length);
-	if (unlikely(buf < (u8 *)attr || buf > attr_end)) {
+	if (unlikely(buf < (u8 *)attr || buf >= attr_end)) {
 		ntfs_error(vol->sb, "Corrupt attribute.");
 		return ERR_PTR(-EIO);
 	}
@@ -811,7 +811,7 @@ struct runlist_element *ntfs_mapping_pairs_decompress(const struct ntfs_volume *
 		 */
 		b = *buf & 0xf;
 		if (b) {
-			if (unlikely(buf + b > attr_end))
+			if (unlikely(buf + b >= attr_end))
 				goto io_error;
 			for (deltaxcn = (s8)buf[b--]; b; b--)
 				deltaxcn = (deltaxcn << 8) + buf[b];
@@ -855,12 +855,16 @@ struct runlist_element *ntfs_mapping_pairs_decompress(const struct ntfs_volume *
 			u8 b2 = *buf & 0xf;
 
 			b = b2 + ((*buf >> 4) & 0xf);
-			if (buf + b > attr_end)
+			if (buf + b >= attr_end)
 				goto io_error;
 			for (deltaxcn = (s8)buf[b--]; b > b2; b--)
 				deltaxcn = (deltaxcn << 8) + buf[b];
 			/* Change the current lcn to its new value. */
-			lcn += deltaxcn;
+			if (unlikely(check_add_overflow(lcn, deltaxcn, &lcn))) {
+				ntfs_error(vol->sb,
+						"LCN overflow in mapping pairs array.");
+				goto err_out;
+			}
 #ifdef DEBUG
 			/*
 			 * On NTFS 1.2-, apparently can have lcn == -1 to

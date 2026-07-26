@@ -31,9 +31,10 @@
 #include "panthor_device.h"
 #include "panthor_gem.h"
 #include "panthor_gpu.h"
+#include "panthor_gpu_regs.h"
 #include "panthor_heap.h"
 #include "panthor_mmu.h"
-#include "panthor_regs.h"
+#include "panthor_mmu_regs.h"
 #include "panthor_sched.h"
 
 #define MAX_AS_SLOTS			32
@@ -507,9 +508,8 @@ static int wait_ready(struct panthor_device *ptdev, u32 as_nr)
 	/* Wait for the MMU status to indicate there is no active command, in
 	 * case one is pending.
 	 */
-	ret = gpu_read_relaxed_poll_timeout_atomic(ptdev, AS_STATUS(as_nr), val,
-						   !(val & AS_STATUS_AS_ACTIVE),
-						   10, 100000);
+	ret = gpu_read_relaxed_poll_timeout_atomic(ptdev->iomem, AS_STATUS(as_nr), val,
+						   !(val & AS_STATUS_AS_ACTIVE), 10, 100000);
 
 	if (ret) {
 		panthor_device_schedule_reset(ptdev);
@@ -526,7 +526,7 @@ static int as_send_cmd_and_wait(struct panthor_device *ptdev, u32 as_nr, u32 cmd
 	/* write AS_COMMAND when MMU is ready to accept another command */
 	status = wait_ready(ptdev, as_nr);
 	if (!status) {
-		gpu_write(ptdev, AS_COMMAND(as_nr), cmd);
+		gpu_write(ptdev->iomem, AS_COMMAND(as_nr), cmd);
 		status = wait_ready(ptdev, as_nr);
 	}
 
@@ -569,7 +569,7 @@ static u32 panthor_mmu_as_fault_mask(struct panthor_device *ptdev, u32 as)
 
 /* Forward declaration to call helpers within as_enable/disable */
 static void panthor_mmu_irq_handler(struct panthor_device *ptdev, u32 status);
-PANTHOR_IRQ_HANDLER(mmu, MMU, panthor_mmu_irq_handler);
+PANTHOR_IRQ_HANDLER(mmu, panthor_mmu_irq_handler);
 
 static int panthor_mmu_as_enable(struct panthor_device *ptdev, u32 as_nr,
 				 u64 transtab, u64 transcfg, u64 memattr)
@@ -577,9 +577,9 @@ static int panthor_mmu_as_enable(struct panthor_device *ptdev, u32 as_nr,
 	panthor_mmu_irq_enable_events(&ptdev->mmu->irq,
 				      panthor_mmu_as_fault_mask(ptdev, as_nr));
 
-	gpu_write64(ptdev, AS_TRANSTAB(as_nr), transtab);
-	gpu_write64(ptdev, AS_MEMATTR(as_nr), memattr);
-	gpu_write64(ptdev, AS_TRANSCFG(as_nr), transcfg);
+	gpu_write64(ptdev->iomem, AS_TRANSTAB(as_nr), transtab);
+	gpu_write64(ptdev->iomem, AS_MEMATTR(as_nr), memattr);
+	gpu_write64(ptdev->iomem, AS_TRANSCFG(as_nr), transcfg);
 
 	return as_send_cmd_and_wait(ptdev, as_nr, AS_COMMAND_UPDATE);
 }
@@ -614,9 +614,9 @@ static int panthor_mmu_as_disable(struct panthor_device *ptdev, u32 as_nr,
 	if (recycle_slot)
 		return 0;
 
-	gpu_write64(ptdev, AS_TRANSTAB(as_nr), 0);
-	gpu_write64(ptdev, AS_MEMATTR(as_nr), 0);
-	gpu_write64(ptdev, AS_TRANSCFG(as_nr), AS_TRANSCFG_ADRMODE_UNMAPPED);
+	gpu_write64(ptdev->iomem, AS_TRANSTAB(as_nr), 0);
+	gpu_write64(ptdev->iomem, AS_MEMATTR(as_nr), 0);
+	gpu_write64(ptdev->iomem, AS_TRANSCFG(as_nr), AS_TRANSCFG_ADRMODE_UNMAPPED);
 
 	return as_send_cmd_and_wait(ptdev, as_nr, AS_COMMAND_UPDATE);
 }
@@ -759,7 +759,7 @@ out_enable_as:
 	 */
 	fault_mask = panthor_mmu_as_fault_mask(ptdev, as);
 	if (ptdev->mmu->as.faulty_mask & fault_mask) {
-		gpu_write(ptdev, MMU_INT_CLEAR, fault_mask);
+		gpu_write(ptdev->iomem, MMU_INT_CLEAR, fault_mask);
 		ptdev->mmu->as.faulty_mask &= ~fault_mask;
 	}
 
@@ -1670,7 +1670,7 @@ static int panthor_vm_lock_region(struct panthor_vm *vm, u64 start, u64 size)
 	mutex_lock(&ptdev->mmu->as.slots_lock);
 	if (vm->as.id >= 0 && size) {
 		/* Lock the region that needs to be updated */
-		gpu_write64(ptdev, AS_LOCKADDR(vm->as.id),
+		gpu_write64(ptdev->iomem, AS_LOCKADDR(vm->as.id),
 			    pack_region_range(ptdev, &start, &size));
 
 		/* If the lock succeeded, update the locked_region info. */
@@ -1731,8 +1731,8 @@ static void panthor_mmu_irq_handler(struct panthor_device *ptdev, u32 status)
 		u32 access_type;
 		u32 source_id;
 
-		fault_status = gpu_read(ptdev, AS_FAULTSTATUS(as));
-		addr = gpu_read64(ptdev, AS_FAULTADDRESS(as));
+		fault_status = gpu_read(ptdev->iomem, AS_FAULTSTATUS(as));
+		addr = gpu_read64(ptdev->iomem, AS_FAULTADDRESS(as));
 
 		/* decode the fault status */
 		exception_type = fault_status & 0xFF;
@@ -1763,7 +1763,7 @@ static void panthor_mmu_irq_handler(struct panthor_device *ptdev, u32 status)
 		 * Note that COMPLETED irqs are never cleared, but this is fine
 		 * because they are always masked.
 		 */
-		gpu_write(ptdev, MMU_INT_CLEAR, mask);
+		gpu_write(ptdev->iomem, MMU_INT_CLEAR, mask);
 
 		if (ptdev->mmu->as.slots[as].vm)
 			ptdev->mmu->as.slots[as].vm->unhandled_fault = true;
@@ -2888,7 +2888,8 @@ int panthor_mmu_init(struct panthor_device *ptdev)
 		return -ENODEV;
 
 	ret = panthor_request_mmu_irq(ptdev, &mmu->irq, irq,
-				      panthor_mmu_fault_mask(ptdev, ~0));
+				      panthor_mmu_fault_mask(ptdev, ~0),
+				      ptdev->iomem + MMU_INT_BASE);
 	if (ret)
 		return ret;
 

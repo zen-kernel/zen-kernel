@@ -104,7 +104,7 @@ drop:
 
 static void pfcp_del_sock(struct pfcp_dev *pfcp)
 {
-	udp_tunnel_sock_release(pfcp->sock);
+	udp_tunnel_sock_release(pfcp->sock->sk);
 	pfcp->sock = NULL;
 }
 
@@ -148,6 +148,7 @@ static void pfcp_link_setup(struct net_device *dev)
 	dev->flags = IFF_POINTOPOINT | IFF_NOARP | IFF_MULTICAST;
 	dev->priv_flags |= IFF_NO_QUEUE;
 
+	dev->pcpu_stat_type = NETDEV_PCPU_STAT_TSTATS;
 	netif_keep_dst(dev);
 }
 
@@ -172,7 +173,7 @@ static struct socket *pfcp_create_sock(struct pfcp_dev *pfcp)
 	tuncfg.encap_rcv = pfcp_encap_recv;
 	tuncfg.encap_type = 1;
 
-	setup_udp_tunnel_sock(net, sock, &tuncfg);
+	setup_udp_tunnel_sock(net, sock->sk, &tuncfg);
 
 	return sock;
 }

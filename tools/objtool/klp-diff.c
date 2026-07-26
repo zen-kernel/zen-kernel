@@ -46,11 +46,6 @@ static const struct option klp_diff_options[] = {
 
 static DEFINE_HASHTABLE(exports, 15);
 
-static inline u32 str_hash(const char *str)
-{
-	return jhash(str, strlen(str), 0);
-}
-
 static char *escape_str(const char *orig)
 {
 	size_t len = 0;
@@ -242,25 +237,39 @@ static struct symbol *next_file_symbol(struct elf *elf, struct symbol *sym)
 static bool is_uncorrelated_static_local(struct symbol *sym)
 {
 	static const char * const vars[] = {
-		"__already_done.",
-		"__func__.",
-		"__key.",
-		"__warned.",
-		"_entry.",
-		"_entry_ptr.",
-		"_rs.",
-		"descriptor.",
-		"CSWTCH.",
+		"__already_done",
+		"__func__",
+		"__key",
+		"__warned",
+		"_entry",
+		"_entry_ptr",
+		"_rs",
+		"descriptor",
+		"CSWTCH",
 	};
+	const char *dot;
 
 	if (!is_object_sym(sym) || !is_local_sym(sym))
 		return false;
 
-	if (!strcmp(sym->sec->name, ".data.once"))
+	/* WARN_ONCE, etc */
+	if (!strcmp(sym->sec->name, ".data..once"))
 		return true;
 
+	dot = strchr(sym->name, '.');
+	if (!dot)
+		return false;
+
 	for (int i = 0; i < ARRAY_SIZE(vars); i++) {
-		if (strstarts(sym->name, vars[i]))
+		size_t len = strlen(vars[i]);
+
+		/* GCC: <var>.<id> */
+		if (strstarts(sym->name, vars[i]) && (sym->name[len] == '.'))
+			return true;
+
+		/* Clang: <func>.<var>[.<id>] */
+		if (strstarts(dot + 1, vars[i]) &&
+		    (dot[1 + len] == '.' || dot[1 + len] == '\0'))
 			return true;
 	}
 
@@ -356,22 +365,6 @@ static bool dont_correlate(struct symbol *sym)
 	       strstarts(sym->name, "__initcall__");
 }
 
-struct process_demangled_name_data {
-	struct symbol *ret;
-	int count;
-};
-
-static void process_demangled_name(struct symbol *sym, void *d)
-{
-	struct process_demangled_name_data *data = d;
-
-	if (sym->twin)
-		return;
-
-	data->count++;
-	data->ret = sym;
-}
-
 /*
  * When there is no full name match, try match demangled_name. This would
  * match original foo.llvm.123 to patched foo.llvm.456.
@@ -383,16 +376,23 @@ static void process_demangled_name(struct symbol *sym, void *d)
 static int find_global_symbol_by_demangled_name(struct elf *elf, struct symbol *sym,
 						struct symbol **out_sym)
 {
-	struct process_demangled_name_data data = {};
+	struct symbol *sym2, *result = NULL;
+	int count = 0;
 
-	iterate_global_symbol_by_demangled_name(elf, sym->demangled_name,
-						process_demangled_name,
-						&data);
-	if (data.count > 1) {
-		ERROR("Multiple (%d) correlation candidates for %s", data.count, sym->name);
+	for_each_sym_by_demangled_name(elf, sym->demangled_name, sym2) {
+		if (is_local_sym(sym2) || sym2->twin)
+			continue;
+
+		count++;
+		result = sym2;
+	}
+
+	if (count > 1) {
+		ERROR("Multiple (%d) correlation candidates for %s", count, sym->name);
 		return -1;
 	}
-	*out_sym = data.ret;
+
+	*out_sym = result;
 	return 0;
 }
 
@@ -655,7 +655,7 @@ static struct symbol *__clone_symbol(struct elf *elf, struct symbol *patched_sym
 			size_t size;
 
 			/* bss doesn't have data */
-			if (patched_sym->sec->data->d_buf)
+			if (patched_sym->sec->data && patched_sym->sec->data->d_buf)
 				data = patched_sym->sec->data->d_buf + patched_sym->offset;
 
 			if (is_sec_sym(patched_sym))
@@ -980,6 +980,13 @@ static int convert_reloc_secsym_to_sym(struct elf *elf, struct reloc *reloc)
 	sym = find_symbol_containing(sec, arch_adjusted_addend(reloc));
 	if (!sym) {
 		/*
+		 * This is presumably an .altinstr_replacement section which is
+		 * empty due to it only having zero-length replacement(s).
+		 */
+		if (!sec_size(sec))
+			return 1;
+
+		/*
 		 * This can happen for special section references to weak code
 		 * whose symbol has been stripped by the linker.
 		 */
@@ -999,6 +1006,9 @@ found_sym:
  */
 static int convert_reloc_sym(struct elf *elf, struct reloc *reloc)
 {
+	if (reloc_type(reloc) == R_NONE)
+		return 1;
+
 	if (is_reloc_allowed(reloc))
 		return 0;
 
@@ -1239,6 +1249,7 @@ static int clone_sym_relocs(struct elfs *e, struct symbol *patched_sym)
 
 	for_each_reloc(patched_rsec, patched_reloc) {
 		unsigned long offset;
+		int ret;
 
 		if (reloc_offset(patched_reloc) < start ||
 		    reloc_offset(patched_reloc) >= end)
@@ -1252,12 +1263,15 @@ static int clone_sym_relocs(struct elfs *e, struct symbol *patched_sym)
 		    !strcmp(patched_reloc->sym->sec->name, ".altinstr_aux"))
 			continue;
 
-		if (convert_reloc_sym(e->patched, patched_reloc)) {
+		ret = convert_reloc_sym(e->patched, patched_reloc);
+		if (ret < 0) {
 			ERROR_FUNC(patched_rsec->base, reloc_offset(patched_reloc),
 				   "failed to convert reloc sym '%s' to its proper format",
 				   patched_reloc->sym->name);
 			return -1;
 		}
+		if (ret > 0)
+			continue;
 
 		offset = out_sym->offset + (reloc_offset(patched_reloc) - patched_sym->offset);
 
@@ -1334,7 +1348,7 @@ static int create_fake_symbols(struct elf *elf)
 
 	sec = find_section_by_name(elf, ".discard.annotate_data");
 	if (!sec || !sec->rsec)
-		return 0;
+		goto entsize;
 
 	for_each_reloc(sec->rsec, reloc) {
 		unsigned long offset, size;
@@ -1366,7 +1380,7 @@ static int create_fake_symbols(struct elf *elf)
 	/*
 	 * 2) Make symbols for sh_entsize, and simple arrays of pointers:
 	 */
-
+entsize:
 	for_each_sec(elf, sec) {
 		unsigned int entry_size;
 		unsigned long offset;
@@ -1400,6 +1414,7 @@ static int create_fake_symbols(struct elf *elf)
 /* Keep a special section entry if it references an included function */
 static bool should_keep_special_sym(struct elf *elf, struct symbol *sym)
 {
+	bool annotate_insn = !strcmp(sym->sec->name, ".discard.annotate_insn");
 	struct reloc *reloc;
 
 	if (is_sec_sym(sym) || !sym->sec->rsec)
@@ -1409,7 +1424,16 @@ static bool should_keep_special_sym(struct elf *elf, struct symbol *sym)
 		if (convert_reloc_sym(elf, reloc))
 			continue;
 
-		if (is_func_sym(reloc->sym) && reloc->sym->included)
+		if (!reloc->sym->clone || is_undef_sym(reloc->sym->clone))
+			continue;
+
+		/*
+		 * Keep special section references to cloned functions.
+		 * In some cases annotate_insn can also reference cloned alt
+		 * replacement fake symbols; keep those references as well.
+		 */
+		if (is_func_sym(reloc->sym) ||
+		    (annotate_insn && is_notype_sym(reloc->sym)))
 			return true;
 	}
 
@@ -1553,13 +1577,26 @@ static int clone_special_section(struct elfs *e, struct section *patched_sec)
 /* Extract only the needed bits from special sections */
 static int clone_special_sections(struct elfs *e)
 {
-	struct section *patched_sec;
+	struct section *sec, *annotate_insn = NULL;
 
-	for_each_sec(e->patched, patched_sec) {
-		if (is_special_section(patched_sec)) {
-			if (clone_special_section(e, patched_sec))
+	for_each_sec(e->patched, sec) {
+		if (is_special_section(sec)) {
+			if (!strcmp(sec->name, ".discard.annotate_insn")) {
+				annotate_insn = sec;
+				continue;
+			}
+			if (clone_special_section(e, sec))
 				return -1;
 		}
+	}
+
+	/*
+	 * Do .discard.annotate_insn last, it can reference other special
+	 * sections (alt replacements) so they need to be cloned first.
+	 */
+	if (annotate_insn) {
+		if (clone_special_section(e, annotate_insn))
+			return -1;
 	}
 
 	return 0;

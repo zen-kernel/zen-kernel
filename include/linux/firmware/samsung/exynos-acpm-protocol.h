@@ -49,16 +49,8 @@ struct acpm_handle {
 
 struct device;
 
-#if IS_ENABLED(CONFIG_EXYNOS_ACPM_PROTOCOL)
 struct acpm_handle *devm_acpm_get_by_node(struct device *dev,
 					  struct device_node *np);
-#else
-
-static inline struct acpm_handle *devm_acpm_get_by_node(struct device *dev,
-							struct device_node *np)
-{
-	return NULL;
-}
-#endif
+struct acpm_handle *devm_acpm_get_by_phandle(struct device *dev);
 
 #endif /* __EXYNOS_ACPM_PROTOCOL_H */

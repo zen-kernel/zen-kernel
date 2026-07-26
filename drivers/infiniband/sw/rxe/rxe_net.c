@@ -283,12 +283,12 @@ static struct socket *rxe_setup_udp_tunnel(struct net *net, __be16 port,
 	tnl_cfg.encap_rcv = rxe_udp_encap_recv;
 
 	/* Setup UDP tunnel */
-	setup_udp_tunnel_sock(net, sock, &tnl_cfg);
+	setup_udp_tunnel_sock(net, sock->sk, &tnl_cfg);
 
 	return sock;
 }
 
-static void rxe_release_udp_tunnel(struct socket *sk)
+static void rxe_release_udp_tunnel(struct sock *sk)
 {
 	if (sk)
 		udp_tunnel_sock_release(sk);
@@ -636,7 +636,7 @@ static void rxe_sock_put(struct sock *sk,
 	if (refcount_read(&sk->sk_refcnt) > SK_REF_FOR_TUNNEL) {
 		__sock_put(sk);
 	} else {
-		rxe_release_udp_tunnel(sk->sk_socket);
+		rxe_release_udp_tunnel(sk);
 		sk = NULL;
 		set_sk(net, sk);
 	}

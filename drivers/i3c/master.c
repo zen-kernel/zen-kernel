@@ -368,14 +368,6 @@ static void i3c_device_remove(struct device *dev)
 		driver->remove(i3cdev);
 }
 
-const struct bus_type i3c_bus_type = {
-	.name = "i3c",
-	.match = i3c_device_match,
-	.probe = i3c_device_probe,
-	.remove = i3c_device_remove,
-};
-EXPORT_SYMBOL_GPL(i3c_bus_type);
-
 static enum i3c_addr_slot_status
 i3c_bus_get_addr_slot_status_mask(struct i3c_bus *bus, u16 addr, u32 mask)
 {
@@ -633,6 +625,14 @@ static ssize_t i2c_scl_frequency_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(i2c_scl_frequency);
 
+static void i3c_master_hj_work_fn(struct work_struct *work)
+{
+	struct i3c_master_controller *master = container_of(work, typeof(*master), hj_work);
+
+	if (!master->shutting_down)
+		i3c_master_do_daa(master);
+}
+
 static int i3c_set_hotjoin(struct i3c_master_controller *master, bool enable)
 {
 	int ret;
@@ -649,9 +649,11 @@ static int i3c_set_hotjoin(struct i3c_master_controller *master, bool enable)
 			return ret;
 	}
 
-	i3c_bus_normaluse_lock(&master->bus);
+	i3c_bus_maintenance_lock(&master->bus);
 
-	if (enable)
+	if (master->shutting_down)
+		ret = -ENODEV;
+	else if (enable)
 		ret = master->ops->enable_hotjoin(master);
 	else
 		ret = master->ops->disable_hotjoin(master);
@@ -659,7 +661,7 @@ static int i3c_set_hotjoin(struct i3c_master_controller *master, bool enable)
 	if (!ret)
 		master->hotjoin = enable;
 
-	i3c_bus_normaluse_unlock(&master->bus);
+	i3c_bus_maintenance_unlock(&master->bus);
 
 	if ((enable && ret) || (!enable && !ret) || master->rpm_ibi_allowed)
 		i3c_master_rpm_put(master);
@@ -711,6 +713,18 @@ int i3c_master_disable_hotjoin(struct i3c_master_controller *master)
 }
 EXPORT_SYMBOL_GPL(i3c_master_disable_hotjoin);
 
+/**
+ * i3c_master_queue_hotjoin - Queue DAA processing after a Hot-Join event
+ * @master: I3C master object
+ *
+ * Queue the hot-join worker on the master's workqueue.
+ */
+void i3c_master_queue_hotjoin(struct i3c_master_controller *master)
+{
+	queue_work(master->wq, &master->hj_work);
+}
+EXPORT_SYMBOL_GPL(i3c_master_queue_hotjoin);
+
 static ssize_t hotjoin_show(struct device *dev, struct device_attribute *da, char *buf)
 {
 	struct i3c_bus *i3cbus = dev_to_i3cbus(dev);
@@ -728,7 +742,14 @@ static DEVICE_ATTR_RW(hotjoin);
 static ssize_t dev_nack_retry_count_show(struct device *dev,
 					 struct device_attribute *attr, char *buf)
 {
-	return sysfs_emit(buf, "%u\n", dev_to_i3cmaster(dev)->dev_nack_retry_count);
+	struct i3c_bus *i3cbus = dev_to_i3cbus(dev);
+	ssize_t ret;
+
+	i3c_bus_normaluse_lock(i3cbus);
+	ret = sysfs_emit(buf, "%u\n", dev_to_i3cmaster(dev)->dev_nack_retry_count);
+	i3c_bus_normaluse_unlock(i3cbus);
+
+	return ret;
 }
 
 static ssize_t dev_nack_retry_count_store(struct device *dev,
@@ -744,16 +765,19 @@ static ssize_t dev_nack_retry_count_store(struct device *dev,
 	if (ret)
 		return ret;
 
-	i3c_bus_maintenance_lock(i3cbus);
-	ret = master->ops->set_dev_nack_retry(master, val);
-	i3c_bus_maintenance_unlock(i3cbus);
-
+	ret = i3c_master_rpm_get(master);
 	if (ret)
 		return ret;
 
-	master->dev_nack_retry_count = val;
+	i3c_bus_maintenance_lock(i3cbus);
+	ret = master->ops->set_dev_nack_retry(master, val);
+	if (!ret)
+		master->dev_nack_retry_count = val;
+	i3c_bus_maintenance_unlock(i3cbus);
 
-	return count;
+	i3c_master_rpm_put(master);
+
+	return ret ?: count;
 }
 
 static DEVICE_ATTR_RW(dev_nack_retry_count);
@@ -817,6 +841,31 @@ static void i3c_masterdev_release(struct device *dev)
 static const struct device_type i3c_masterdev_type = {
 	.groups	= i3c_masterdev_groups,
 };
+
+static void i3c_master_shutdown(struct i3c_master_controller *master)
+{
+	i3c_bus_maintenance_lock(&master->bus);
+	master->shutting_down = true;
+	i3c_bus_maintenance_unlock(&master->bus);
+
+	cancel_work_sync(&master->hj_work);
+	cancel_work_sync(&master->reg_work);
+}
+
+static void i3c_device_shutdown(struct device *dev)
+{
+	if (dev->type == &i3c_masterdev_type)
+		i3c_master_shutdown(dev_to_i3cmaster(dev));
+}
+
+const struct bus_type i3c_bus_type = {
+	.name = "i3c",
+	.match = i3c_device_match,
+	.probe = i3c_device_probe,
+	.remove = i3c_device_remove,
+	.shutdown = i3c_device_shutdown,
+};
+EXPORT_SYMBOL_GPL(i3c_bus_type);
 
 static int i3c_bus_set_mode(struct i3c_bus *i3cbus, enum i3c_bus_mode mode,
 			    unsigned long max_i2c_scl_rate)
@@ -1800,6 +1849,16 @@ i3c_master_register_new_i3c_devs(struct i3c_master_controller *master)
 	}
 }
 
+static void i3c_master_reg_work_fn(struct work_struct *work)
+{
+	struct i3c_master_controller *master = container_of(work, typeof(*master), reg_work);
+
+	i3c_bus_normaluse_lock(&master->bus);
+	if (!master->shutting_down)
+		i3c_master_register_new_i3c_devs(master);
+	i3c_bus_normaluse_unlock(&master->bus);
+}
+
 /**
  * i3c_master_do_daa_ext() - Dynamic Address Assignment (extended version)
  * @master: controller
@@ -1827,19 +1886,20 @@ int i3c_master_do_daa_ext(struct i3c_master_controller *master, bool rstdaa)
 
 	i3c_bus_maintenance_lock(&master->bus);
 
-	if (rstdaa)
-		rstret = i3c_master_rstdaa_locked(master, I3C_BROADCAST_ADDR);
-
-	ret = master->ops->do_daa(master);
+	if (master->shutting_down) {
+		ret = -ENODEV;
+	} else {
+		if (rstdaa)
+			rstret = i3c_master_rstdaa_locked(master, I3C_BROADCAST_ADDR);
+		ret = master->ops->do_daa(master);
+	}
 
 	i3c_bus_maintenance_unlock(&master->bus);
 
 	if (ret)
 		goto out;
 
-	i3c_bus_normaluse_lock(&master->bus);
-	i3c_master_register_new_i3c_devs(master);
-	i3c_bus_normaluse_unlock(&master->bus);
+	queue_work(master->wq, &master->reg_work);
 out:
 	i3c_master_rpm_put(master);
 
@@ -2274,12 +2334,11 @@ int i3c_master_add_i3c_dev_locked(struct i3c_master_controller *master,
 	bool enable_ibi = false;
 	int ret;
 
-	if (!master)
-		return -EINVAL;
-
 	newdev = i3c_master_alloc_i3c_dev(master, &info);
-	if (IS_ERR(newdev))
-		return PTR_ERR(newdev);
+	if (IS_ERR(newdev)) {
+		ret = PTR_ERR(newdev);
+		goto err_prevent_addr_reuse;
+	}
 
 	ret = i3c_master_attach_i3c_dev(master, newdev);
 	if (ret)
@@ -2400,6 +2459,16 @@ err_detach_dev:
 
 err_free_dev:
 	i3c_master_free_i3c_dev(newdev);
+
+err_prevent_addr_reuse:
+	/*
+	 * Although the device has not been added, the address has been
+	 * assigned. Prevent the address from being used again.
+	 */
+	if (i3c_bus_get_addr_slot_status(&master->bus, addr) == I3C_ADDR_SLOT_FREE)
+		i3c_bus_set_addr_slot_status(&master->bus, addr, I3C_ADDR_SLOT_I3C_DEV);
+
+	dev_err(&master->dev, "Failed to add I3C device at address %u, error %d\n", addr, ret);
 
 	return ret;
 }
@@ -3079,11 +3148,13 @@ int i3c_master_register(struct i3c_master_controller *master,
 	if (ret)
 		goto err_put_dev;
 
-	master->wq = alloc_workqueue("%s", WQ_PERCPU, 0, dev_name(parent));
+	master->wq = alloc_workqueue("%s", WQ_PERCPU | WQ_FREEZABLE, 0, dev_name(parent));
 	if (!master->wq) {
 		ret = -ENOMEM;
 		goto err_put_dev;
 	}
+	INIT_WORK(&master->hj_work, i3c_master_hj_work_fn);
+	INIT_WORK(&master->reg_work, i3c_master_reg_work_fn);
 
 	ret = i3c_master_bus_init(master);
 	if (ret)
@@ -3109,12 +3180,15 @@ int i3c_master_register(struct i3c_master_controller *master,
 
 	/*
 	 * We're done initializing the bus and the controller, we can now
-	 * register I3C devices discovered during the initial DAA.
+	 * register I3C devices discovered during the initial DAA. Device
+	 * registration is done via reg_work because that keeps a single
+	 * registration code path and ensures the worker is the only writer
+	 * of desc->dev. Flush the work to preserve synchronous probe-time
+	 * behavior.
 	 */
 	master->init_done = true;
-	i3c_bus_normaluse_lock(&master->bus);
-	i3c_master_register_new_i3c_devs(master);
-	i3c_bus_normaluse_unlock(&master->bus);
+	queue_work(master->wq, &master->reg_work);
+	flush_work(&master->reg_work);
 
 	if (master->ops->set_dev_nack_retry)
 		device_create_file(&master->dev, &dev_attr_dev_nack_retry_count);
@@ -3146,6 +3220,7 @@ EXPORT_SYMBOL_GPL(i3c_master_register);
 void i3c_master_unregister(struct i3c_master_controller *master)
 {
 	i3c_bus_notify(&master->bus, I3C_NOTIFY_BUS_REMOVE);
+	i3c_master_shutdown(master);
 
 	if (master->ops->set_dev_nack_retry)
 		device_remove_file(&master->dev, &dev_attr_dev_nack_retry_count);

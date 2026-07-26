@@ -558,11 +558,8 @@ static int fou_add_to_port_list(struct net *net, struct fou *fou,
 
 static void fou_release(struct fou *fou)
 {
-	struct socket *sock = fou->sock;
-
 	list_del(&fou->list);
-	udp_tunnel_sock_release(sock);
-
+	udp_tunnel_sock_release(fou->sock->sk);
 	kfree_rcu(fou, rcu);
 }
 
@@ -618,7 +615,7 @@ static int fou_create(struct net *net, struct fou_cfg *cfg,
 		goto error;
 	}
 
-	setup_udp_tunnel_sock(net, sock, &tunnel_cfg);
+	setup_udp_tunnel_sock(net, sk, &tunnel_cfg);
 
 	sk->sk_allocation = GFP_ATOMIC;
 
@@ -634,7 +631,7 @@ static int fou_create(struct net *net, struct fou_cfg *cfg,
 error:
 	kfree(fou);
 	if (sock)
-		udp_tunnel_sock_release(sock);
+		udp_tunnel_sock_release(sock->sk);
 
 	return err;
 }

@@ -499,10 +499,19 @@ static int coresight_enable_helpers(struct coresight_device *csdev,
 
 		ret = coresight_enable_helper(helper, mode, path);
 		if (ret)
-			return ret;
+			goto err;
 	}
 
 	return 0;
+
+err:
+	while (i--) {
+		helper = csdev->pdata->out_conns[i]->dest_dev;
+		if (helper && coresight_is_helper(helper))
+			coresight_disable_helper(helper, path);
+	}
+
+	return ret;
 }
 
 int coresight_enable_path(struct coresight_path *path, enum cs_mode mode)
@@ -739,8 +748,8 @@ static int coresight_get_trace_id(struct coresight_device *csdev,
  * Call this after creating the path and before enabling it. This leaves
  * the trace ID set on the path, or it remains 0 if it couldn't be assigned.
  */
-void coresight_path_assign_trace_id(struct coresight_path *path,
-				    enum cs_mode mode)
+int coresight_path_assign_trace_id(struct coresight_path *path,
+				   enum cs_mode mode)
 {
 	struct coresight_device *sink = coresight_get_sink(path);
 	struct coresight_node *nd;
@@ -750,15 +759,18 @@ void coresight_path_assign_trace_id(struct coresight_path *path,
 		/* Assign a trace ID to the path for the first device that wants to do it */
 		trace_id = coresight_get_trace_id(nd->csdev, mode, sink);
 
-		/*
-		 * 0 in this context is that it didn't want to assign so keep searching.
-		 * Non 0 is either success or fail.
-		 */
-		if (trace_id != 0) {
-			path->trace_id = trace_id;
-			return;
-		}
+		/* 0 means the device has no ID assignment, so keep searching */
+		if (trace_id == 0)
+			continue;
+
+		if (!IS_VALID_CS_TRACE_ID(trace_id))
+			return -EINVAL;
+
+		path->trace_id = trace_id;
+		return 0;
 	}
+
+	return -EINVAL;
 }
 
 /**

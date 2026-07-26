@@ -244,6 +244,10 @@ static ssize_t amdgpu_set_power_dpm_state(struct device *dev,
 	enum amd_pm_state_type  state;
 	int ret;
 
+	/* Reject empty/whitespace strings - fuzzing found this is not validated */
+	if (count == 0 || sysfs_streq(buf, ""))
+		return -EINVAL;
+
 	if (sysfs_streq(buf, "battery"))
 		state = POWER_STATE_TYPE_BATTERY;
 	else if (sysfs_streq(buf, "balanced"))
@@ -363,6 +367,10 @@ static ssize_t amdgpu_set_power_dpm_force_performance_level(struct device *dev,
 	struct amdgpu_device *adev = drm_to_adev(ddev);
 	enum amd_dpm_forced_level level;
 	int ret = 0;
+
+	/* Reject empty/whitespace strings - fuzzing found this is not validated */
+	if (count == 0 || sysfs_streq(buf, ""))
+		return -EINVAL;
 
 	if (sysfs_streq(buf, "low"))
 		level = AMD_DPM_FORCED_LEVEL_LOW;
@@ -902,6 +910,10 @@ static ssize_t amdgpu_set_pp_features(struct device *dev,
 	uint64_t featuremask;
 	int ret;
 
+	/* Reject empty/whitespace strings - fuzzing found kstrtou64 accepts "" as 0 */
+	if (count == 0 || sysfs_streq(buf, ""))
+		return -EINVAL;
+
 	ret = kstrtou64(buf, 0, &featuremask);
 	if (ret)
 		return -EINVAL;
@@ -1026,6 +1038,10 @@ static ssize_t amdgpu_read_mask(const char *buf, size_t count, uint32_t *mask)
 	size_t bytes;
 
 	*mask = 0;
+
+	/* Reject empty/whitespace strings - fuzzing found this is not validated */
+	if (count == 0 || sysfs_streq(buf, ""))
+		return -EINVAL;
 
 	bytes = min(count, sizeof(buf_cpy) - 1);
 	memcpy(buf_cpy, buf, bytes);
@@ -1377,6 +1393,10 @@ static ssize_t amdgpu_set_pp_power_profile_mode(struct device *dev,
 	char tmp[2];
 	long int profile_mode = 0;
 	const char delimiter[3] = {' ', '\n', '\0'};
+
+	/* Reject empty/whitespace strings - fuzzing found this is not validated */
+	if (count == 0 || sysfs_streq(buf, ""))
+		return -EINVAL;
 
 	tmp[0] = *(buf);
 	tmp[1] = '\0';
@@ -2505,12 +2525,12 @@ static ssize_t amdgpu_set_pm_policy_attr(struct device *dev,
 		.dev_attr = __ATTR(_name, 0644, amdgpu_get_pm_policy_attr, \
 				   amdgpu_set_pm_policy_attr),             \
 		.id = PP_PM_POLICY_##_id,                                  \
-	};
+	}
 
 #define AMDGPU_PM_POLICY_ATTR_VAR(_name) pm_policy_attr_##_name.dev_attr.attr
 
-AMDGPU_PM_POLICY_ATTR(soc_pstate, SOC_PSTATE)
-AMDGPU_PM_POLICY_ATTR(xgmi_plpd, XGMI_PLPD)
+AMDGPU_PM_POLICY_ATTR(soc_pstate, SOC_PSTATE);
+AMDGPU_PM_POLICY_ATTR(xgmi_plpd, XGMI_PLPD);
 
 static struct attribute *pm_policy_attrs[] = {
 	&AMDGPU_PM_POLICY_ATTR_VAR(soc_pstate),

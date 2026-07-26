@@ -157,6 +157,9 @@ nlm4svc_lookup_file(struct svc_rqst *rqstp, struct nlm_host *host,
 		return nlm_lck_denied_nolocks;
 	lock->fh.size = xdr_lock->fh.len;
 	memcpy(lock->fh.data, xdr_lock->fh.data, xdr_lock->fh.len);
+	if (xdr_lock->fh.len < LOCKD_FH_HASH_SIZE)
+		memset(lock->fh.data + xdr_lock->fh.len, 0,
+		       LOCKD_FH_HASH_SIZE - xdr_lock->fh.len);
 
 	lock->oh.len = xdr_lock->oh.len;
 	lock->oh.data = xdr_lock->oh.data;
@@ -513,12 +516,12 @@ out:
  *   nlm4_res NLMPROC4_GRANTED(nlm4_testargs) = 5;
  *
  * Permissible procedure status codes:
- *   %NLM4_GRANTED:		The requested lock was granted.
- *   %NLM4_DENIED:		The server could not allocate the resources
- *				needed to process the request.
- *   %NLM4_DENIED_GRACE_PERIOD:	The server has recently restarted and is
- *				re-establishing existing locks, and is not
- *				yet ready to accept normal service requests.
+ *   %NLM4_GRANTED:		The granted lock was accepted.
+ *   %NLM4_DENIED:		The procedure failed, possibly due to
+ *				internal resource constraints.
+ *   %NLM4_DENIED_GRACE_PERIOD:	The client host recently restarted and
+ *				its NLM is re-establishing existing locks,
+ *				so it is not yet ready to accept callbacks.
  */
 static __be32
 nlm4svc_proc_granted(struct svc_rqst *rqstp)
@@ -669,6 +672,8 @@ __nlm4svc_proc_lock_msg(struct svc_rqst *rqstp, struct nlm_res *resp)
 	resp->status = nlmsvc_lock(rqstp, file, host, &argp->lock,
 				   argp->xdrgen.block, &resp->cookie,
 				   argp->xdrgen.reclaim);
+	if (resp->status == nlm__int__deadlock)
+		resp->status = nlm4_deadlock;
 	nlmsvc_release_lockowner(&argp->lock);
 
 out:
@@ -697,7 +702,7 @@ static __be32 nlm4svc_proc_lock_msg(struct svc_rqst *rqstp)
 	struct nlm4_lockargs_wrapper *argp = rqstp->rq_argp;
 	struct nlm_host *host;
 
-	host = nlm4svc_lookup_host(rqstp, argp->xdrgen.alock.caller_name, true);
+	host = nlm4svc_lookup_host(rqstp, argp->xdrgen.alock.caller_name, false);
 	if (!host)
 		return rpc_system_err;
 
