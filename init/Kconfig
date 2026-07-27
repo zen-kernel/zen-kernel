@@ -1009,6 +1009,16 @@ config SCHED_PDS
 
 endchoice
 
+config SCHED_ALT_TOPOLOGY_KUNIT_TEST
+	bool "KUnit tests for alternative scheduler CPU topology" if !KUNIT_ALL_TESTS
+	depends on KUNIT=y && SCHED_SMT
+	default KUNIT_ALL_TESTS
+	help
+	  Test the policy which selects generic, homogeneous SMT, or
+	  heterogeneous P/E scheduling from detected CPU topology.
+	  The tests cover incomplete classification and the rule that
+	  detected E-core SMT disables P/E-aware scheduling.
+
 endif
 
 endmenu

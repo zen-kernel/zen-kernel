@@ -123,8 +123,10 @@ DEFINE_PER_CPU_ALIGNED(cpumask_t *, sched_cpu_topo_end_mask);
 DEFINE_STATIC_KEY_FALSE(sched_smt_present);
 EXPORT_SYMBOL_GPL(sched_smt_present);
 
-cpumask_t sched_smt_mask ____cacheline_aligned_in_smp;
+DEFINE_PER_CPU_ALIGNED(raw_spinlock_t, sched_smt_idle_lock);
 #endif
+
+cpumask_t sched_smt_mask ____cacheline_aligned_in_smp;
 
 /*
  * Keep a unique ID per domain (we use the first CPUs number in the cpumask of
@@ -133,6 +135,8 @@ cpumask_t sched_smt_mask ____cacheline_aligned_in_smp;
  */
 static DEFINE_PER_CPU_READ_MOSTLY(int, sd_llc_id);
 static DEFINE_PER_CPU_READ_MOSTLY(int, sd_llc_size);
+static DEFINE_PER_CPU_READ_MOSTLY(bool, sched_cpu_topology_valid);
+static cpumask_t sched_llc_id_merge_mask;
 
 DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 
@@ -143,12 +147,12 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 # define finish_arch_post_lock_switch()	do { } while (0)
 #endif
 
-static cpumask_t sched_preempt_mask[SCHED_QUEUE_BITS + 2] ____cacheline_aligned_in_smp;
+static cpumask_t sched_preempt_mask[SCHED_QUEUE_BITS + 3] ____cacheline_aligned_in_smp;
 
 cpumask_t *const sched_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS - 1];
 cpumask_t *const sched_sg_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS];
-cpumask_t *const sched_pcore_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS];
-cpumask_t *const sched_ecore_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS + 1];
+cpumask_t *const sched_pcore_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS + 1];
+cpumask_t *const sched_ecore_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS + 2];
 
 /* task function */
 static inline const struct cpumask *task_user_cpus(struct task_struct *p)
@@ -980,7 +984,7 @@ void nohz_balance_enter_idle(int cpu) {}
 int get_nohz_timer_target(void)
 {
 	int i, cpu = smp_processor_id(), default_cpu = -1;
-	struct cpumask *mask;
+	struct cpumask *topo_masks, *mask;
 	const struct cpumask *hk_mask;
 
 	if (housekeeping_cpu(cpu, HK_TYPE_KERNEL_NOISE)) {
@@ -991,11 +995,16 @@ int get_nohz_timer_target(void)
 
 	hk_mask = housekeeping_cpumask(HK_TYPE_KERNEL_NOISE);
 
-	for (mask = per_cpu(sched_cpu_topo_masks, cpu);
-	     mask < per_cpu(sched_cpu_topo_end_mask, cpu); mask++)
+	topo_masks = per_cpu(sched_cpu_topo_masks, cpu);
+	for (mask = topo_masks;
+	     mask < per_cpu(sched_cpu_topo_end_mask, cpu); mask++) {
+		if (sched_cpu_topo_level_repeats(topo_masks, mask))
+			continue;
+
 		for_each_cpu_and(i, mask, hk_mask)
 			if (!idle_cpu(i))
 				return i;
+	}
 
 	if (default_cpu == -1)
 		default_cpu = housekeeping_any_cpu(HK_TYPE_KERNEL_NOISE);
@@ -3137,6 +3146,7 @@ int sched_fork(u64 clone_flags, struct task_struct *p)
 			p->policy = SCHED_NORMAL;
 			p->static_prio = NICE_TO_PRIO(0);
 			p->rt_priority = 0;
+			p->timer_slack_ns = p->default_timer_slack_ns;
 		} else if (PRIO_TO_NICE(p->static_prio) < 0)
 			p->static_prio = NICE_TO_PRIO(0);
 
@@ -4398,12 +4408,13 @@ static inline void schedule_debug(struct task_struct *prev, bool preempt)
 #ifdef ALT_SCHED_DEBUG
 void alt_sched_debug(void)
 {
-	printk(KERN_INFO "sched: pending: 0x%04lx, idle: 0x%04lx, sg_idle: 0x%04lx,"
-	       " ecore_idle: 0x%04lx\n",
-	       sched_rq_pending_mask.bits[0],
-	       sched_idle_mask->bits[0],
-	       sched_pcore_idle_mask->bits[0],
-	       sched_ecore_idle_mask->bits[0]);
+	pr_info("sched: pending: 0x%04lx, idle: 0x%04lx, sg_idle: 0x%04lx\n",
+		sched_rq_pending_mask.bits[0],
+		sched_idle_mask->bits[0],
+		sched_sg_idle_mask->bits[0]);
+	pr_info("sched: pcore_idle: 0x%04lx, ecore_idle: 0x%04lx\n",
+		sched_pcore_idle_mask->bits[0],
+		sched_ecore_idle_mask->bits[0]);
 }
 #endif
 
@@ -4450,7 +4461,7 @@ migrate_pending_tasks(struct rq *rq, struct rq *dest_rq, const int dest_cpu)
 
 static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 {
-	cpumask_t *topo_mask, *end_mask, chk;
+	cpumask_t *topo_masks, *topo_mask, *end_mask, chk;
 
 	if (unlikely(!rq->online))
 		return 0;
@@ -4458,10 +4469,14 @@ static inline int take_other_rq_tasks(struct rq *rq, int cpu)
 	if (cpumask_empty(&sched_rq_pending_mask))
 		return 0;
 
-	topo_mask = per_cpu(sched_cpu_topo_masks, cpu);
+	topo_masks = per_cpu(sched_cpu_topo_masks, cpu);
+	topo_mask = topo_masks;
 	end_mask = per_cpu(sched_cpu_topo_end_mask, cpu);
 	do {
 		int i;
+
+		if (sched_cpu_topo_level_repeats(topo_masks, topo_mask))
+			continue;
 
 		if (!cpumask_and(&chk, &sched_rq_pending_mask, topo_mask))
 			continue;
@@ -6142,24 +6157,20 @@ static void cpuset_cpu_inactive(unsigned int cpu)
 static inline void sched_smt_present_inc(int cpu)
 {
 #ifdef CONFIG_SCHED_SMT
-	if (cpumask_weight(cpu_smt_mask(cpu)) == 2) {
+	if (cpumask_weight(cpu_smt_mask(cpu)) == 2)
 		static_branch_inc_cpuslocked(&sched_smt_present);
-		cpumask_or(&sched_smt_mask, &sched_smt_mask, cpu_smt_mask(cpu));
-	}
 #endif /* CONFIG_SCHED_SMT */
 }
 
 static inline void sched_smt_present_dec(int cpu)
 {
 #ifdef CONFIG_SCHED_SMT
-	if (cpumask_weight(cpu_smt_mask(cpu)) == 2) {
+	if (cpumask_weight(cpu_smt_mask(cpu)) == 2)
 		static_branch_dec_cpuslocked(&sched_smt_present);
-		if (!static_branch_likely(&sched_smt_present))
-			cpumask_clear(sched_pcore_idle_mask);
-		cpumask_andnot(&sched_smt_mask, &sched_smt_mask, cpu_smt_mask(cpu));
-	}
 #endif /* CONFIG_SCHED_SMT */
 }
+
+static void sched_topology_hotplug_rebuild(unsigned int cpu, bool activate);
 
 int sched_cpu_activate(unsigned int cpu)
 {
@@ -6175,6 +6186,8 @@ int sched_cpu_activate(unsigned int cpu)
 	 * When going up, increment the number of cores with SMT present.
 	 */
 	sched_smt_present_inc(cpu);
+	if (sched_smp_initialized)
+		sched_topology_hotplug_rebuild(cpu, true);
 
 	set_cpu_active(cpu, true);
 
@@ -6231,6 +6244,7 @@ int sched_cpu_deactivate(unsigned int cpu)
 	if (!sched_smp_initialized)
 		return 0;
 
+	sched_topology_hotplug_rebuild(cpu, false);
 	cpuset_cpu_inactive(cpu);
 
 	return 0;
@@ -6330,71 +6344,346 @@ int sched_cpu_dying(unsigned int cpu)
 
 static void sched_init_topology_cpumask_early(void)
 {
-	int cpu;
-	cpumask_t *tmp;
+	int cpu, level;
+	cpumask_t *topo;
 
 	for_each_possible_cpu(cpu) {
-		/* init topo masks */
-		tmp = per_cpu(sched_cpu_topo_masks, cpu);
+		topo = per_cpu(sched_cpu_topo_masks, cpu);
+		for (level = 0; level < NR_CPU_AFFINITY_LEVELS; level++)
+			cpumask_clear(topo + level);
 
-		cpumask_copy(tmp, cpu_possible_mask);
-		per_cpu(sched_cpu_llc_mask, cpu) = tmp;
-		per_cpu(sched_cpu_topo_end_mask, cpu) = ++tmp;
+		cpumask_copy(topo + SCHED_CPU_AFFINITY_OTHER,
+			     cpu_possible_mask);
+		per_cpu(sched_cpu_llc_mask, cpu) =
+			topo + SCHED_CPU_AFFINITY_LLC;
+		per_cpu(sched_cpu_topo_end_mask, cpu) =
+			topo + NR_CPU_AFFINITY_LEVELS;
+		per_cpu(sd_llc_id, cpu) = -1;
 		per_cpu(sd_llc_size, cpu) = cpumask_weight(cpu_possible_mask);
+		per_cpu(sched_cpu_topology_valid, cpu) = false;
 	}
 }
 
-#define TOPOLOGY_CPUMASK(name, mask, last)\
-	if (cpumask_and(topo, topo, mask)) {					\
-		cpumask_copy(topo, mask);					\
-		printk(KERN_INFO "sched: cpu#%02d topo: 0x%08lx - "#name,	\
-		       cpu, (topo++)->bits[0]);					\
-	}									\
-	if (!last)								\
-		bitmap_complement(cpumask_bits(topo), cpumask_bits(mask),	\
-				  nr_cpumask_bits);
+static bool sched_assign_llc_id(int cpu, const struct cpumask *active_mask)
+{
+	int id, peer;
 
-static void sched_init_topology_cpumask(void)
+	cpumask_clear(&sched_llc_id_merge_mask);
+	if (per_cpu(sched_cpu_topology_valid, cpu) &&
+	    per_cpu(sd_llc_id, cpu) >= 0)
+		cpumask_set_cpu(per_cpu(sd_llc_id, cpu),
+				&sched_llc_id_merge_mask);
+
+	for_each_cpu_and(peer, cpu_coregroup_mask(cpu), active_mask) {
+		if (peer == cpu ||
+		    !per_cpu(sched_cpu_topology_valid, peer))
+			continue;
+
+		id = per_cpu(sd_llc_id, peer);
+		if (id >= 0)
+			cpumask_set_cpu(id, &sched_llc_id_merge_mask);
+	}
+
+	if (cpumask_empty(&sched_llc_id_merge_mask)) {
+		per_cpu(sd_llc_id, cpu) = cpu;
+		return false;
+	}
+
+	id = cpumask_first(&sched_llc_id_merge_mask);
+	per_cpu(sd_llc_id, cpu) = id;
+
+	if (cpumask_weight(&sched_llc_id_merge_mask) == 1)
+		return false;
+
+	/*
+	 * Independently discovered offline components can carry different
+	 * tokens until they first become co-active.  Merge every retained
+	 * member so future hotplug cannot split the cache domain again.
+	 */
+	for_each_possible_cpu(peer) {
+		if (per_cpu(sched_cpu_topology_valid, peer) &&
+		    cpumask_test_cpu(per_cpu(sd_llc_id, peer),
+				     &sched_llc_id_merge_mask))
+			per_cpu(sd_llc_id, peer) = id;
+	}
+
+	return true;
+}
+
+static bool sched_build_topology_cpumask(int cpu,
+					 const struct cpumask *active_mask)
+{
+	cpumask_t *topo = per_cpu(sched_cpu_topo_masks, cpu);
+	bool llc_id_merged;
+	int level;
+
+	for (level = 0; level < NR_CPU_AFFINITY_LEVELS; level++)
+		cpumask_clear(topo + level);
+
+#ifdef CONFIG_SCHED_SMT
+	cpumask_and(topo + SCHED_CPU_AFFINITY_SMT, active_mask,
+		    topology_sibling_cpumask(cpu));
+#endif /* CONFIG_SCHED_SMT */
+	cpumask_and(topo + SCHED_CPU_AFFINITY_CLUSTER, active_mask,
+		    topology_cluster_cpumask(cpu));
+	cpumask_and(topo + SCHED_CPU_AFFINITY_LLC, active_mask,
+		    cpu_coregroup_mask(cpu));
+	cpumask_and(topo + SCHED_CPU_AFFINITY_CORE, active_mask,
+		    topology_core_cpumask(cpu));
+	cpumask_copy(topo + SCHED_CPU_AFFINITY_OTHER, active_mask);
+
+	per_cpu(sched_cpu_llc_mask, cpu) =
+		topo + SCHED_CPU_AFFINITY_LLC;
+	per_cpu(sched_cpu_topo_end_mask, cpu) =
+		topo + NR_CPU_AFFINITY_LEVELS;
+
+	llc_id_merged = sched_assign_llc_id(cpu, active_mask);
+	per_cpu(sd_llc_size, cpu) =
+		max_t(int, 1, cpumask_weight_and(active_mask,
+						 cpu_coregroup_mask(cpu)));
+	per_cpu(sched_cpu_topology_valid, cpu) = true;
+
+	return llc_id_merged;
+}
+
+static void sched_topology_add_cpu(int cpu, int added_cpu)
+{
+	cpumask_t *topo = per_cpu(sched_cpu_topo_masks, cpu);
+
+#ifdef CONFIG_SCHED_SMT
+	if (cpumask_test_cpu(added_cpu, topology_sibling_cpumask(cpu)))
+		cpumask_set_cpu(added_cpu,
+				topo + SCHED_CPU_AFFINITY_SMT);
+#endif
+	if (cpumask_test_cpu(added_cpu, topology_cluster_cpumask(cpu)))
+		cpumask_set_cpu(added_cpu,
+				topo + SCHED_CPU_AFFINITY_CLUSTER);
+	if (cpumask_test_cpu(added_cpu, cpu_coregroup_mask(cpu)))
+		cpumask_set_cpu(added_cpu,
+				topo + SCHED_CPU_AFFINITY_LLC);
+	if (cpumask_test_cpu(added_cpu, topology_core_cpumask(cpu)))
+		cpumask_set_cpu(added_cpu,
+				topo + SCHED_CPU_AFFINITY_CORE);
+	cpumask_set_cpu(added_cpu, topo + SCHED_CPU_AFFINITY_OTHER);
+}
+
+static void sched_topology_remove_cpu(int cpu, int removed_cpu)
+{
+	cpumask_t *topo = per_cpu(sched_cpu_topo_masks, cpu);
+	int level;
+
+	for (level = 0; level < NR_CPU_AFFINITY_LEVELS; level++)
+		cpumask_clear_cpu(removed_cpu, topo + level);
+}
+
+static void sched_topology_update_llc_size(const struct cpumask *active_mask,
+					   int changed_cpu)
 {
 	int cpu;
-	cpumask_t *topo;
 
-	for_each_online_cpu(cpu) {
-		topo = per_cpu(sched_cpu_topo_masks, cpu);
+	for_each_cpu_and(cpu, cpu_coregroup_mask(changed_cpu), active_mask)
+		per_cpu(sd_llc_size, cpu) =
+			max_t(int, 1, cpumask_weight_and(active_mask,
+							 cpu_coregroup_mask(cpu)));
+}
 
-		bitmap_complement(cpumask_bits(topo), cpumask_bits(cpumask_of(cpu)),
-				  nr_cpumask_bits);
-#ifdef CONFIG_SCHED_SMT
-		TOPOLOGY_CPUMASK(smt, topology_sibling_cpumask(cpu), false);
-#endif /* CONFIG_SCHED_SMT */
-		TOPOLOGY_CPUMASK(cluster, topology_cluster_cpumask(cpu), false);
+enum sched_topology_update {
+	SCHED_TOPOLOGY_BOOT,
+	SCHED_TOPOLOGY_ACTIVATE,
+	SCHED_TOPOLOGY_DEACTIVATE,
+};
 
-		per_cpu(sd_llc_id, cpu) = cpumask_first(cpu_coregroup_mask(cpu));
-		per_cpu(sd_llc_size, cpu) = cpumask_weight(cpu_coregroup_mask(cpu));
-		per_cpu(sched_cpu_llc_mask, cpu) = topo;
-		TOPOLOGY_CPUMASK(coregroup, cpu_coregroup_mask(cpu), false);
+struct sched_topology_rebuild_context {
+	cpumask_t active_mask;
+	enum sched_topology_update update;
+	unsigned int cpu;
+	bool llc_id_merged;
+};
 
-		TOPOLOGY_CPUMASK(core, topology_core_cpumask(cpu), false);
+/* Boot and CPU hotplug are serialized, so one context is sufficient. */
+static struct sched_topology_rebuild_context sched_topology_context;
 
-		TOPOLOGY_CPUMASK(others, cpu_online_mask, true);
+static void
+sched_topology_boot_update(const struct sched_topology_rebuild_context *ctx)
+{
+	int cpu;
 
-		per_cpu(sched_cpu_topo_end_mask, cpu) = topo;
-		printk(KERN_INFO "sched: cpu#%02d llc_id = %d, llc_mask idx = %d\n",
-		       cpu, per_cpu(sd_llc_id, cpu),
-		       (int) (per_cpu(sched_cpu_llc_mask, cpu) -
-			      per_cpu(sched_cpu_topo_masks, cpu)));
+	for_each_cpu(cpu, &ctx->active_mask) {
+		cpu_rq(cpu)->idle->time_slice = sysctl_sched_base_slice;
+		sched_build_topology_cpumask(cpu, &ctx->active_mask);
 	}
+}
+
+static void
+sched_topology_activate_update(struct sched_topology_rebuild_context *ctx)
+{
+	int cpu, incoming = ctx->cpu;
+
+	ctx->llc_id_merged =
+		sched_build_topology_cpumask(incoming, &ctx->active_mask);
+
+	for_each_cpu(cpu, cpu_active_mask) {
+		sched_topology_add_cpu(cpu, incoming);
+		if (cpumask_test_cpu(incoming, cpu_coregroup_mask(cpu)))
+			per_cpu(sd_llc_size, cpu) =
+				max_t(int, 1,
+				      cpumask_weight_and(&ctx->active_mask,
+							 cpu_coregroup_mask(cpu)));
+	}
+}
+
+static void
+sched_topology_deactivate_update(const struct sched_topology_rebuild_context *ctx)
+{
+	int cpu, outgoing = ctx->cpu;
+
+	for_each_cpu(cpu, &ctx->active_mask)
+		sched_topology_remove_cpu(cpu, outgoing);
+
+	sched_topology_update_llc_size(&ctx->active_mask, outgoing);
+}
+
+static void
+sched_topology_extend_inactive_snapshots(int incoming,
+					 const struct cpumask *active_mask,
+					 bool llc_id_merged)
+{
+	int cpu, peer;
+
+	/*
+	 * A sleeping task may retain an offline previous CPU.  Keep that CPU's
+	 * locality row useful without extending the stop-machine section.
+	 * Individual cpumask bit operations are atomic against lockless readers,
+	 * and every placement candidate is independently restricted to active
+	 * CPUs.
+	 *
+	 * Do not remove relationships when another CPU is deactivated.  Some
+	 * architectures clear their sibling masks later in CPU teardown, so
+	 * that learned locality might be impossible to reconstruct.
+	 */
+	for_each_possible_cpu(cpu) {
+		cpumask_t *topo;
+
+		if (cpu == incoming || cpu_active(cpu) ||
+		    !per_cpu(sched_cpu_topology_valid, cpu))
+			continue;
+
+		sched_topology_add_cpu(cpu, incoming);
+
+		/*
+		 * Retained architectural masks may already be cleared.  A stable
+		 * LLC token can still recover the cache and enclosing domains.
+		 */
+		if (per_cpu(sd_llc_id, cpu) != per_cpu(sd_llc_id, incoming))
+			continue;
+
+		topo = per_cpu(sched_cpu_topo_masks, cpu);
+		cpumask_set_cpu(incoming, topo + SCHED_CPU_AFFINITY_LLC);
+		cpumask_set_cpu(incoming, topo + SCHED_CPU_AFFINITY_CORE);
+
+		if (!llc_id_merged)
+			continue;
+
+		/*
+		 * Token convergence joins independently retained components.
+		 * Promote every active member of the joined LLC into every
+		 * inactive row; otherwise those components stay topologically
+		 * split even though cpus_share_cache() now agrees.
+		 */
+		for_each_cpu(peer, active_mask) {
+			if (!per_cpu(sched_cpu_topology_valid, peer) ||
+			    per_cpu(sd_llc_id, peer) !=
+				    per_cpu(sd_llc_id, incoming))
+				continue;
+
+			sched_topology_add_cpu(cpu, peer);
+			cpumask_set_cpu(peer,
+					topo + SCHED_CPU_AFFINITY_LLC);
+			cpumask_set_cpu(peer,
+					topo + SCHED_CPU_AFFINITY_CORE);
+		}
+	}
+}
+
+static int sched_rebuild_topology_stop(void *data)
+{
+	struct sched_topology_rebuild_context *ctx = data;
+
+	sched_topology_apply(&ctx->active_mask);
+
+	switch (ctx->update) {
+	case SCHED_TOPOLOGY_BOOT:
+		sched_topology_boot_update(ctx);
+		break;
+	case SCHED_TOPOLOGY_ACTIVATE:
+		sched_topology_activate_update(ctx);
+		break;
+	case SCHED_TOPOLOGY_DEACTIVATE:
+		sched_topology_deactivate_update(ctx);
+		break;
+	}
+
+	return 0;
+}
+
+static void sched_topology_hotplug_rebuild(unsigned int cpu, bool activate)
+{
+	unsigned long flags;
+	int ret;
+
+	cpumask_copy(&sched_topology_context.active_mask, cpu_active_mask);
+	if (activate)
+		cpumask_set_cpu(cpu, &sched_topology_context.active_mask);
+
+	sched_topology_context.cpu = cpu;
+	sched_topology_context.update = activate ?
+		SCHED_TOPOLOGY_ACTIVATE : SCHED_TOPOLOGY_DEACTIVATE;
+	sched_topology_context.llc_id_merged = false;
+
+	sched_topology_prepare(&sched_topology_context.active_mask);
+
+	/* A preemption here would leave the other CPUs spinning with IRQs off. */
+	local_irq_save(flags);
+	ret = stop_machine_from_inactive_cpu(sched_rebuild_topology_stop,
+					     &sched_topology_context,
+					     cpumask_of(cpu));
+	local_irq_restore(flags);
+
+	if (WARN_ON_ONCE(ret))
+		return;
+
+	if (activate) {
+		const struct cpumask *active_mask =
+			&sched_topology_context.active_mask;
+		bool llc_id_merged = sched_topology_context.llc_id_merged;
+
+		sched_topology_extend_inactive_snapshots(cpu, active_mask, llc_id_merged);
+	}
+	sched_topology_report();
+	sched_topology_queue_idle_select();
 }
 
 void __init sched_init_smp(void)
 {
+	int ret;
+
 	/* Move init over to a non-isolated CPU */
 	if (set_cpus_allowed_ptr(current, housekeeping_cpumask(HK_TYPE_DOMAIN)) < 0)
 		BUG();
 	current->flags &= ~PF_NO_SETAFFINITY;
 
-	sched_init_topology();
-	sched_init_topology_cpumask();
+	cpumask_copy(&sched_topology_context.active_mask, cpu_active_mask);
+	sched_topology_context.update = SCHED_TOPOLOGY_BOOT;
+	sched_topology_context.cpu = nr_cpu_ids;
+	sched_topology_context.llc_id_merged = false;
+
+	sched_topology_prepare(&sched_topology_context.active_mask);
+	ret = stop_machine(sched_rebuild_topology_stop,
+			   &sched_topology_context, NULL);
+	if (!WARN_ON_ONCE(ret)) {
+		sched_topology_report();
+		sched_topology_init_idle_select();
+	}
 
 	sched_smp_initialized = true;
 }
@@ -6448,6 +6737,9 @@ void __init sched_init(void)
 	for_each_possible_cpu(i) {
 		rq = cpu_rq(i);
 
+#ifdef CONFIG_SCHED_SMT
+		raw_spin_lock_init(&per_cpu(sched_smt_idle_lock, i));
+#endif
 		sched_queue_init(&rq->queue);
 		rq->prio = IDLE_TASK_SCHED_PRIO;
 		rq->prio_balance_time = 0;
