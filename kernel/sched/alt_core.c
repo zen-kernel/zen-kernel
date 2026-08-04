@@ -712,10 +712,13 @@ static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
 	add_nr_running(rq, 1);
 }
 
-void requeue_task(struct task_struct *p, struct rq *rq)
+void requeue_task(struct task_struct *p, struct rq *rq, int flags)
 {
 	struct list_head *node = &p->sq_node;
 	int deq_idx, idx, prio;
+
+	if (!rt_task(p))
+		flags &= ~ENQUEUE_HEAD;
 
 	TASK_SCHED_PRIO_IDX(p, rq, idx, prio);
 #ifdef ALT_SCHED_DEBUG
@@ -724,14 +727,20 @@ void requeue_task(struct task_struct *p, struct rq *rq)
 	WARN_ONCE(task_rq(p) != rq, "sched: cpu[%d] requeue task reside on cpu%d\n",
 		  cpu_of(rq), task_cpu(p));
 #endif
-	if (list_is_last(node, &rq->queue.heads[idx]))
+	if (flags & ENQUEUE_HEAD) {
+		if (list_is_first(node, &rq->queue.heads[idx]))
+			return;
+	} else if (list_is_last(node, &rq->queue.heads[idx]))
 		return;
 
 	__list_del_entry(node);
 	if (node->prev == node->next && (deq_idx = node->next - &rq->queue.heads[0]) != idx)
 		clear_bit(sched_idx2prio(deq_idx, rq), rq->queue.bitmap);
 
-	list_add_tail(node, &rq->queue.heads[idx]);
+	if (flags & ENQUEUE_HEAD)
+		list_add(node, &rq->queue.heads[idx]);
+	else
+		list_add_tail(node, &rq->queue.heads[idx]);
 	if (list_is_first(node, &rq->queue.heads[idx]))
 		set_bit(prio, rq->queue.bitmap);
 	update_sched_preempt_mask(rq);
@@ -4562,7 +4571,7 @@ static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 	sched_task_renew(p, rq);
 
 	if (SCHED_FIFO != p->policy && task_on_rq_queued(p))
-		requeue_task(p, rq);
+		requeue_task(p, rq, 0);
 }
 
 static inline int balance_select_task_rq(struct task_struct *p, cpumask_t *avail_mask)
@@ -5319,6 +5328,8 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
 	trace_sched_pi_setprio(p, pi_task);
 
 	scoped_guard (sched_change, p, queue_flag) {
+		if (rt_prio(prio) && p->prio < prio)
+			scope->flags |= ENQUEUE_HEAD;
 		p->prio = prio;
 	}
 
@@ -8090,7 +8101,7 @@ void sched_change_end(struct sched_change_ctx *ctx)
 	/* Trigger resched if task sched_prio has been modified. */
 	if (ctx->queued) {
 		update_rq_clock(rq);
-		requeue_task(p, rq);
+		requeue_task(p, rq, ctx->flags);
 		wakeup_preempt(rq);
 	}
 }
