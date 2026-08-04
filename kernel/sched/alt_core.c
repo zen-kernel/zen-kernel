@@ -8082,12 +8082,15 @@ static DEFINE_PER_CPU(struct sched_change_ctx, sched_change_ctx);
 struct sched_change_ctx *sched_change_begin(struct task_struct *p, unsigned int flags)
 {
 	struct sched_change_ctx *ctx = this_cpu_ptr(&sched_change_ctx);
+	struct rq *rq = task_rq(p);
 
 	/*
 	 * Must exclusively use matched flags since this is both dequeue and
 	 * enqueue.
 	 */
 	WARN_ON_ONCE(flags & 0xFFFF0000);
+
+	lockdep_assert_rq_held(rq);
 
 	*ctx = (struct sched_change_ctx){
 		.p = p,
@@ -8102,6 +8105,8 @@ void sched_change_end(struct sched_change_ctx *ctx)
 {
 	struct task_struct *p = ctx->p;
 	struct rq *rq = task_rq(ctx->p);
+
+	lockdep_assert_rq_held(rq);
 
 	/* Trigger resched if task sched_prio has been modified. */
 	if (ctx->queued) {
