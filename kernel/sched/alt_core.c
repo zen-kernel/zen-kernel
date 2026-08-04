@@ -4015,6 +4015,9 @@ static __always_inline void update_curr(struct rq *rq, struct task_struct *p)
 {
 	s64 ns = rq->clock_task - p->last_ran;
 
+	if (unlikely(ns <= 0))
+		return;
+
 	p->sched_time += ns;
 	cgroup_account_cputime(p, ns);
 	account_group_exec_runtime(p, ns);
