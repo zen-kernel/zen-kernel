@@ -273,7 +273,7 @@ struct rq {
 
 	/* Scratch cpumask to be temporarily used under rq_lock */
 	cpumask_var_t		scratch_mask;
-};
+} __no_randomize_layout;
 
 static inline int cpu_of(const struct rq *rq)
 {
