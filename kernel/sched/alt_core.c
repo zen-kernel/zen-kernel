@@ -8067,6 +8067,11 @@ struct sched_change_ctx *sched_change_begin(struct task_struct *p, unsigned int 
 
 	lockdep_assert_rq_held(rq);
 
+	if (!(flags & DEQUEUE_NOCLOCK)) {
+		update_rq_clock(rq);
+		flags |= DEQUEUE_NOCLOCK;
+	}
+
 	*ctx = (struct sched_change_ctx){
 		.p = p,
 		.flags = flags,
@@ -8085,7 +8090,6 @@ void sched_change_end(struct sched_change_ctx *ctx)
 
 	/* Trigger resched if task sched_prio has been modified. */
 	if (ctx->queued) {
-		update_rq_clock(rq);
 		requeue_task(p, rq, ctx->flags);
 		wakeup_preempt(rq);
 	}
