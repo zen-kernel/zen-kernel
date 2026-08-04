@@ -71,7 +71,7 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(sched_entry_tp);
 EXPORT_TRACEPOINT_SYMBOL_GPL(sched_exit_tp);
 EXPORT_TRACEPOINT_SYMBOL_GPL(sched_set_need_resched_tp);
 
-#define sched_feat(x)	(1)
+#define sched_feat(x)	(0)
 /*
  * Print a warning if need_resched is set for the given duration (if
  * LATENCY_WARN is enabled).
