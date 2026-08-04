@@ -922,6 +922,8 @@ unsigned long sugov_effective_cpu_perf(int cpu, unsigned long actual,
 
 extern void schedule_idle(void);
 
+asmlinkage void schedule_user(void);
+
 #ifdef CONFIG_MEMBARRIER
 /*
  * The scheduler provides memory barriers required by membarrier between:
