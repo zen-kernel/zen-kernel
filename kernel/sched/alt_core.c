@@ -1415,9 +1415,9 @@ static inline void hrtick_schedule_exit(struct rq *rq) { }
  *
  * Context: rq->lock
  */
-static void activate_task(struct task_struct *p, struct rq *rq)
+static void activate_task(struct task_struct *p, struct rq *rq, int flags)
 {
-	enqueue_task(p, rq, ENQUEUE_WAKEUP);
+	enqueue_task(p, rq, flags);
 
 	WRITE_ONCE(p->on_rq, TASK_ON_RQ_QUEUED);
 	ASSERT_EXCLUSIVE_WRITER(p->on_rq);
@@ -2409,17 +2409,22 @@ static inline void ttwu_do_wakeup(struct task_struct *p)
 static inline void
 ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags)
 {
+	int en_flags = ENQUEUE_WAKEUP;
+
 	lockdep_assert_rq_held(rq);
 
 	if (p->sched_contributes_to_load)
 		rq->nr_uninterruptible--;
 
-	if (!(wake_flags & WF_MIGRATED) && p->in_iowait) {
+	if (wake_flags & WF_MIGRATED)
+		en_flags |= ENQUEUE_MIGRATED;
+	else
+	if (p->in_iowait) {
 		delayacct_blkio_end(p);
 		atomic_dec(&task_rq(p)->nr_iowait);
 	}
 
-	activate_task(p, rq);
+	activate_task(p, rq, en_flags);
 	wakeup_preempt(rq);
 
 	ttwu_do_wakeup(p);
@@ -3366,7 +3371,7 @@ void wake_up_new_task(struct task_struct *p)
 	raw_spin_rq_lock(rq);
 	update_rq_clock(rq);
 
-	activate_task(p, rq);
+	activate_task(p, rq, ENQUEUE_INITIAL);
 	trace_sched_wakeup_new(p);
 	wakeup_preempt(rq);
 
