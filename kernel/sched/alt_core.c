@@ -4143,7 +4143,7 @@ void sched_tick(void)
 {
 	int cpu __maybe_unused = smp_processor_id();
 	struct rq *rq = cpu_rq(cpu);
-	struct task_struct *curr = rq->curr;
+	struct task_struct *curr;
 	struct rq_flags rf;
 	u64 resched_latency;
 
@@ -4153,6 +4153,8 @@ void sched_tick(void)
 	sched_clock_tick();
 
 	rq_lock(rq, &rf);
+	curr = rq->curr;
+
 	psi_account_irqtime(rq, curr, NULL);
 	update_rq_clock(rq);
 
