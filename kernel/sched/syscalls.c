@@ -1451,11 +1451,11 @@ static void do_sched_yield(void)
 	p = current;
 	if (rt_task(p)) {
 		if (task_on_rq_queued(p))
-			requeue_task(p, rq);
+			requeue_task(p, rq, 0);
 	} else if (rq->nr_running > 1) {
 		do_sched_yield_type_1(p, rq);
 		if (task_on_rq_queued(p))
-			requeue_task(p, rq);
+			requeue_task(p, rq, 0);
 	}
 #else /* !CONFIG_SCHED_ALT */
 	rq = this_rq_lock_irq(&rf);

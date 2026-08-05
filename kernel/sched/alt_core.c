@@ -71,7 +71,7 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(sched_entry_tp);
 EXPORT_TRACEPOINT_SYMBOL_GPL(sched_exit_tp);
 EXPORT_TRACEPOINT_SYMBOL_GPL(sched_set_need_resched_tp);
 
-#define sched_feat(x)	(1)
+#define sched_feat(x)	(0)
 /*
  * Print a warning if need_resched is set for the given duration (if
  * LATENCY_WARN is enabled).
@@ -704,10 +704,13 @@ static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
 	add_nr_running(rq, 1);
 }
 
-void requeue_task(struct task_struct *p, struct rq *rq)
+void requeue_task(struct task_struct *p, struct rq *rq, int flags)
 {
 	struct list_head *node = &p->sq_node;
 	int deq_idx, idx, prio;
+
+	if (!rt_task(p))
+		flags &= ~ENQUEUE_HEAD;
 
 	TASK_SCHED_PRIO_IDX(p, rq, idx, prio);
 #ifdef ALT_SCHED_DEBUG
@@ -716,14 +719,20 @@ void requeue_task(struct task_struct *p, struct rq *rq)
 	WARN_ONCE(task_rq(p) != rq, "sched: cpu[%d] requeue task reside on cpu%d\n",
 		  cpu_of(rq), task_cpu(p));
 #endif
-	if (list_is_last(node, &rq->queue.heads[idx]))
+	if (flags & ENQUEUE_HEAD) {
+		if (list_is_first(node, &rq->queue.heads[idx]))
+			return;
+	} else if (list_is_last(node, &rq->queue.heads[idx]))
 		return;
 
 	__list_del_entry(node);
 	if (node->prev == node->next && (deq_idx = node->next - &rq->queue.heads[0]) != idx)
 		clear_bit(sched_idx2prio(deq_idx, rq), rq->queue.bitmap);
 
-	list_add_tail(node, &rq->queue.heads[idx]);
+	if (flags & ENQUEUE_HEAD)
+		list_add(node, &rq->queue.heads[idx]);
+	else
+		list_add_tail(node, &rq->queue.heads[idx]);
 	if (list_is_first(node, &rq->queue.heads[idx]))
 		set_bit(prio, rq->queue.bitmap);
 	update_sched_preempt_mask(rq);
@@ -1403,9 +1412,9 @@ static inline void hrtick_schedule_exit(struct rq *rq) { }
  *
  * Context: rq->lock
  */
-static void activate_task(struct task_struct *p, struct rq *rq)
+static void activate_task(struct task_struct *p, struct rq *rq, int flags)
 {
-	enqueue_task(p, rq, ENQUEUE_WAKEUP);
+	enqueue_task(p, rq, flags);
 
 	WRITE_ONCE(p->on_rq, TASK_ON_RQ_QUEUED);
 	ASSERT_EXCLUSIVE_WRITER(p->on_rq);
@@ -2380,17 +2389,22 @@ static inline void ttwu_do_wakeup(struct task_struct *p)
 static inline void
 ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags)
 {
+	int en_flags = ENQUEUE_WAKEUP;
+
 	lockdep_assert_rq_held(rq);
 
 	if (p->sched_contributes_to_load)
 		rq->nr_uninterruptible--;
 
-	if (!(wake_flags & WF_MIGRATED) && p->in_iowait) {
+	if (wake_flags & WF_MIGRATED)
+		en_flags |= ENQUEUE_MIGRATED;
+	else
+	if (p->in_iowait) {
 		delayacct_blkio_end(p);
 		atomic_dec(&task_rq(p)->nr_iowait);
 	}
 
-	activate_task(p, rq);
+	activate_task(p, rq, en_flags);
 	wakeup_preempt(rq);
 
 	ttwu_do_wakeup(p);
@@ -3334,7 +3348,7 @@ void wake_up_new_task(struct task_struct *p)
 	raw_spin_rq_lock(rq);
 	update_rq_clock(rq);
 
-	activate_task(p, rq);
+	activate_task(p, rq, ENQUEUE_INITIAL);
 	trace_sched_wakeup_new(p);
 	wakeup_preempt(rq);
 
@@ -3965,6 +3979,9 @@ static __always_inline void update_curr(struct rq *rq, struct task_struct *p)
 {
 	s64 ns = rq->clock_task - p->last_ran;
 
+	if (unlikely(ns <= 0))
+		return;
+
 	p->sched_time += ns;
 	cgroup_account_cputime(p, ns);
 	account_group_exec_runtime(p, ns);
@@ -4090,7 +4107,7 @@ void sched_tick(void)
 {
 	int cpu __maybe_unused = smp_processor_id();
 	struct rq *rq = cpu_rq(cpu);
-	struct task_struct *curr = rq->curr;
+	struct task_struct *curr;
 	struct rq_flags rf;
 	u64 resched_latency;
 
@@ -4100,6 +4117,8 @@ void sched_tick(void)
 	sched_clock_tick();
 
 	rq_lock(rq, &rf);
+	curr = rq->curr;
+
 	psi_account_irqtime(rq, curr, NULL);
 	update_rq_clock(rq);
 
@@ -4521,7 +4540,7 @@ static inline void time_slice_expired(struct task_struct *p, struct rq *rq)
 	sched_task_renew(p, rq);
 
 	if (SCHED_FIFO != p->policy && task_on_rq_queued(p))
-		requeue_task(p, rq);
+		requeue_task(p, rq, 0);
 }
 
 static inline int balance_select_task_rq(struct task_struct *p, cpumask_t *avail_mask)
@@ -5286,6 +5305,8 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
 	trace_sched_pi_setprio(p, pi_task);
 
 	scoped_guard (sched_change, p, queue_flag) {
+		if (rt_prio(prio) && p->prio < prio)
+			scope->flags |= ENQUEUE_HEAD;
 		p->prio = prio;
 	}
 
@@ -8036,12 +8057,20 @@ static DEFINE_PER_CPU(struct sched_change_ctx, sched_change_ctx);
 struct sched_change_ctx *sched_change_begin(struct task_struct *p, unsigned int flags)
 {
 	struct sched_change_ctx *ctx = this_cpu_ptr(&sched_change_ctx);
+	struct rq *rq = task_rq(p);
 
 	/*
 	 * Must exclusively use matched flags since this is both dequeue and
 	 * enqueue.
 	 */
 	WARN_ON_ONCE(flags & 0xFFFF0000);
+
+	lockdep_assert_rq_held(rq);
+
+	if (!(flags & DEQUEUE_NOCLOCK)) {
+		update_rq_clock(rq);
+		flags |= DEQUEUE_NOCLOCK;
+	}
 
 	*ctx = (struct sched_change_ctx){
 		.p = p,
@@ -8057,10 +8086,11 @@ void sched_change_end(struct sched_change_ctx *ctx)
 	struct task_struct *p = ctx->p;
 	struct rq *rq = task_rq(ctx->p);
 
+	lockdep_assert_rq_held(rq);
+
 	/* Trigger resched if task sched_prio has been modified. */
 	if (ctx->queued) {
-		update_rq_clock(rq);
-		requeue_task(p, rq);
+		requeue_task(p, rq, ctx->flags);
 		wakeup_preempt(rq);
 	}
 }

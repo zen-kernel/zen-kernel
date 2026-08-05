@@ -511,14 +511,18 @@ void sched_topology_report(void)
 		return;
 	}
 
-	pr_info("sched/alt: %s topology, idle select: %s, active: %*pbl, SMT: %*pbl, P: %*pbl, E: %*pbl, UNKNOWN: %*pbl\n",
+	pr_info("sched/alt: %s topology, idle select: %s, active: %*pbl, SMT: %*pbl%s%*pbl%s%*pbl%s%*pbl\n",
 		sched_heterogeneous ? "heterogeneous" : "homogeneous",
 		sched_idle_select_mode_name(READ_ONCE(sched_idle_select_mode)),
 		cpumask_pr_args(&sched_topology_active_mask),
 		cpumask_pr_args(&sched_smt_mask),
+		cpumask_empty(&sched_pcore_mask) ? "" : ", P: ",
 		cpumask_pr_args(&sched_pcore_mask),
+		cpumask_empty(&sched_ecore_mask) ? "" : ", E: ",
 		cpumask_pr_args(&sched_ecore_mask),
-		cpumask_pr_args(&sched_unknown_mask));
+		sched_mixed_cpu_types ? ", UNKNOWN: " : "",
+		cpumask_pr_args(sched_mixed_cpu_types ?
+				&sched_unknown_mask : cpu_none_mask));
 }
 
 #ifdef CONFIG_SCHED_SMT
