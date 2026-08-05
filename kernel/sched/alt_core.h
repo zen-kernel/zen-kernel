@@ -77,7 +77,7 @@ static __always_inline struct task_struct * sched_rq_next_task(struct task_struc
 	return list_next_entry(p, sq_node);
 }
 
-extern void requeue_task(struct task_struct *p, struct rq *rq);
+extern void requeue_task(struct task_struct *p, struct rq *rq, int flags);
 
 #ifdef ALT_SCHED_DEBUG
 extern void alt_sched_debug(void);
