@@ -86,10 +86,6 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 
 #define STOP_PRIO		(MAX_RT_PRIO - 1)
 
-#ifndef CONFIG_PREEMPT_RT
-#define ALT_SCHED_TTWU_QUEUE 1
-#endif
-
 /*
  * Time slice
  * (default: 4 msec, units: nanoseconds)
