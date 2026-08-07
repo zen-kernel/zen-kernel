@@ -70,7 +70,8 @@
 #define HWS_CTL_IRQ_ENABLE_BIT BIT(0)   /* Global interrupt enable bit */
 /*  Write 0x00 to fully reset decoder,
  *  set bit 31=1 to "start run",
- *  low byte=0x13 selects YUYV/BT.709/etc,
+ *  low byte=0x13 is the vendor baseline capture-mode value; its individual
+ *  bit meanings are not documented,
  *  in ReadChipId() we also write 0x00 and 0x10 here for chip-ID sequencing.
  */
 
