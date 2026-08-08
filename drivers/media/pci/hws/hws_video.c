@@ -1294,6 +1294,8 @@ static void hws_stop_streaming(struct vb2_queue *q)
 	WRITE_ONCE(v->stop_requested, true);
 
 	hws_enable_video_capture(v->parent, v->channel_index, false);
+	if (hws->irq >= 0)
+		synchronize_irq(hws->irq);
 
 	/* 2) Collect in-flight + queued under the IRQ lock */
 	spin_lock_irqsave(&v->irq_lock, flags);
