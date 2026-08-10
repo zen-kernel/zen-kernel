@@ -19,6 +19,7 @@
 #include "cn20k/npc.h"
 #include "rvu_npc.h"
 #include "cn20k/reg.h"
+#include "lmac_common.h"
 
 #define RSVD_MCAM_ENTRIES_PER_PF	3 /* Broadcast, Promisc and AllMulticast */
 #define RSVD_MCAM_ENTRIES_PER_NIXLF	1 /* Ucast for LFs */
@@ -1285,9 +1286,16 @@ void npc_enadis_default_mce_entry(struct rvu *rvu, u16 pcifunc,
 	struct nix_mce_list *mce_list;
 	int index, blkaddr, mce_idx;
 	struct rvu_pfvf *pfvf;
+	u16 ptr[4];
 
 	/* multicast pkt replication is not enabled for AF's VFs & SDP links */
 	if (is_lbk_vf(rvu, pcifunc) || is_sdp_pfvf(rvu, pcifunc))
+		return;
+
+	/* In cn20k, only CGX mapped devices have default MCAST entry */
+	if (is_cn20k(rvu->pdev) &&
+	    npc_cn20k_dft_rules_idx_get(rvu, pcifunc, &ptr[0], &ptr[1],
+					&ptr[2], &ptr[3]))
 		return;
 
 	blkaddr = rvu_get_blkaddr(rvu, BLKTYPE_NPC, 0);
@@ -1329,9 +1337,12 @@ static void npc_enadis_default_entries(struct rvu *rvu, u16 pcifunc,
 	struct rvu_pfvf *pfvf = rvu_get_pfvf(rvu, pcifunc);
 	struct npc_mcam *mcam = &rvu->hw->mcam;
 	int index, blkaddr;
+	u16 ptr[4];
 
 	/* only CGX or LBK interfaces have default entries */
-	if (is_cn20k(rvu->pdev) && !npc_is_cgx_or_lbk(rvu, pcifunc))
+	if (is_cn20k(rvu->pdev) &&
+	    npc_cn20k_dft_rules_idx_get(rvu, pcifunc, &ptr[0], &ptr[1],
+					&ptr[2], &ptr[3]))
 		return;
 
 	blkaddr = rvu_get_blkaddr(rvu, BLKTYPE_NPC, 0);
@@ -3902,10 +3913,11 @@ int rvu_npc_set_parse_mode(struct rvu *rvu, u16 pcifunc, u64 mode, u8 dir,
 
 {
 	struct rvu_pfvf *pfvf = rvu_get_pfvf(rvu, pcifunc);
-	int blkaddr, nixlf, rc, intf_mode;
 	int pf = rvu_get_pf(rvu->pdev, pcifunc);
+	int blkaddr, nixlf, rc, intf_mode;
+	u8 cgx_id = 0, lmac_id = 0;
 	u64 rxpkind, txpkind;
-	u8 cgx_id, lmac_id;
+	struct cgx *cgxd;
 
 	/* use default pkind to disable edsa/higig */
 	rxpkind = rvu_npc_get_pkind(rvu, pf);
@@ -3929,12 +3941,8 @@ int rvu_npc_set_parse_mode(struct rvu *rvu, u16 pcifunc, u64 mode, u8 dir,
 		/* rx pkind set req valid only for cgx mapped PFs */
 		if (!is_cgx_config_permitted(rvu, pcifunc))
 			return 0;
-		rvu_get_cgx_lmac_id(rvu->pf2cgxlmac_map[pf], &cgx_id, &lmac_id);
-
-		rc = cgx_set_pkind(rvu_cgx_pdata(cgx_id, rvu), lmac_id,
-				   rxpkind);
-		if (rc)
-			return rc;
+		if (!rvu_cgx_check_permission_and_set_pkind(rvu, pcifunc, rxpkind))
+			return -EINVAL;
 	}
 
 	if (dir & PKIND_TX) {
@@ -3943,8 +3951,19 @@ int rvu_npc_set_parse_mode(struct rvu *rvu, u16 pcifunc, u64 mode, u8 dir,
 		if (rc)
 			return rc;
 
-		rvu_write64(rvu, blkaddr, NIX_AF_LFX_TX_PARSE_CFG(nixlf),
-			    txpkind);
+		if (is_pf_cgxmapped(rvu, pf) && is_vf(pcifunc)) {
+			rvu_get_cgx_lmac_id(rvu->pf2cgxlmac_map[pf], &cgx_id,
+					    &lmac_id);
+			cgxd = rvu_cgx_pdata(cgx_id, rvu);
+			mutex_lock(&cgxd->lock);
+			if (rvu_cgx_is_pkind_config_permitted(rvu, pcifunc))
+				rvu_write64(rvu, blkaddr, NIX_AF_LFX_TX_PARSE_CFG(nixlf),
+					    txpkind);
+			mutex_unlock(&cgxd->lock);
+		} else {
+			rvu_write64(rvu, blkaddr, NIX_AF_LFX_TX_PARSE_CFG(nixlf),
+				    txpkind);
+		}
 	}
 
 	pfvf->intf_mode = intf_mode;
@@ -4075,12 +4094,10 @@ void rvu_npc_clear_ucast_entry(struct rvu *rvu, int pcifunc, int nixlf)
 
 	ucast_idx = npc_get_nixlf_mcam_index(mcam, pcifunc,
 					     nixlf, NIXLF_UCAST_ENTRY);
-	if (ucast_idx < 0) {
-		dev_err(rvu->dev,
-			"%s: Error to get ucast entry for pcifunc=%#x\n",
-			__func__, pcifunc);
+
+	/* In cn20k, default rules are freed before detach rsrc */
+	if (ucast_idx < 0)
 		return;
-	}
 
 	npc_enable_mcam_entry(rvu, mcam, blkaddr, ucast_idx, false);
 
