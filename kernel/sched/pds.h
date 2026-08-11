@@ -96,7 +96,7 @@ static inline void sched_update_rq_clock(struct rq *rq)
 		u64 idx = MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(now);
 
 		__list_splice(&head, rq->queue.heads + idx, rq->queue.heads[idx].next);
-		set_bit(MIN_SCHED_NORMAL_PRIO, normal);
+		__set_bit(MIN_SCHED_NORMAL_PRIO, normal);
 	}
 	bitmap_replace(rq->queue.bitmap, normal, rq->queue.bitmap,
 		       (const unsigned long *)&RT_MASK, SCHED_QUEUE_BITS);
