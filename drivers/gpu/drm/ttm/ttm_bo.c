@@ -519,7 +519,6 @@ struct ttm_bo_alloc_state {
  */
 static int ttm_bo_alloc_at_place(struct ttm_buffer_object *bo,
 				 const struct ttm_place *place,
-				 struct ttm_operation_ctx *ctx,
 				 bool force_space,
 				 struct ttm_resource **res,
 				 struct ttm_bo_alloc_state *alloc_state)
@@ -542,6 +541,8 @@ static int ttm_bo_alloc_at_place(struct ttm_buffer_object *bo,
 			 * retried with eviction, or -ENOSPC if there should
 			 * be no second attempt.
 			 */
+			if (!alloc_state->in_evict)
+				alloc_state->may_try_low = may_evict;
 			if (ret == -EAGAIN)
 				ret = may_evict ? -EBUSY : -ENOSPC;
 			return ret;
@@ -687,8 +688,9 @@ static s64 ttm_bo_evict_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *
 
 	evict_walk->evicted++;
 	if (evict_walk->res)
-		lret = ttm_bo_alloc_at_place(evict_walk->evictor, evict_walk->place,
-					     walk->arg.ctx, false, evict_walk->res,
+		lret = ttm_bo_alloc_at_place(evict_walk->evictor,
+					     evict_walk->place, false,
+					     evict_walk->res,
 					     evict_walk->alloc_state);
 	if (lret == 0)
 		return 1;
@@ -894,8 +896,8 @@ static int ttm_bo_alloc_resource(struct ttm_buffer_object *bo,
 				    TTM_PL_FLAG_FALLBACK))
 			continue;
 
-		ret = ttm_bo_alloc_at_place(bo, place, ctx, force_space,
-				res, &alloc_state);
+		ret = ttm_bo_alloc_at_place(bo, place, force_space, res,
+					    &alloc_state);
 
 		if (ret == -ENOSPC) {
 			dmem_cgroup_uncharge(alloc_state.charge_pool, bo->base.size);
