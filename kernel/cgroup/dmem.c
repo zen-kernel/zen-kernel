@@ -790,9 +790,10 @@ struct dmem_cgroup_pool_state *dmem_cgroup_get_common_ancestor(struct dmem_cgrou
 	if (ancestor_dmemcs) {
 		pool = get_cg_pool_unlocked(css_to_dmemcs(ancestor_css),
 					    a->region);
-		if (IS_ERR(pool))
+		if (WARN_ON(IS_ERR(pool))) {
 			pool = NULL;
-		css_put(ancestor_css);
+			css_put(ancestor_css);
+		}
 	}
 	return pool;
 }
