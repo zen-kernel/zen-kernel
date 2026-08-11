@@ -6778,7 +6778,6 @@ void __init sched_init(void)
 		rq->online = false;
 		rq->cpu = i;
 
-		rq->balance_func = NULL;
 		rq->active_balance_arg.active = 0;
 
 #ifdef CONFIG_NO_HZ_COMMON
