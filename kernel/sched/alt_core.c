@@ -643,8 +643,8 @@ unsigned long get_wchan(struct task_struct *p)
 											\
 	__list_del_entry(&p->sq_node);							\
 	if (p->sq_node.prev == p->sq_node.next) {					\
-		clear_bit(sched_idx2prio(p->sq_node.next - &rq->queue.heads[0], rq),	\
-			  rq->queue.bitmap);						\
+		__clear_bit(sched_idx2prio(p->sq_node.next - &rq->queue.heads[0], rq),	\
+			    rq->queue.bitmap);						\
 		func;									\
 	}
 
@@ -655,7 +655,7 @@ unsigned long get_wchan(struct task_struct *p)
 	TASK_SCHED_PRIO_IDX(p, rq, idx, prio);						\
 	list_add_tail(&p->sq_node, &rq->queue.heads[idx]);				\
 	if (list_is_first(&p->sq_node, &rq->queue.heads[idx])) {			\
-		set_bit(prio, rq->queue.bitmap);					\
+		__set_bit(prio, rq->queue.bitmap);					\
 		func;									\
 	}										\
 	}
@@ -723,14 +723,14 @@ void requeue_task(struct task_struct *p, struct rq *rq, int flags)
 
 	__list_del_entry(node);
 	if (node->prev == node->next && (deq_idx = node->next - &rq->queue.heads[0]) != idx)
-		clear_bit(sched_idx2prio(deq_idx, rq), rq->queue.bitmap);
+		__clear_bit(sched_idx2prio(deq_idx, rq), rq->queue.bitmap);
 
 	if (flags & ENQUEUE_HEAD)
 		list_add(node, &rq->queue.heads[idx]);
 	else
 		list_add_tail(node, &rq->queue.heads[idx]);
 	if (list_is_first(node, &rq->queue.heads[idx]))
-		set_bit(prio, rq->queue.bitmap);
+		__set_bit(prio, rq->queue.bitmap);
 	update_sched_preempt_mask(rq);
 }
 
