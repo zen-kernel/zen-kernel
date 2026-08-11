@@ -2052,9 +2052,14 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 	 * required for stable ->cpus_allowed
 	 */
 	lockdep_assert_held(&p->pi_lock);
+
+	if (unlikely(!wakee_migratable)) {
+		new_cpu = cpumask_any(p->cpus_ptr);
+		goto out;
+	}
+
 	if (wake_flags & WF_TTWU) {
-		if (wakee_migratable)
-			record_wakee(p);
+		record_wakee(p);
 
 		if ((wake_flags & WF_CURRENT_CPU) &&
 		    cpumask_test_cpu(cpu, p->cpus_ptr)) {
@@ -2062,8 +2067,8 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 			goto out;
 		}
 
-		want_affine = wakee_migratable && !wake_wide(p) &&
-			      cpumask_test_cpu(cpu, p->cpus_ptr);
+		want_affine = sync && cpumask_test_cpu(cpu, p->cpus_ptr) &&
+			      !wake_wide(p);
 	}
 
 	if (unlikely(!cpumask_and(&allow_mask, p->cpus_ptr, cpu_active_mask))) {
@@ -2071,7 +2076,7 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 		goto out;
 	}
 
-	if (sync && want_affine) {
+	if (want_affine) {
 		int affine_cpu = wake_affine_idle(cpu, prev_cpu, sync);
 
 		if (affine_cpu < nr_cpu_ids &&
