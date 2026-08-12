@@ -90,7 +90,8 @@ static inline void sched_clear_idle_mask(const unsigned int cpu)
 		raw_spinlock_t *lock = &per_cpu(sched_smt_idle_lock, leader);
 
 		raw_spin_lock(lock);
-		sched_clear_smt_idle_masks(cpu);
+		if (cpumask_test_cpu(cpu, sched_sg_idle_mask))
+			sched_clear_smt_idle_masks(cpu);
 		cpumask_clear_cpu(cpu, sched_idle_mask);
 		raw_spin_unlock(lock);
 		return;
