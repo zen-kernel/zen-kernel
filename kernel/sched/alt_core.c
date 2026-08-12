@@ -2089,7 +2089,8 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 	if (static_call(sched_idle_select_func)(&mask, &allow_mask, sched_idle_mask)) {
 		do {
 			new_cpu = best_mask_cpu(prev_cpu, &mask);
-			if (!cpu_rq(new_cpu)->ttwu_pending)
+			if (!__is_defined(ALT_SCHED_TTWU_QUEUE) ||
+			    !cpu_rq(new_cpu)->ttwu_pending)
 				goto out;
 			__cpumask_clear_cpu(new_cpu, &mask);
 		} while (!cpumask_empty(&mask));
