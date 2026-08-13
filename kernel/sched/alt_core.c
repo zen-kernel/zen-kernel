@@ -1412,6 +1412,7 @@ static void hrtick_rq_init(struct rq *rq)
 }
 #else	/* !CONFIG_SCHED_HRTICK: */
 static inline void hrtick_clear(struct rq *rq) { }
+static inline void hrtick_start(struct rq *rq, u64 delay) { }
 static inline void hrtick_rq_init(struct rq *rq) { }
 static inline void hrtick_schedule_enter(struct rq *rq) { }
 static inline void hrtick_schedule_exit(struct rq *rq) { }
@@ -3238,13 +3239,12 @@ int sched_cgroup_fork(struct task_struct *p, struct kernel_clone_args *kargs)
 
 	rq->curr->time_slice /= 2;
 	p->time_slice = rq->curr->time_slice;
-#ifdef CONFIG_SCHED_HRTICK
-	hrtick_start(rq, rq->curr->time_slice);
-#endif
 
 	if (p->time_slice < RESCHED_NS) {
 		p->time_slice = sysctl_sched_base_slice;
 		resched_curr(rq);
+	} else {
+		hrtick_start(rq, rq->curr->time_slice);
 	}
 	sched_task_fork(p, rq);
 	raw_spin_rq_unlock(rq);
@@ -4694,10 +4694,8 @@ choose_next_task(struct rq *rq, int cpu)
 		}
 		next = sched_rq_first_task(rq);
 	}
-#ifdef CONFIG_SCHED_HRTICK
 	if (SCHED_FIFO != next->policy)
 		hrtick_start(rq, next->time_slice);
-#endif
 	/*printk(KERN_INFO "sched: choose_next_task(%d) next %px\n", cpu, next);*/
 	return next;
 }
