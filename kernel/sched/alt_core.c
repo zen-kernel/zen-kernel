@@ -86,10 +86,6 @@ __read_mostly int sysctl_resched_latency_warn_once = 1;
 
 #define STOP_PRIO		(MAX_RT_PRIO - 1)
 
-#ifndef CONFIG_PREEMPT_RT
-#define ALT_SCHED_TTWU_QUEUE 1
-#endif
-
 /*
  * Time slice
  * (default: 4 msec, units: nanoseconds)
@@ -595,7 +591,8 @@ static inline void add_nr_running(struct rq *rq, unsigned count)
 	rq->nr_running += count;
 	trace_sched_update_nr_running_tp(rq, count);
 	if (rq->nr_running > 1) {
-		cpumask_set_cpu(cpu_of(rq), &sched_rq_pending_mask);
+		if (!cpumask_test_cpu(cpu_of(rq), &sched_rq_pending_mask))
+			cpumask_set_cpu(cpu_of(rq), &sched_rq_pending_mask);
 		rq->prio_balance_time = rq->clock;
 	}
 
@@ -607,7 +604,8 @@ static inline void sub_nr_running(struct rq *rq, unsigned count)
 	rq->nr_running -= count;
 	trace_sched_update_nr_running_tp(rq, -count);
 	if (rq->nr_running < 2) {
-		cpumask_clear_cpu(cpu_of(rq), &sched_rq_pending_mask);
+		if (cpumask_test_cpu(cpu_of(rq), &sched_rq_pending_mask))
+			cpumask_clear_cpu(cpu_of(rq), &sched_rq_pending_mask);
 		rq->prio_balance_time = 0;
 	}
 
@@ -647,8 +645,8 @@ unsigned long get_wchan(struct task_struct *p)
 											\
 	__list_del_entry(&p->sq_node);							\
 	if (p->sq_node.prev == p->sq_node.next) {					\
-		clear_bit(sched_idx2prio(p->sq_node.next - &rq->queue.heads[0], rq),	\
-			  rq->queue.bitmap);						\
+		__clear_bit(sched_idx2prio(p->sq_node.next - &rq->queue.heads[0], rq),	\
+			    rq->queue.bitmap);						\
 		func;									\
 	}
 
@@ -659,7 +657,7 @@ unsigned long get_wchan(struct task_struct *p)
 	TASK_SCHED_PRIO_IDX(p, rq, idx, prio);						\
 	list_add_tail(&p->sq_node, &rq->queue.heads[idx]);				\
 	if (list_is_first(&p->sq_node, &rq->queue.heads[idx])) {			\
-		set_bit(prio, rq->queue.bitmap);					\
+		__set_bit(prio, rq->queue.bitmap);					\
 		func;									\
 	}										\
 	}
@@ -727,14 +725,14 @@ void requeue_task(struct task_struct *p, struct rq *rq, int flags)
 
 	__list_del_entry(node);
 	if (node->prev == node->next && (deq_idx = node->next - &rq->queue.heads[0]) != idx)
-		clear_bit(sched_idx2prio(deq_idx, rq), rq->queue.bitmap);
+		__clear_bit(sched_idx2prio(deq_idx, rq), rq->queue.bitmap);
 
 	if (flags & ENQUEUE_HEAD)
 		list_add(node, &rq->queue.heads[idx]);
 	else
 		list_add_tail(node, &rq->queue.heads[idx]);
 	if (list_is_first(node, &rq->queue.heads[idx]))
-		set_bit(prio, rq->queue.bitmap);
+		__set_bit(prio, rq->queue.bitmap);
 	update_sched_preempt_mask(rq);
 }
 
@@ -1377,7 +1375,7 @@ static inline void hrtick_schedule_exit(struct rq *rq)
 	if (rq->hrtick_sched & HRTICK_SCHED_START) {
 		rq->hrtick_time = ktime_add_ns(ktime_get(), rq->hrtick_delay);
 		hrtick_cond_restart(rq);
-	} else if (idle_rq(rq)) {
+	} else if (idle_rq(rq) || SCHED_FIFO == rq->curr->policy) {
 		/*
 		 * No need for using hrtimer_is_active(). The timer is CPU local
 		 * and interrupts are disabled, so the callback cannot be
@@ -1402,6 +1400,7 @@ static void hrtick_rq_init(struct rq *rq)
 }
 #else	/* !CONFIG_SCHED_HRTICK: */
 static inline void hrtick_clear(struct rq *rq) { }
+static inline void hrtick_start(struct rq *rq, u64 delay) { }
 static inline void hrtick_rq_init(struct rq *rq) { }
 static inline void hrtick_schedule_enter(struct rq *rq) { }
 static inline void hrtick_schedule_exit(struct rq *rq) { }
@@ -2026,9 +2025,14 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 	 * required for stable ->cpus_allowed
 	 */
 	lockdep_assert_held(&p->pi_lock);
+
+	if (unlikely(!wakee_migratable)) {
+		new_cpu = cpumask_any(p->cpus_ptr);
+		goto out;
+	}
+
 	if (wake_flags & WF_TTWU) {
-		if (wakee_migratable)
-			record_wakee(p);
+		record_wakee(p);
 
 		if ((wake_flags & WF_CURRENT_CPU) &&
 		    cpumask_test_cpu(cpu, p->cpus_ptr)) {
@@ -2036,8 +2040,8 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 			goto out;
 		}
 
-		want_affine = wakee_migratable && !wake_wide(p) &&
-			      cpumask_test_cpu(cpu, p->cpus_ptr);
+		want_affine = sync && cpumask_test_cpu(cpu, p->cpus_ptr) &&
+			      !wake_wide(p);
 	}
 
 	if (unlikely(!cpumask_and(&allow_mask, p->cpus_ptr, cpu_active_mask))) {
@@ -2045,7 +2049,7 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 		goto out;
 	}
 
-	if (sync && want_affine) {
+	if (want_affine) {
 		int affine_cpu = wake_affine_idle(cpu, prev_cpu, sync);
 
 		if (affine_cpu < nr_cpu_ids &&
@@ -2058,7 +2062,8 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 	if (static_call(sched_idle_select_func)(&mask, &allow_mask, sched_idle_mask)) {
 		do {
 			new_cpu = best_mask_cpu(prev_cpu, &mask);
-			if (!cpu_rq(new_cpu)->ttwu_pending)
+			if (!__is_defined(ALT_SCHED_TTWU_QUEUE) ||
+			    !cpu_rq(new_cpu)->ttwu_pending)
 				goto out;
 			__cpumask_clear_cpu(new_cpu, &mask);
 		} while (!cpumask_empty(&mask));
@@ -3182,6 +3187,8 @@ int sched_fork(u64 clone_flags, struct task_struct *p)
 	return 0;
 }
 
+static __always_inline void update_curr(struct rq *rq, struct task_struct *p);
+
 int sched_cgroup_fork(struct task_struct *p, struct kernel_clone_args *kargs)
 {
 	unsigned long flags;
@@ -3200,15 +3207,17 @@ int sched_cgroup_fork(struct task_struct *p, struct kernel_clone_args *kargs)
 	rq = this_rq();
 	raw_spin_rq_lock(rq);
 
+	update_rq_clock(rq);
+	update_curr(rq, rq->curr);
+
 	rq->curr->time_slice /= 2;
 	p->time_slice = rq->curr->time_slice;
-#ifdef CONFIG_SCHED_HRTICK
-	hrtick_start(rq, rq->curr->time_slice);
-#endif
 
 	if (p->time_slice < RESCHED_NS) {
 		p->time_slice = sysctl_sched_base_slice;
 		resched_curr(rq);
+	} else {
+		hrtick_start(rq, rq->curr->time_slice);
 	}
 	sched_task_fork(p, rq);
 	raw_spin_rq_unlock(rq);
@@ -3986,7 +3995,8 @@ static __always_inline void update_curr(struct rq *rq, struct task_struct *p)
 	cgroup_account_cputime(p, ns);
 	account_group_exec_runtime(p, ns);
 
-	p->time_slice -= ns;
+	if (SCHED_FIFO != p->policy)
+		p->time_slice -= ns;
 	p->last_ran = rq->clock_task;
 }
 
@@ -4653,9 +4663,8 @@ choose_next_task(struct rq *rq, int cpu)
 		}
 		next = sched_rq_first_task(rq);
 	}
-#ifdef CONFIG_SCHED_HRTICK
-	hrtick_start(rq, next->time_slice);
-#endif
+	if (SCHED_FIFO != next->policy)
+		hrtick_start(rq, next->time_slice);
 	/*printk(KERN_INFO "sched: choose_next_task(%d) next %px\n", cpu, next);*/
 	return next;
 }
@@ -6775,7 +6784,6 @@ void __init sched_init(void)
 		rq->online = false;
 		rq->cpu = i;
 
-		rq->balance_func = NULL;
 		rq->active_balance_arg.active = 0;
 
 #ifdef CONFIG_NO_HZ_COMMON
