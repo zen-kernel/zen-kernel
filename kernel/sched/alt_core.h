@@ -43,8 +43,6 @@ static inline void __task_access_unlock(struct task_struct *p, raw_spinlock_t *l
 		raw_spin_unlock(lock);
 }
 
-void check_task_changed(struct task_struct *p, struct rq *rq);
-
 /*
  * RQ related inlined functions
  */
