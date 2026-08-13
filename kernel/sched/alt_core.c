@@ -3187,6 +3187,8 @@ int sched_fork(u64 clone_flags, struct task_struct *p)
 	return 0;
 }
 
+static __always_inline void update_curr(struct rq *rq, struct task_struct *p);
+
 int sched_cgroup_fork(struct task_struct *p, struct kernel_clone_args *kargs)
 {
 	unsigned long flags;
@@ -3204,6 +3206,9 @@ int sched_cgroup_fork(struct task_struct *p, struct kernel_clone_args *kargs)
 	 */
 	rq = this_rq();
 	raw_spin_rq_lock(rq);
+
+	update_rq_clock(rq);
+	update_curr(rq, rq->curr);
 
 	rq->curr->time_slice /= 2;
 	p->time_slice = rq->curr->time_slice;
