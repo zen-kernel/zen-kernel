@@ -1387,7 +1387,7 @@ static inline void hrtick_schedule_exit(struct rq *rq)
 	if (rq->hrtick_sched & HRTICK_SCHED_START) {
 		rq->hrtick_time = ktime_add_ns(ktime_get(), rq->hrtick_delay);
 		hrtick_cond_restart(rq);
-	} else if (idle_rq(rq)) {
+	} else if (idle_rq(rq) || SCHED_FIFO == rq->curr->policy) {
 		/*
 		 * No need for using hrtimer_is_active(). The timer is CPU local
 		 * and interrupts are disabled, so the callback cannot be
@@ -4026,7 +4026,8 @@ static __always_inline void update_curr(struct rq *rq, struct task_struct *p)
 	cgroup_account_cputime(p, ns);
 	account_group_exec_runtime(p, ns);
 
-	p->time_slice -= ns;
+	if (SCHED_FIFO != p->policy)
+		p->time_slice -= ns;
 	p->last_ran = rq->clock_task;
 }
 
@@ -4694,7 +4695,8 @@ choose_next_task(struct rq *rq, int cpu)
 		next = sched_rq_first_task(rq);
 	}
 #ifdef CONFIG_SCHED_HRTICK
-	hrtick_start(rq, next->time_slice);
+	if (SCHED_FIFO != next->policy)
+		hrtick_start(rq, next->time_slice);
 #endif
 	/*printk(KERN_INFO "sched: choose_next_task(%d) next %px\n", cpu, next);*/
 	return next;
