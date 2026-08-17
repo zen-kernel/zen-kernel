@@ -1050,8 +1050,13 @@ static void rzt2h_gpio_irq_domain_free(struct irq_domain *domain, unsigned int v
 	irq_hw_number_t hwirq = irqd_to_hwirq(d);
 	u8 port = RZT2H_PIN_ID_TO_PORT(hwirq);
 	u8 pin = RZT2H_PIN_ID_TO_PIN(hwirq);
+	u8 parent_irq;
 
-	if (test_and_clear_bit(hwirq - RZT2H_INTERRUPTS_START, pctrl->used_irqs))
+	parent_irq = rzt2h_gpio_irq_map[hwirq];
+	if (parent_irq < RZT2H_INTERRUPTS_START)
+		return;
+
+	if (test_and_clear_bit(parent_irq - RZT2H_INTERRUPTS_START, pctrl->used_irqs))
 		rzt2h_pinctrl_set_gpio_en(pctrl, port, pin, false);
 
 	irq_domain_free_irqs_common(domain, virq, nr_irqs);
