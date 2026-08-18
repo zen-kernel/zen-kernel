@@ -722,6 +722,7 @@ config TASK_IO_ACCOUNTING
 
 config PSI
 	bool "Pressure stall information tracking"
+	depends on !SCHED_ALT
 	select KERNFS
 	help
 	  Collect metrics that indicate how overcommitted the CPU, memory,
@@ -945,6 +946,35 @@ config SCHED_PROXY_EXEC
 	  This option enables proxy execution, a mechanism for mutex-owning
 	  tasks to inherit the scheduling context of higher priority waiters.
 
+menuconfig SCHED_ALT
+	bool "Alternative CPU Schedulers"
+	default y
+	help
+	  This feature enable alternative CPU scheduler"
+
+if SCHED_ALT
+
+choice
+	prompt "Alternative CPU Scheduler"
+	default SCHED_BMQ
+
+config SCHED_BMQ
+	bool "BMQ CPU scheduler"
+	help
+	  The BitMap Queue CPU scheduler for excellent interactivity and
+	  responsiveness on the desktop and solid scalability on normal
+	  hardware and commodity servers.
+
+config SCHED_PDS
+	bool "PDS CPU scheduler"
+	help
+	  The Priority and Deadline based Skip list multiple queue CPU
+	  Scheduler.
+
+endchoice
+
+endif
+
 endmenu
 
 #
@@ -1015,6 +1045,7 @@ config NUMA_BALANCING
 	depends on ARCH_SUPPORTS_NUMA_BALANCING
 	depends on !ARCH_WANT_NUMA_VARIABLE_LOCALITY
 	depends on SMP && NUMA_MIGRATION && !PREEMPT_RT
+	depends on !SCHED_ALT
 	help
 	  This option adds support for automatic NUMA aware memory/task placement.
 	  The mechanism is quite primitive and is based on migrating memory when
@@ -1026,6 +1057,7 @@ config SCHED_CACHE
 	bool "Cache aware load balance"
 	default y
 	depends on SMP
+	depends on !SCHED_ALT
 	help
 	  When enabled, the scheduler will attempt to aggregate tasks from
 	  the same process onto a single Last Level Cache (LLC) domain when
@@ -1312,7 +1344,7 @@ config CPUSETS
 
 config CPUSETS_V1
 	bool "Legacy cgroup v1 cpusets controller"
-	depends on CPUSETS
+	depends on (CPUSETS && !SCHED_ALT)
 	default n
 	help
 	  Legacy cgroup v1 cpusets controller which has been deprecated by
@@ -1482,6 +1514,7 @@ config CHECKPOINT_RESTORE
 
 config SCHED_AUTOGROUP
 	bool "Automatic process group scheduling"
+	depends on !SCHED_ALT
 	select CGROUPS
 	select CGROUP_SCHED
 	select FAIR_GROUP_SCHED
