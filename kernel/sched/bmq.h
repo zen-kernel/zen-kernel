@@ -66,6 +66,11 @@ static inline int sched_rq_prio_idx(struct rq *rq)
 	return rq->prio;
 }
 
+static inline void sched_rq_set_prio(struct rq *rq, int prio)
+{
+	rq->prio = prio;
+}
+
 static inline int task_running_nice(struct task_struct *p)
 {
 	return (p->prio + p->boost_prio > DEFAULT_PRIO);
