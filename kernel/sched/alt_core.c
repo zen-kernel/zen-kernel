@@ -189,10 +189,7 @@ static inline void update_sched_preempt_mask(struct rq *rq)
 	if (prio == last_prio)
 		return;
 
-	rq->prio = prio;
-#ifdef CONFIG_SCHED_PDS
-	rq->prio_idx = sched_prio2idx(rq->prio, rq);
-#endif
+	sched_rq_set_prio(rq, prio);
 
 	int cpu = cpu_of(rq);
 	bool set = prio > last_prio;
@@ -6796,11 +6793,8 @@ void __init sched_init(void)
 		raw_spin_lock_init(&per_cpu(sched_smt_idle_lock, i));
 #endif
 		sched_queue_init(&rq->queue);
-		rq->prio = IDLE_TASK_SCHED_PRIO;
+		sched_rq_set_prio(rq, IDLE_TASK_SCHED_PRIO);
 		rq->prio_balance_time = 0;
-#ifdef CONFIG_SCHED_PDS
-		rq->prio_idx = rq->prio;
-#endif
 
 		raw_spin_lock_init(rq_lockp(rq));
 		rq->nr_running = rq->nr_uninterruptible = 0;
