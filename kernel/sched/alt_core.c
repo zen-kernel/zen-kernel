@@ -640,7 +640,7 @@ unsigned long get_wchan(struct task_struct *p)
  * Add/Remove/Requeue task to/from the runqueue routines
  * Context: rq->lock
  */
-#define __SCHED_DEQUEUE_TASK(p, rq, flags, func)					\
+#define __SCHED_DEQUEUE_TASK(p, rq, func)						\
 	sched_info_dequeue(rq, p);							\
 											\
 	__list_del_entry(&p->sq_node);							\
@@ -650,7 +650,7 @@ unsigned long get_wchan(struct task_struct *p)
 		func;									\
 	}
 
-#define __SCHED_ENQUEUE_TASK(p, rq, flags, func)					\
+#define __SCHED_ENQUEUE_TASK(p, rq, func)						\
 	sched_info_enqueue(rq, p);							\
 	{										\
 	int idx, prio;									\
@@ -672,7 +672,7 @@ static inline void __dequeue_task(struct task_struct *p, struct rq *rq)
 		  task_cpu(p), cpu_of(rq));
 #endif
 
-	__SCHED_DEQUEUE_TASK(p, rq, flags, update_sched_preempt_mask(rq));
+	__SCHED_DEQUEUE_TASK(p, rq, update_sched_preempt_mask(rq));
 }
 
 static inline void dequeue_task(struct task_struct *p, struct rq *rq, int flags)
@@ -692,7 +692,7 @@ static inline void __enqueue_task(struct task_struct *p, struct rq *rq)
 		  task_cpu(p), cpu_of(rq));
 #endif
 
-	__SCHED_ENQUEUE_TASK(p, rq, flags, update_sched_preempt_mask(rq));
+	__SCHED_ENQUEUE_TASK(p, rq, update_sched_preempt_mask(rq));
 }
 
 static inline void enqueue_task(struct task_struct *p, struct rq *rq, int flags)
@@ -4475,10 +4475,10 @@ migrate_pending_tasks(struct rq *rq, struct rq *dest_rq, const int dest_cpu)
 		skip = sched_rq_next_task(p, rq);
 		if (cpumask_test_cpu(dest_cpu, p->cpus_ptr)) {
 			psi_dequeue(p, 0);
-			__SCHED_DEQUEUE_TASK(p, rq, 0, );
+			__SCHED_DEQUEUE_TASK(p, rq, );
 			set_task_cpu(p, dest_cpu);
 			sched_task_sanity_check(p, dest_rq);
-			__SCHED_ENQUEUE_TASK(p, dest_rq, 0, );
+			__SCHED_ENQUEUE_TASK(p, dest_rq, );
 			psi_enqueue(p, ENQUEUE_MIGRATED);
 			nr_migrated++;
 		}
