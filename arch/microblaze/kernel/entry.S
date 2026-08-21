@@ -434,7 +434,13 @@ C_ENTRY(_user_exception):
 C_ENTRY(ret_from_trap):
 	swi	r3, r1, PT_R3
 	swi	r4, r1, PT_R4
-
+/*
+ * Entry point for returns that must not store r3/r4 back into pt_regs,
+ * i.e. rt_sigreturn, which has already restored them from the signal
+ * context.  Reached as "rtsd r15, 8" with r15 set to this label minus 8,
+ * so it stays correct if the number of stores above ever changes.
+ */
+ret_from_trap_no_rval:
 	lwi	r11, r1, PT_MODE;
 /* See if returning to kernel mode, if so, skip resched &c.  */
 	bnei	r11, 2f;
@@ -518,6 +524,15 @@ C_ENTRY(ret_from_kernel_thread):
 
 C_ENTRY(sys_rt_sigreturn_wrapper):
 	addik	r30, r0, 0		/* no restarts */
+	/*
+	 * rt_sigreturn restores the full register set from the signal
+	 * context, so it must skip the r3/r4 syscall-return stores at the
+	 * head of ret_from_trap which would otherwise overwrite the
+	 * just-restored r3/r4.  Every C function returns with "rtsd r15, 8"
+	 * -- the ABI return, where the 8 skips the caller's branch and its
+	 * delay slot -- so bias r15 by -8 to land on ret_from_trap_no_rval.
+	 */
+	addik	r15, r0, ret_from_trap_no_rval - 8
 	brid	sys_rt_sigreturn	/* Do real work */
 	addik	r5, r1, 0;		/* add user context as 1st arg */
 
