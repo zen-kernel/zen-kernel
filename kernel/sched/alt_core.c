@@ -4498,19 +4498,19 @@ static inline void prio_balance(struct rq *rq, const int cpu)
 	if (!rq->online)
 		return;
 
-	if (!cpumask_empty(sched_idle_mask))
-		return;
-
 	if (0 == rq->prio_balance_time)
 		return;
 
 	if (rq->clock - rq->prio_balance_time < sysctl_sched_base_slice << 1)
 		return;
 
+	if (!cpumask_empty(sched_idle_mask))
+		return;
+
 	rq->prio_balance_time = rq->clock;
 
 	cpumask_copy(&mask, cpu_active_mask);
-	cpumask_clear_cpu(cpu, &mask);
+	__cpumask_clear_cpu(cpu, &mask);
 
 	p = sched_rq_next_task(rq->curr, rq);
 	while (p != rq->idle && nr_tries--) {
@@ -4526,7 +4526,7 @@ static inline void prio_balance(struct rq *rq, const int cpu)
 				struct rq *dest_rq = cpu_rq(dest_cpu);
 
 				if (do_raw_spin_trylock(rq_lockp(dest_rq))) {
-					cpumask_clear_cpu(dest_cpu, &mask);
+					__cpumask_clear_cpu(dest_cpu, &mask);
 
 					spin_acquire(&rq_lockp(dest_rq)->dep_map,
 						     SINGLE_DEPTH_NESTING, 1, _RET_IP_);
