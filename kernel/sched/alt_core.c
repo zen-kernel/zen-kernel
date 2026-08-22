@@ -1388,7 +1388,7 @@ static inline void hrtick_schedule_exit(struct rq *rq)
 	if (rq->hrtick_sched & HRTICK_SCHED_START) {
 		rq->hrtick_time = ktime_add_ns(ktime_get(), rq->hrtick_delay);
 		hrtick_cond_restart(rq);
-	} else if (idle_rq(rq) || SCHED_FIFO == rq->curr->policy) {
+	} else {
 		/*
 		 * No need for using hrtimer_is_active(). The timer is CPU local
 		 * and interrupts are disabled, so the callback cannot be
