@@ -4625,13 +4625,13 @@ static inline void prio_balance(struct rq *rq, const int cpu)
 	if (!rq->online)
 		return;
 
-	if (!cpumask_empty(sched_idle_mask))
-		return;
-
 	if (0 == rq->prio_balance_time)
 		return;
 
 	if (rq->clock - rq->prio_balance_time < sysctl_sched_base_slice << 1)
+		return;
+
+	if (!cpumask_empty(sched_idle_mask))
 		return;
 
 	rq->prio_balance_time = rq->clock;
