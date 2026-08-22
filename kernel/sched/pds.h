@@ -12,7 +12,7 @@ static const u64 RT_MASK = ((1ULL << MIN_SCHED_NORMAL_PRIO) - 1);
 #define SCHED_NORMAL_PRIO_MOD(x)	((x) & (SCHED_NORMAL_PRIO_NUM - 1))
 
 /* default time slice 4ms -> shift 22, 2 time slice slots -> shift 23 */
-static __read_mostly int sched_timeslice_shift = 23;
+static const int sched_timeslice_shift = 23;
 
 /*
  * Common interfaces
@@ -77,16 +77,12 @@ static inline int task_running_nice(struct task_struct *p)
 	return (p->prio > DEFAULT_PRIO);
 }
 
-static inline void sched_update_rq_clock(struct rq *rq)
+static noinline __maybe_unused void
+sched_rq_time_edge_advance(struct rq *rq, u64 old, u64 now)
 {
 	struct list_head head;
-	u64 old = rq->time_edge;
-	u64 now = rq->clock >> sched_timeslice_shift;
 	u64 prio, delta;
 	DECLARE_BITMAP(normal, SCHED_QUEUE_BITS);
-
-	if (now == old)
-		return;
 
 	rq->time_edge = now;
 	delta = min_t(u64, SCHED_NORMAL_PRIO_NUM, now - old);
@@ -111,6 +107,17 @@ static inline void sched_update_rq_clock(struct rq *rq)
 		return;
 
 	sched_rq_set_prio(rq, max_t(u64, MIN_SCHED_NORMAL_PRIO, rq->prio - delta));
+}
+
+static inline void sched_update_rq_clock(struct rq *rq)
+{
+	u64 old = rq->time_edge;
+	u64 now = rq->clock >> sched_timeslice_shift;
+
+	if (likely(now == old))
+		return;
+
+	sched_rq_time_edge_advance(rq, old, now);
 }
 
 static inline void sched_task_renew(struct task_struct *p, const struct rq *rq)
