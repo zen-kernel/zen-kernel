@@ -17,9 +17,6 @@ static inline bool sched_smt_active_group_idle(const unsigned int cpu)
 {
 	unsigned int sibling;
 
-	if (!cpumask_test_cpu(cpu, &sched_smt_mask))
-		return false;
-
 	for_each_cpu_and(sibling, cpu_smt_mask(cpu), &sched_smt_mask)
 		if (!cpumask_test_cpu(sibling, sched_idle_mask))
 			return false;
@@ -155,13 +152,11 @@ static inline void sched_cpu_topology_balance(const unsigned int cpu, struct rq 
 		queue_balance_callback(rq, head, ecore_balance);
 		break;
 	case CPU_TOPOLOGY_BALANCE_SMT:
-		if (cpumask_test_cpu(cpu, sched_sg_idle_mask) &&
-		    sched_smt_active_group_idle(cpu))
+		if (cpumask_test_cpu(cpu, sched_sg_idle_mask))
 			queue_balance_callback(rq, head, smt_balance);
 		break;
 	case CPU_TOPOLOGY_BALANCE_SMT_PCORE:
-		if (cpumask_test_cpu(cpu, sched_sg_idle_mask) &&
-		    sched_smt_active_group_idle(cpu))
+		if (cpumask_test_cpu(cpu, sched_sg_idle_mask))
 			queue_balance_callback(rq, head, smt_pcore_balance);
 		break;
 #endif
