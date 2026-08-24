@@ -53,12 +53,17 @@ static inline void sched_set_idle_mask(const unsigned int cpu)
 {
 #ifdef CONFIG_SCHED_SMT
 	if (cpumask_test_cpu(cpu, &sched_smt_mask)) {
+		cpumask_set_cpu(cpu, sched_idle_mask);
+		smp_mb__after_atomic();
+
+		if (!sched_smt_active_group_idle(cpu))
+			return;
+
 		unsigned int leader =
 			cpumask_first_and(cpu_smt_mask(cpu), &sched_smt_mask);
 		raw_spinlock_t *lock = &per_cpu(sched_smt_idle_lock, leader);
 
 		raw_spin_lock(lock);
-		cpumask_set_cpu(cpu, sched_idle_mask);
 		if (sched_smt_active_group_idle(cpu))
 			sched_set_smt_idle_masks(cpu);
 		raw_spin_unlock(lock);
