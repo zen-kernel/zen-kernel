@@ -203,7 +203,6 @@ struct rq {
 	unsigned int		nr_pinned;
 
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
-	u64 prev_irq_time;
 	u64 psi_irq_time;
 #endif /* CONFIG_IRQ_TIME_ACCOUNTING */
 #ifdef CONFIG_PARAVIRT
@@ -213,11 +212,6 @@ struct rq {
 	u64 prev_steal_time_rq;
 #endif /* CONFIG_PARAVIRT_TIME_ACCOUNTING */
 
-	/* For genenal cpu load util */
-	s32 load_history;
-	u64 load_block;
-	u64 load_stamp;
-
 	/* calc_load related fields */
 	unsigned long calc_load_update;
 	long calc_load_active;
@@ -226,6 +220,14 @@ struct rq {
 	u64			clock ____cacheline_aligned;
 	u64			clock_task;
 	u64			prio_balance_time;
+#ifdef CONFIG_IRQ_TIME_ACCOUNTING
+	u64 prev_irq_time;
+#endif /* CONFIG_IRQ_TIME_ACCOUNTING */
+
+	/* For genenal cpu load util */
+	u64 load_block;
+	u64 load_stamp;
+	s32 load_history;
 
 	unsigned int  nr_running;
 	unsigned long nr_uninterruptible;
