@@ -141,7 +141,15 @@ DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 # define finish_arch_post_lock_switch()	do { } while (0)
 #endif
 
-static cpumask_t sched_preempt_mask[SCHED_QUEUE_BITS + 3] ____cacheline_aligned_in_smp;
+static struct {
+	cpumask_t pad;
+	cpumask_t mask[SCHED_QUEUE_BITS + 3];
+} sched_preempt_masks ____cacheline_aligned_in_smp;
+
+#define sched_preempt_mask	sched_preempt_masks.mask
+
+static_assert(offsetof(typeof(sched_preempt_masks),
+		       mask[SCHED_QUEUE_BITS - 1]) % SMP_CACHE_BYTES == 0);
 
 cpumask_t *const sched_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS - 1];
 cpumask_t *const sched_sg_idle_mask = &sched_preempt_mask[SCHED_QUEUE_BITS];
