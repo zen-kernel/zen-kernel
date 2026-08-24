@@ -161,6 +161,12 @@ struct rq {
 	struct task_struct		*stop;
 	struct mm_struct		*prev_mm;
 
+	/* switch count */
+	u64 nr_switches;
+
+	u64 last_seen_need_resched_ns;
+	int ticks_without_resched;
+
 	struct sched_queue		queue		____cacheline_aligned;
 
 	int				prio;
@@ -169,13 +175,7 @@ struct rq {
 	u64				time_edge;
 #endif
 
-	/* switch count */
-	u64 nr_switches;
-
 	atomic_t nr_iowait;
-
-	u64 last_seen_need_resched_ns;
-	int ticks_without_resched;
 
 #ifdef CONFIG_MEMBARRIER
 	int membarrier_state;
