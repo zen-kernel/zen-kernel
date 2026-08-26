@@ -2035,7 +2035,7 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 	 */
 	lockdep_assert_held(&p->pi_lock);
 
-	if (unlikely(!wakee_migratable)) {
+	if (!wakee_migratable) {
 		new_cpu = cpumask_any(p->cpus_ptr);
 		goto out;
 	}

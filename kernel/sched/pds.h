@@ -47,11 +47,13 @@ static inline int task_sched_prio(const struct task_struct *p)
 		idx = MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(sched_dl);			\
 	}
 
+static_assert(MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_NUM == IDLE_TASK_SCHED_PRIO);
+
 static inline int sched_prio2idx(int sched_prio, struct rq *rq)
 {
-	return (IDLE_TASK_SCHED_PRIO == sched_prio || sched_prio < MIN_SCHED_NORMAL_PRIO) ?
-		sched_prio :
-		MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(sched_prio + rq->time_edge);
+	return ((unsigned int)(sched_prio - MIN_SCHED_NORMAL_PRIO) < SCHED_NORMAL_PRIO_NUM) ?
+		MIN_SCHED_NORMAL_PRIO + SCHED_NORMAL_PRIO_MOD(sched_prio + rq->time_edge) :
+		sched_prio;
 }
 
 static inline int sched_idx2prio(int sched_idx, struct rq *rq)
