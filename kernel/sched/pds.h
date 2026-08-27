@@ -161,7 +161,8 @@ static inline void sched_task_ttwu(struct task_struct *p)
 
 	boost = min_t(u64, NICE_WIDTH / 4, (u64)delta >> sched_boost_shift);
 	p->deadline = min(p->deadline, rq->time_edge + SCHED_EDGE_DELTA +
-				       SCHED_NICE_DELTA(p) - boost);
+				       max_t(s64, NICE_WIDTH / 8 + 1,
+					     SCHED_NICE_DELTA(p) - (s64)boost));
 }
 
 static inline void sched_task_deactivate(struct task_struct *p, struct rq *rq)
