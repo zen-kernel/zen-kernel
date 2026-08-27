@@ -14,16 +14,19 @@ struct intel_plane_state;
 struct i915_gtt_view;
 struct iosys_map;
 
+struct intel_fb_pin_params {
+	const struct i915_gtt_view *view;
+	unsigned int alignment;
+	unsigned int phys_alignment;
+	unsigned int vtd_guard;
+};
+
 struct i915_vma *
 intel_fb_pin_to_ggtt(const struct drm_framebuffer *fb,
-		     const struct i915_gtt_view *view,
-		     unsigned int alignment,
-		     unsigned int phys_alignment,
-		     unsigned int vtd_guard,
-		     bool uses_fence,
-		     unsigned long *out_flags);
+		     const struct intel_fb_pin_params *pin_params,
+		     int *out_fence_id);
 
-void intel_fb_unpin_vma(struct i915_vma *vma, unsigned long flags);
+void intel_fb_unpin_vma(struct i915_vma *vma, int fence_id);
 
 int intel_plane_pin_fb(struct intel_plane_state *new_plane_state,
 		       const struct intel_plane_state *old_plane_state);
