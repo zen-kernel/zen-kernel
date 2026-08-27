@@ -110,6 +110,23 @@ unsigned int sysctl_sched_base_slice __read_mostly	= (4 << 20);
  */
 int sched_yield_type __read_mostly = 1;
 
+DEFINE_STATIC_KEY_MAYBE_RO(CONFIG_SCHED_PDS_SLEEP_CREDIT, sched_pds_sleep_credit);
+
+static int __init setup_sched_pds_sleep_credit(char *str)
+{
+	bool on;
+
+	if (kstrtobool(str, &on))
+		pr_warn("Unable to parse sched_pds_sleep_credit=\n");
+	else if (on)
+		static_branch_enable(&sched_pds_sleep_credit);
+	else
+		static_branch_disable(&sched_pds_sleep_credit);
+
+	return 1;
+}
+__setup("sched_pds_sleep_credit=", setup_sched_pds_sleep_credit);
+
 cpumask_t sched_rq_pending_mask ____cacheline_aligned_in_smp;
 
 DEFINE_PER_CPU_ALIGNED(cpumask_t [NR_CPU_AFFINITY_LEVELS], sched_cpu_topo_masks);

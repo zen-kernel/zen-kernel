@@ -979,6 +979,14 @@ config SCHED_PDS
 
 endchoice
 
+config SCHED_PDS_SLEEP_CREDIT
+	bool "PDS sleep credit on by default"
+	depends on SCHED_PDS
+	help
+	  Move a task that slept ahead of CPU-bound tasks of the same nice
+	  level when it wakes up.  This favours interactivity over fairness.
+	  sched_pds_sleep_credit=<bool> on the command line overrides it.
+
 config SCHED_ALT_TOPOLOGY_KUNIT_TEST
 	bool "KUnit tests for alternative scheduler CPU topology" if !KUNIT_ALL_TESTS
 	depends on KUNIT=y && SCHED_SMT
