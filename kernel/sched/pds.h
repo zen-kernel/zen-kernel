@@ -125,10 +125,17 @@ static inline void sched_update_rq_clock(struct rq *rq)
 	sched_rq_time_edge_advance(rq, old, now);
 }
 
-static inline void sched_task_renew(struct task_struct *p, const struct rq *rq)
+static inline void sched_task_deadline_reset(struct task_struct *p, const struct rq *rq)
 {
 	if (p->prio >= MIN_NORMAL_PRIO)
 		p->deadline = rq->time_edge + SCHED_EDGE_DELTA + SCHED_NICE_DELTA(p);
+}
+
+static inline void sched_task_renew(struct task_struct *p, const struct rq *rq)
+{
+	if (p->prio >= MIN_NORMAL_PRIO)
+		p->deadline = min(rq->time_edge + SCHED_EDGE_DELTA + SCHED_NICE_DELTA(p),
+				  max(p->deadline, rq->time_edge) + 1);
 }
 
 static inline void sched_task_sanity_check(struct task_struct *p, struct rq *rq)
@@ -140,13 +147,13 @@ static inline void sched_task_sanity_check(struct task_struct *p, struct rq *rq)
 
 static inline void sched_task_fork(struct task_struct *p, struct rq *rq)
 {
-	sched_task_renew(p, rq);
+	sched_task_deadline_reset(p, rq);
 }
 
 static inline void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
 {
 	p->time_slice = sysctl_sched_base_slice;
-	sched_task_renew(p, rq);
+	sched_task_deadline_reset(p, rq);
 }
 
 static inline void sched_task_ttwu(struct task_struct *p)
