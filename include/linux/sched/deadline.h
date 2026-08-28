@@ -2,6 +2,25 @@
 #ifndef _LINUX_SCHED_DEADLINE_H
 #define _LINUX_SCHED_DEADLINE_H
 
+#ifdef CONFIG_SCHED_ALT
+
+static inline int dl_task(struct task_struct *p)
+{
+	return 0;
+}
+
+#ifdef CONFIG_SCHED_BMQ
+#define __tsk_deadline(p)	(0UL)
+#endif
+
+#ifdef CONFIG_SCHED_PDS
+#define __tsk_deadline(p)	((((u64) ((p)->prio))<<56) | (p)->deadline)
+#endif
+
+#else
+
+#define __tsk_deadline(p)	((p)->dl.deadline)
+
 /*
  * SCHED_DEADLINE tasks has negative priorities, reflecting
  * the fact that any of them has higher prio than RT and
@@ -72,5 +91,6 @@ static inline bool dl_is_implicit(struct sched_dl_entity *dl_se)
 {
 	return dl_se->dl_deadline == dl_se->dl_period;
 }
+#endif /* !CONFIG_SCHED_ALT */
 
 #endif /* _LINUX_SCHED_DEADLINE_H */
