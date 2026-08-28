@@ -3001,7 +3001,10 @@ int smu_get_power_limit(void *handle,
 			*limit = smu->max_power_limit;
 			break;
 		case SMU_PPT_LIMIT_MIN:
-			*limit = smu->min_power_limit;
+			if (amdgpu_ignore_min_pcap)
+				*limit = 0;
+			else
+				*limit = smu->min_power_limit;
 			break;
 		default:
 			return -EINVAL;
@@ -3022,7 +3025,7 @@ static int smu_set_power_limit(void *handle, uint32_t limit_type, uint32_t limit
 	if (limit_type == SMU_DEFAULT_PPT_LIMIT) {
 		if (!limit)
 			limit = smu->current_power_limit;
-		if ((limit > smu->max_power_limit) || (limit < smu->min_power_limit)) {
+		if ((limit > smu->max_power_limit) || (!amdgpu_ignore_min_pcap && (limit < smu->min_power_limit))) {
 			dev_err(smu->adev->dev,
 				"New power limit (%d) is out of range [%d,%d]\n",
 				limit, smu->min_power_limit, smu->max_power_limit);

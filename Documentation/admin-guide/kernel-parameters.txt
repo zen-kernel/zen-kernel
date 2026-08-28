@@ -2487,6 +2487,9 @@ Kernel parameters
 			disable
 			  Do not enable intel_pstate as the default
 			  scaling driver for the supported processors
+			enable
+			  Enable intel_pstate in-case "disable" was passed
+			  previously in the kernel boot parameters
                         active
                           Use intel_pstate driver to bypass the scaling
                           governors layer of cpufreq and provides it own
@@ -4642,6 +4645,10 @@ Kernel parameters
 
 	nosync		[HW,M68K] Disables sync negotiation for all devices.
 
+	nothreadirqs	[KNL,EARLY]
+			Disable forced threading of interrupt handlers that
+			is enabled by default with CONFIG_FORCE_IRQ_THREADING.
+
 	no_timer_check	[X86,APIC] Disables the code which tests for broken
 			timer IRQ sources, i.e., the IO-APIC timer. This can
 			work around problems with incorrect timer
@@ -5272,6 +5279,19 @@ Kernel parameters
 				is enabled, this kernel boot option can be used
 				to disable PCIe TLP Processing Hints support
 				system-wide.
+
+	pcie_acs_override=
+			[PCIE] Assert ACS isolation for PCIe devices
+			lacking it, splitting their IOMMU groups.  Not a
+			security boundary: peer-to-peer DMA between
+			affected devices is unprotected.  Taints the
+			kernel.  Devices with real ACS, and devices the
+			firmware marked untrusted or external-facing, are
+			never affected.  Comma-separated list of:
+		downstream	Downstream and root ports
+		multifunction	Multifunction endpoints and upstream ports
+		id:nnnn:nnnn	Devices with this vendor:device ID, hex,
+				up to 16
 
 	pcie_aspm=	[PCIE] Forcibly enable or ignore PCIe Active State Power
 			Management.
