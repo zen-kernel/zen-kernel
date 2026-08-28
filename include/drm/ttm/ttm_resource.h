@@ -265,6 +265,7 @@ struct ttm_resource {
 	size_t size;
 	uint32_t mem_type;
 	uint32_t placement;
+	bool needs_contiguous;
 	struct ttm_bus_placement bus;
 	struct ttm_buffer_object *bo;
 
@@ -316,6 +317,7 @@ struct ttm_lru_bulk_move_pos {
 struct ttm_lru_bulk_move {
 	struct ttm_lru_bulk_move_pos pos[TTM_NUM_MEM_TYPES][TTM_MAX_BO_PRIORITY];
 	struct list_head cursor_list;
+	bool ordered;
 };
 
 /**
@@ -439,7 +441,7 @@ ttm_resource_manager_cleanup(struct ttm_resource_manager *man)
 	}
 }
 
-void ttm_lru_bulk_move_init(struct ttm_lru_bulk_move *bulk);
+void ttm_lru_bulk_move_init(struct ttm_lru_bulk_move *bulk, bool ordered);
 void ttm_lru_bulk_move_tail(struct ttm_lru_bulk_move *bulk);
 void ttm_lru_bulk_move_fini(struct ttm_device *bdev,
 			    struct ttm_lru_bulk_move *bulk);
@@ -458,10 +460,14 @@ void ttm_resource_init(struct ttm_buffer_object *bo,
 void ttm_resource_fini(struct ttm_resource_manager *man,
 		       struct ttm_resource *res);
 
+int ttm_resource_try_charge(struct ttm_buffer_object *bo,
+			    const struct ttm_place *place,
+			    struct dmem_cgroup_pool_state **ret_pool,
+			    struct dmem_cgroup_pool_state **ret_limit_pool);
 int ttm_resource_alloc(struct ttm_buffer_object *bo,
 		       const struct ttm_place *place,
 		       struct ttm_resource **res,
-		       struct dmem_cgroup_pool_state **ret_limit_pool);
+		       struct dmem_cgroup_pool_state *charge_pool);
 void ttm_resource_free(struct ttm_buffer_object *bo, struct ttm_resource **res);
 bool ttm_resource_intersects(struct ttm_device *bdev,
 			     struct ttm_resource *res,
@@ -487,7 +493,12 @@ void ttm_resource_manager_debug(struct ttm_resource_manager *man,
 struct ttm_resource *
 ttm_resource_manager_first(struct ttm_resource_cursor *cursor);
 struct ttm_resource *
+ttm_resource_manager_first_on_bulk(struct ttm_resource_cursor *cursor,
+				   struct ttm_lru_bulk_move *bulk);
+struct ttm_resource *
 ttm_resource_manager_next(struct ttm_resource_cursor *cursor);
+struct ttm_resource *
+ttm_resource_manager_next_on_bulk(struct ttm_resource_cursor *cursor);
 
 struct ttm_resource *
 ttm_lru_first_res_or_null(struct list_head *head);
@@ -502,6 +513,10 @@ ttm_lru_first_res_or_null(struct list_head *head);
 #define ttm_resource_manager_for_each_res(cursor, res)	\
 	for (res = ttm_resource_manager_first(cursor); res;	\
 	     res = ttm_resource_manager_next(cursor))
+
+#define ttm_resource_manager_for_each_res_on_bulk(cursor, res, bulk)      \
+	for (res = ttm_resource_manager_first_on_bulk(cursor, bulk); res; \
+	     res = ttm_resource_manager_next_on_bulk(cursor))
 
 struct ttm_kmap_iter *
 ttm_kmap_iter_iomap_init(struct ttm_kmap_iter_iomap *iter_io,

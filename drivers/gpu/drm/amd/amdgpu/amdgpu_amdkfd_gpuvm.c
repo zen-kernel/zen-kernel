@@ -1531,7 +1531,7 @@ static int amdgpu_amdkfd_gpuvm_pin_bo(struct amdgpu_bo *bo, u32 domain)
 		}
 	}
 
-	ret = amdgpu_bo_pin(bo, domain);
+	ret = amdgpu_bo_pin(bo, NULL, domain);
 	if (ret)
 		pr_err("Error in Pinning BO to domain: %d\n", domain);
 
@@ -2241,7 +2241,7 @@ int amdgpu_amdkfd_map_gtt_bo_to_gart(struct amdgpu_bo *bo, struct amdgpu_bo **bo
 		goto err_reserve_bo_failed;
 	}
 
-	ret = amdgpu_bo_pin(bo, AMDGPU_GEM_DOMAIN_GTT);
+	ret = amdgpu_bo_pin(bo, NULL, AMDGPU_GEM_DOMAIN_GTT);
 	if (ret) {
 		pr_err("Failed to pin bo. ret %d\n", ret);
 		goto err_pin_bo_failed;
@@ -2303,7 +2303,7 @@ int amdgpu_amdkfd_gpuvm_map_gtt_bo_to_kernel(struct kgd_mem *mem,
 		goto bo_reserve_failed;
 	}
 
-	ret = amdgpu_bo_pin(bo, AMDGPU_GEM_DOMAIN_GTT);
+	ret = amdgpu_bo_pin(bo, NULL, AMDGPU_GEM_DOMAIN_GTT);
 	if (ret) {
 		pr_err("Failed to pin bo. ret %d\n", ret);
 		goto pin_failed;

@@ -227,6 +227,12 @@ struct amdgpu_vm_bo_status {
 	/* BOs evicted which need to move into place again */
 	struct list_head		evicted;
 
+	/*
+	 * BOs that are not in the optimal place but don't strictly
+	 * require being moved.
+	 */
+	struct list_head	soft_evicted;
+
 	/* BOs whose mappings changed but PDs/PTs haven't been updated */
 	struct list_head		needs_update;
 
@@ -352,6 +358,11 @@ struct amdgpu_mem_stats {
 	uint64_t evicted;
 };
 
+/* TODO: Make these module parameters? */
+#define VM_EVICT_THROTTLE_SOFT_ALLOWED_DEADLOCKS 4
+#define VM_EVICT_THROTTLE_SOFT_TIMEOUT 200000
+#define VM_EVICT_THROTTLE_HARD_TIMEOUT 50000
+
 struct amdgpu_vm {
 	/* tree of virtual addresses mapped */
 	struct rb_root_cached	va;
@@ -369,6 +380,8 @@ struct amdgpu_vm {
 
 	/* BO's belonging to PD/PT which are internal to the kernel. */
 	struct amdgpu_vm_bo_status	kernel;
+	/* Timestamp for tracking when to throttle VM allocations. */
+	u64			last_evict_throttle_start_us;
 
 	/*
 	 * BOs allocated by userspace where the dma_resv is shared with the
@@ -528,7 +541,8 @@ int amdgpu_vm_flush_compute_tlb(struct amdgpu_device *adev,
 				struct amdgpu_vm *vm,
 				uint32_t flush_type,
 				uint32_t xcc_mask);
-void amdgpu_vm_bo_base_init(struct amdgpu_vm_bo_base *base,
+void amdgpu_vm_bo_base_init(struct amdgpu_device *adev,
+			    struct amdgpu_vm_bo_base *base,
 			    struct amdgpu_vm *vm, struct amdgpu_bo *bo);
 int amdgpu_vm_update_range(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 			   bool immediate, bool unlocked, bool flush_tlb,
@@ -546,7 +560,7 @@ void amdgpu_vm_update_stats(struct amdgpu_vm_bo_base *base,
 			    struct ttm_resource *new_res, int sign);
 void amdgpu_vm_bo_update_shared(struct amdgpu_bo *bo);
 void amdgpu_vm_bo_move(struct amdgpu_bo *bo, struct ttm_resource *new_mem,
-		       bool evicted);
+		       bool evicted, bool soft_evicted);
 uint64_t amdgpu_vm_map_gart(const dma_addr_t *pages_addr, uint64_t addr);
 struct amdgpu_bo_va *amdgpu_vm_bo_find(struct amdgpu_vm *vm,
 				       struct amdgpu_bo *bo);

@@ -518,7 +518,7 @@ static int amdgpu_vm_pt_alloc(struct amdgpu_device *adev,
 	 */
 	pt_bo = &pt->bo;
 	pt_bo->parent = amdgpu_bo_ref(cursor->parent->bo);
-	amdgpu_vm_bo_base_init(entry, vm, pt_bo);
+	amdgpu_vm_bo_base_init(adev, entry, vm, pt_bo);
 	r = amdgpu_vm_pt_clear(adev, vm, pt, immediate);
 	if (r)
 		goto error_free_pt;

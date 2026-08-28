@@ -162,7 +162,7 @@ static int amdgpu_uvd_create_msg_bo_helper(struct amdgpu_device *adev,
 	r = ttm_bo_validate(&bo->tbo, &bo->placement, &ctx);
 	if (r)
 		goto err;
-	r = amdgpu_bo_pin(bo, AMDGPU_GEM_DOMAIN_VRAM);
+	r = amdgpu_bo_pin(bo, NULL, AMDGPU_GEM_DOMAIN_VRAM);
 	if (r)
 		goto err_pin;
 	r = amdgpu_bo_kmap(bo, &addr);

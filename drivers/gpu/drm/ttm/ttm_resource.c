@@ -122,10 +122,11 @@ void ttm_resource_cursor_fini(struct ttm_resource_cursor *cursor)
  *
  * For now just memset the structure to zero.
  */
-void ttm_lru_bulk_move_init(struct ttm_lru_bulk_move *bulk)
+void ttm_lru_bulk_move_init(struct ttm_lru_bulk_move *bulk, bool ordered)
 {
 	memset(bulk, 0, sizeof(*bulk));
 	INIT_LIST_HEAD(&bulk->cursor_list);
+	bulk->ordered = ordered;
 }
 EXPORT_SYMBOL(ttm_lru_bulk_move_init);
 
@@ -222,6 +223,49 @@ static void ttm_lru_bulk_move_pos_tail(struct ttm_lru_bulk_move_pos *pos,
 	}
 }
 
+/* Move the resource to the appropriate ordered position in the bulk move */
+static void ttm_lru_bulk_move_pos_ordered(struct ttm_lru_bulk_move_pos *pos,
+					  struct ttm_resource *res)
+{
+	struct ttm_resource *insert_point;
+
+	if (pos->first == res && pos->last == res)
+		return;
+
+	if (pos->last == res)
+		pos->last = ttm_lru_prev_res(res);
+	if (pos->first == res)
+		pos->first = ttm_lru_next_res(res);
+
+	WARN_ON(pos->last->bo->base.resv != res->bo->base.resv);
+	WARN_ON(pos->first->bo->base.resv != res->bo->base.resv);
+
+	insert_point = pos->last;
+	while (insert_point != pos->first) {
+		if (insert_point == res) {
+			insert_point = ttm_lru_prev_res(insert_point);
+			WARN_ON(insert_point->bo->base.resv !=
+				res->bo->base.resv);
+			continue;
+		}
+		if (insert_point->bo->bulk_move_order <=
+		    res->bo->bulk_move_order)
+			break;
+		insert_point = ttm_lru_prev_res(insert_point);
+		WARN_ON(insert_point->bo->base.resv != res->bo->base.resv);
+	}
+
+	if (insert_point->bo->bulk_move_order > res->bo->bulk_move_order) {
+		WARN_ON(insert_point != pos->first);
+		list_move_tail(&res->lru.link, &pos->first->lru.link);
+		pos->first = res;
+	} else {
+		list_move(&res->lru.link, &insert_point->lru.link);
+		if (insert_point == pos->last)
+			pos->last = res;
+	}
+}
+
 /* Add the resource to a bulk_move cursor */
 static void ttm_lru_bulk_move_add(struct ttm_lru_bulk_move *bulk,
 				  struct ttm_resource *res)
@@ -233,7 +277,10 @@ static void ttm_lru_bulk_move_add(struct ttm_lru_bulk_move *bulk,
 		pos->last = res;
 	} else {
 		WARN_ON(pos->first->bo->base.resv != res->bo->base.resv);
-		ttm_lru_bulk_move_pos_tail(pos, res);
+		if (bulk->ordered)
+			ttm_lru_bulk_move_pos_ordered(pos, res);
+		else
+			ttm_lru_bulk_move_pos_tail(pos, res);
 	}
 }
 
@@ -320,7 +367,10 @@ void ttm_resource_move_to_lru_tail(struct ttm_resource *res)
 		struct ttm_lru_bulk_move_pos *pos =
 			ttm_lru_bulk_move_pos(bo->bulk_move, res);
 
-		ttm_lru_bulk_move_pos_tail(pos, res);
+		if (bo->bulk_move->ordered)
+			ttm_lru_bulk_move_pos_ordered(pos, res);
+		else
+			ttm_lru_bulk_move_pos_tail(pos, res);
 	} else {
 		struct ttm_resource_manager *man;
 
@@ -347,6 +397,7 @@ void ttm_resource_init(struct ttm_buffer_object *bo,
 	res->size = bo->base.size;
 	res->mem_type = place->mem_type;
 	res->placement = place->flags;
+	res->needs_contiguous = place->flags & TTM_PL_FLAG_CONTIGUOUS;
 	res->bus.addr = NULL;
 	res->bus.offset = 0;
 	res->bus.is_iomem = false;
@@ -386,33 +437,52 @@ void ttm_resource_fini(struct ttm_resource_manager *man,
 }
 EXPORT_SYMBOL(ttm_resource_fini);
 
-int ttm_resource_alloc(struct ttm_buffer_object *bo,
-		       const struct ttm_place *place,
-		       struct ttm_resource **res_ptr,
-		       struct dmem_cgroup_pool_state **ret_limit_pool)
+/**
+ * ttm_resource_try_charge - charge a resource manager's cgroup pool
+ * @bo: buffer for which an allocation should be charged
+ * @place: where the allocation is attempted to be placed
+ * @ret_pool: on charge success, the pool that was charged
+ * @ret_limit_pool: on charge failure, the pool responsible for the failure
+ *
+ * Should be used to charge cgroups before attempting resource allocation.
+ * When charging succeeds, the value of ret_pool should be passed to
+ * ttm_resource_alloc.
+ *
+ * Returns: 0 on charge success, negative errno on failure.
+ */
+int ttm_resource_try_charge(struct ttm_buffer_object *bo,
+			    const struct ttm_place *place,
+			    struct dmem_cgroup_pool_state **ret_pool,
+			    struct dmem_cgroup_pool_state **ret_limit_pool)
 {
 	struct ttm_resource_manager *man =
 		ttm_manager_type(bo->bdev, place->mem_type);
-	struct dmem_cgroup_pool_state *pool = NULL;
+
+	if (!man->cg) {
+		*ret_pool = NULL;
+		if (ret_limit_pool)
+			*ret_limit_pool = NULL;
+		return 0;
+	}
+
+	return dmem_cgroup_try_charge(man->cg, bo->base.size, ret_pool,
+				      ret_limit_pool);
+}
+
+int ttm_resource_alloc(struct ttm_buffer_object *bo,
+		       const struct ttm_place *place,
+		       struct ttm_resource **res_ptr,
+		       struct dmem_cgroup_pool_state *charge_pool)
+{
+	struct ttm_resource_manager *man =
+		ttm_manager_type(bo->bdev, place->mem_type);
 	int ret;
 
-	if (man->cg) {
-		ret = dmem_cgroup_try_charge(man->cg, bo->base.size, &pool, ret_limit_pool);
-		if (ret) {
-			if (ret == -EAGAIN)
-				ret = -ENOSPC;
-			return ret;
-		}
-	}
-
 	ret = man->func->alloc(man, bo, place, res_ptr);
-	if (ret) {
-		if (pool)
-			dmem_cgroup_uncharge(pool, bo->base.size);
+	if (ret)
 		return ret;
-	}
 
-	(*res_ptr)->css = pool;
+	(*res_ptr)->css = charge_pool;
 
 	spin_lock(&bo->bdev->lru_lock);
 	ttm_resource_add_bulk_move(*res_ptr, bo);
@@ -561,17 +631,24 @@ EXPORT_SYMBOL(ttm_resource_manager_init);
 int ttm_resource_manager_evict_all(struct ttm_device *bdev,
 				   struct ttm_resource_manager *man)
 {
-	struct ttm_operation_ctx ctx = { };
+	struct ttm_bo_lru_cursor cursor;
+	struct ttm_buffer_object *bo;
+	struct ttm_operation_ctx ctx = {
+		.interruptible = false,
+		.no_wait_gpu = false,
+	};
+	struct ttm_lru_walk_arg arg = {
+		.ctx = &ctx,
+	};
 	struct dma_fence *fence;
 	int ret, i;
 
-	do {
-		ret = ttm_bo_evict_first(bdev, man, &ctx);
+	ttm_bo_lru_for_each_reserved_guarded(&cursor, man, &arg, bo) {
+		ret = ttm_bo_evict(bo, &ctx);
+		if (ret)
+			return ret;
 		cond_resched();
-	} while (!ret);
-
-	if (ret && ret != -ENOENT)
-		return ret;
+	}
 
 	ret = 0;
 
@@ -677,6 +754,68 @@ ttm_resource_manager_first(struct ttm_resource_cursor *cursor)
 
 	list_move(&cursor->hitch.link, &man->lru[cursor->priority]);
 	return ttm_resource_manager_next(cursor);
+}
+
+struct ttm_resource *
+ttm_resource_manager_first_on_bulk(struct ttm_resource_cursor *cursor,
+				   struct ttm_lru_bulk_move *bulk)
+{
+	struct ttm_resource_manager *man = cursor->man;
+	struct ttm_resource *first;
+
+	if (WARN_ON_ONCE(!man))
+		return NULL;
+
+	lockdep_assert_held(&man->bdev->lru_lock);
+
+	for (;;) {
+		first = bulk->pos[cursor->mem_type][cursor->priority].first;
+
+		if (first)
+			break;
+		if (++cursor->priority >= TTM_MAX_BO_PRIORITY)
+			return NULL;
+	}
+
+	ttm_resource_cursor_check_bulk(cursor, &first->lru);
+	list_move(&cursor->hitch.link, &first->lru.link);
+	return first;
+}
+
+struct ttm_resource *
+ttm_resource_manager_next_on_bulk(struct ttm_resource_cursor *cursor)
+{
+	struct ttm_resource_manager *man = cursor->man;
+	struct ttm_lru_bulk_move *bulk = cursor->bulk;
+	struct ttm_lru_item *lru;
+
+	lockdep_assert_held(&man->bdev->lru_lock);
+
+	if (WARN_ON(!bulk))
+		return NULL;
+
+	for (;;) {
+		lru = &cursor->hitch;
+		list_for_each_entry_continue(lru, &man->lru[cursor->priority],
+					     link) {
+			if (!ttm_lru_item_is_res(lru))
+				continue;
+
+			ttm_resource_cursor_check_bulk(cursor, lru);
+			if (cursor->bulk != bulk)
+				break;
+
+			list_move(&cursor->hitch.link, &lru->link);
+			return ttm_lru_item_to_res(lru);
+		}
+
+		if (++cursor->priority >= TTM_MAX_BO_PRIORITY)
+			break;
+
+		return ttm_resource_manager_first_on_bulk(cursor, bulk);
+	}
+
+	return NULL;
 }
 
 /**

@@ -457,7 +457,7 @@ amdgpu_userq_get_doorbell_index(struct amdgpu_userq_mgr *uq_mgr,
 	}
 
 	/* Pin the BO before generating the index, unpin in queue destroy */
-	r = amdgpu_bo_pin(db_obj->obj, AMDGPU_GEM_DOMAIN_DOORBELL);
+	r = amdgpu_bo_pin(db_obj->obj, NULL, AMDGPU_GEM_DOMAIN_DOORBELL);
 	if (r) {
 		drm_file_err(uq_mgr->file, "[Usermode queues] Failed to pin doorbell object\n");
 		goto unresv_bo;

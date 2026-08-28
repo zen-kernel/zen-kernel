@@ -29,6 +29,7 @@
  * Authors: Thomas Hellstrom <thellstrom-at-vmware-dot-com>
  */
 
+#include "drm/ttm/ttm_resource.h"
 #include <linux/export.h>
 #include <linux/swap.h>
 #include <linux/vmalloc.h>
@@ -38,8 +39,21 @@
 #include <drm/ttm/ttm_tt.h>
 
 #include <drm/drm_cache.h>
+#include <drm/drm_exec.h>
 
 #include "ttm_bo_internal.h"
+
+static void ttm_transfer_object_free(struct drm_gem_object *obj)
+{
+	struct ttm_buffer_object *bo =
+		container_of(obj, struct ttm_buffer_object, base);
+
+	ttm_bo_fini(bo);
+}
+
+const struct drm_gem_object_funcs ttm_transfer_object_funcs = {
+	.free = ttm_transfer_object_free,
+};
 
 struct ttm_transfer_obj {
 	struct ttm_buffer_object base;
@@ -247,7 +261,8 @@ static int ttm_buffer_object_transfer(struct ttm_buffer_object *bo,
 	atomic_inc(&ttm_glob.bo_count);
 	drm_vma_node_reset(&fbo->base.base.vma_node);
 
-	kref_init(&fbo->base.kref);
+	kref_init(&fbo->base.base.refcount);
+	fbo->base.base.funcs = &ttm_transfer_object_funcs;
 	fbo->base.destroy = &ttm_transfered_destroy;
 	fbo->base.pin_count = 0;
 	if (bo->type != ttm_bo_type_sg)
@@ -824,13 +839,17 @@ static bool ttm_lru_walk_trylock(struct ttm_bo_lru_cursor *curs,
 	struct ttm_operation_ctx *ctx = curs->arg->ctx;
 
 	curs->needs_unlock = false;
+	if (ctx->exec)
+		return false;
 
 	if (dma_resv_trylock(bo->base.resv)) {
 		curs->needs_unlock = true;
 		return true;
 	}
 
-	if (bo->base.resv == ctx->resv && ctx->allow_res_evict) {
+	if (bo->base.resv == ctx->resv &&
+	    (ctx->allow_res_evict ||
+	     (ctx->allow_bulk_evict && curs->bulk_move))) {
 		dma_resv_assert_held(bo->base.resv);
 		return true;
 	}
@@ -844,7 +863,9 @@ static int ttm_lru_walk_ticketlock(struct ttm_bo_lru_cursor *curs,
 	struct ttm_lru_walk_arg *arg = curs->arg;
 	int ret;
 
-	if (arg->ctx->interruptible)
+	if (arg->ctx->exec)
+		ret = drm_exec_lock_obj_report_dup(arg->ctx->exec, &bo->base);
+	else if (arg->ctx->interruptible)
 		ret = dma_resv_lock_interruptible(bo->base.resv, arg->ticket);
 	else
 		ret = dma_resv_lock(bo->base.resv, arg->ticket);
@@ -858,13 +879,58 @@ static int ttm_lru_walk_ticketlock(struct ttm_bo_lru_cursor *curs,
 		 * trylocking for this walk.
 		 */
 		arg->ticket = NULL;
-	} else if (ret == -EDEADLK) {
+
+	} else if (arg->ctx->exec && arg->ctx->allow_res_evict &&
+		   ret == -EALREADY) {
+		ret = 0;
+	} else if (!arg->ctx->exec && ret == -EDEADLK) {
 		/* Caller needs to exit the ww transaction. */
 		ret = -ENOSPC;
+	} else if (arg->ctx->exec && ret == -EALREADY &&
+		   (arg->ctx->allow_res_evict ||
+		    (arg->ctx->allow_bulk_evict && curs->bulk_move))) {
+		ret = 0;
 	}
 
 	return ret;
 }
+
+s64 ttm_lru_walk_ordered_bulk_for_evict(struct ttm_lru_walk *walk,
+					struct ttm_device *bdev,
+					struct ttm_resource_manager *man,
+					u32 mem_type,
+					struct ttm_buffer_object *evictor,
+					s64 target)
+{
+	struct ttm_bo_lru_cursor cursor;
+	struct ttm_buffer_object *bo;
+	s64 progress = 0;
+	s64 lret;
+
+	if (!evictor->bulk_move || !evictor->bulk_move->ordered)
+		return 0;
+
+	ttm_bo_lru_for_each_on_bulk_reserved_guarded(
+		&cursor, man, &walk->arg, bo, mem_type, evictor->bulk_move)
+	{
+		/* FIXME: We would actually need to hold bdev->lru_lock to read the orders safely here??? */
+		if (READ_ONCE(bo->bulk_move_order) >=
+		    READ_ONCE(evictor->bulk_move_order))
+			break;
+
+		lret = walk->process_bo(walk, bo);
+		if (lret == -EBUSY)
+			lret = 0;
+		progress = (lret < 0) ? lret : progress + lret;
+		if (progress < 0 || progress >= target)
+			break;
+	}
+	if (IS_ERR(bo))
+		return PTR_ERR(bo);
+
+	return progress;
+}
+EXPORT_SYMBOL(ttm_lru_walk_ordered_bulk_for_evict);
 
 /**
  * ttm_lru_walk_for_evict() - Perform a LRU list walk, with actions taken on
@@ -906,7 +972,7 @@ s64 ttm_lru_walk_for_evict(struct ttm_lru_walk *walk, struct ttm_device *bdev,
 	s64 lret;
 
 	ttm_bo_lru_for_each_reserved_guarded(&cursor, man, &walk->arg, bo) {
-		lret = walk->ops->process_bo(walk, bo);
+		lret = walk->process_bo(walk, bo);
 		if (lret == -EBUSY || lret == -EALREADY)
 			lret = 0;
 		progress = (lret < 0) ? lret : progress + lret;
@@ -924,12 +990,17 @@ static void ttm_bo_lru_cursor_cleanup_bo(struct ttm_bo_lru_cursor *curs)
 {
 	struct ttm_buffer_object *bo = curs->bo;
 
-	if (bo) {
-		if (curs->needs_unlock)
+	if (!bo)
+		return;
+
+	if (curs->needs_unlock) {
+		if (curs->arg->ctx->exec)
+			drm_exec_unlock_obj(curs->arg->ctx->exec, &bo->base);
+		else
 			dma_resv_unlock(bo->base.resv);
-		ttm_bo_put(bo);
-		curs->bo = NULL;
 	}
+	ttm_bo_put(bo);
+	curs->bo = NULL;
 }
 
 /**
@@ -953,6 +1024,8 @@ EXPORT_SYMBOL(ttm_bo_lru_cursor_fini);
  * @curs: The ttm_bo_lru_cursor to initialize.
  * @man: The ttm resource_manager whose LRU lists to iterate over.
  * @arg: The ttm_lru_walk_arg to govern the walk.
+ * @bulk: Optional ttm_lru_bulk_move; if set, only resource from that
+ * bulk are included in iteration.
  *
  * Initialize a struct ttm_bo_lru_cursor.
  *
@@ -961,11 +1034,14 @@ EXPORT_SYMBOL(ttm_bo_lru_cursor_fini);
 struct ttm_bo_lru_cursor *
 ttm_bo_lru_cursor_init(struct ttm_bo_lru_cursor *curs,
 		       struct ttm_resource_manager *man,
-		       struct ttm_lru_walk_arg *arg)
+		       struct ttm_lru_walk_arg *arg, u32 mem_type,
+		       struct ttm_lru_bulk_move *bulk)
 {
 	memset(curs, 0, sizeof(*curs));
 	ttm_resource_cursor_init(&curs->res_curs, man);
+	curs->res_curs.mem_type = mem_type;
 	curs->arg = arg;
+	curs->bulk_move = bulk;
 
 	return curs;
 }
@@ -988,23 +1064,32 @@ __ttm_bo_lru_cursor_next(struct ttm_bo_lru_cursor *curs)
 		bool bo_locked = false;
 
 		if (first) {
-			res = ttm_resource_manager_first(&curs->res_curs);
+			if (curs->bulk_move)
+				res = ttm_resource_manager_first_on_bulk(&curs->res_curs, curs->bulk_move);
+			else
+				res = ttm_resource_manager_first(&curs->res_curs);
 			first = false;
 		} else {
-			res = ttm_resource_manager_next(&curs->res_curs);
+			if (curs->bulk_move)
+				res = ttm_resource_manager_next_on_bulk(&curs->res_curs);
+			else
+				res = ttm_resource_manager_next(&curs->res_curs);
 		}
 		if (!res)
 			break;
 
 		bo = res->bo;
-		if (ttm_lru_walk_trylock(curs, bo))
-			bo_locked = true;
-		else if (!arg->ticket || arg->ctx->no_wait_gpu || arg->trylock_only)
+		if (!ttm_bo_get_unless_zero(bo))
 			continue;
 
-		if (!ttm_bo_get_unless_zero(bo)) {
-			if (curs->needs_unlock)
-				dma_resv_unlock(bo->base.resv);
+		if (ttm_lru_walk_trylock(curs, bo)) {
+			bo_locked = true;
+
+		} else if ((!arg->ticket || arg->ctx->no_wait_gpu ||
+			    arg->trylock_only) && !arg->ctx->exec) {
+			spin_unlock(lru_lock);
+			ttm_bo_put(bo);
+			spin_lock(lru_lock);
 			continue;
 		}
 

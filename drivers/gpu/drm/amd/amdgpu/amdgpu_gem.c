@@ -473,6 +473,8 @@ int amdgpu_gem_create_ioctl(struct drm_device *dev, void *data,
 	}
 
 	initial_domain = (u32)(0xffffffff & args->in.domains);
+	if (initial_domain == AMDGPU_GEM_DOMAIN_VRAM)
+		initial_domain |= AMDGPU_GEM_DOMAIN_GTT;
 retry:
 	r = amdgpu_gem_object_create(adev, size, args->in.alignment,
 				     initial_domain,
@@ -483,10 +485,6 @@ retry:
 			goto retry;
 		}
 
-		if (initial_domain == AMDGPU_GEM_DOMAIN_VRAM) {
-			initial_domain |= AMDGPU_GEM_DOMAIN_GTT;
-			goto retry;
-		}
 		DRM_DEBUG("Failed to allocate GEM object (%llu, %d, %llu, %d)\n",
 				size, initial_domain, args->in.alignment, r);
 	}
@@ -1161,6 +1159,30 @@ int amdgpu_gem_op_ioctl(struct drm_device *dev, void *data,
 		args->num_entries = num_mappings;
 
 		kvfree(vm_entries);
+		break;
+	}
+	case AMDGPU_GEM_OP_SET_PRIORITY: {
+		if (!amdgpu_vm_is_bo_always_valid(&fpriv->vm, robj) ||
+		    args->value > U32_MAX) {
+			drm_exec_fini(&exec);
+			r = -EINVAL;
+			break;
+		}
+
+		struct amdgpu_bo_va *bo_va =
+			amdgpu_vm_bo_find(&fpriv->vm, robj);
+		if (!bo_va) {
+			r = -EINVAL;
+		} else {
+			bo_va->priority = args->value;
+			ttm_bo_set_bulk_move_ordered(
+				&robj->tbo, robj->tbo.bulk_move, args->value);
+			/* Invalidate the buffer to get it reshuffled in the soft-evicted
+			 * list, if it's there.
+			 */
+			amdgpu_vm_bo_invalidate(robj, false);
+		}
+		drm_exec_fini(&exec);
 		break;
 	}
 	default:

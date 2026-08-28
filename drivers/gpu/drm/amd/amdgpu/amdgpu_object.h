@@ -36,6 +36,8 @@
 #include <linux/mmu_notifier.h>
 #endif
 
+struct drm_exec;
+
 #define AMDGPU_BO_INVALID_OFFSET	LONG_MAX
 #define AMDGPU_BO_MAX_PLACEMENTS	3
 
@@ -78,6 +80,13 @@ struct amdgpu_bo_va {
 
 	/* protected by bo being reserved */
 	unsigned			ref_count;
+
+	/* For VM_ALWAYS_VALID buffers - eviction priority.
+	 * Opaque value passed by userspace. May only be compared to
+	 * other priority values from VM_ALWAYS_VALID buffers of the
+	 * same VM. UINT32_MAX means unset.
+	 */
+	uint32_t			priority;
 
 	/* all other members protected by the VM PD being reserved */
 	struct dma_fence	        *last_pt_update;
@@ -283,7 +292,7 @@ void *amdgpu_bo_kptr(struct amdgpu_bo *bo);
 void amdgpu_bo_kunmap(struct amdgpu_bo *bo);
 struct amdgpu_bo *amdgpu_bo_ref(struct amdgpu_bo *bo);
 void amdgpu_bo_unref(struct amdgpu_bo **bo);
-int amdgpu_bo_pin(struct amdgpu_bo *bo, u32 domain);
+int amdgpu_bo_pin(struct amdgpu_bo *bo, struct drm_exec *exec, u32 domain);
 void amdgpu_bo_unpin(struct amdgpu_bo *bo);
 int amdgpu_bo_init(struct amdgpu_device *adev);
 void amdgpu_bo_fini(struct amdgpu_device *adev);

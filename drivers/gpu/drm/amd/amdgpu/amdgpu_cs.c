@@ -822,13 +822,37 @@ static int amdgpu_cs_bo_validate(void *param, struct amdgpu_bo *bo)
 	struct ttm_operation_ctx ctx = {
 		.interruptible = true,
 		.no_wait_gpu = false,
-		.resv = bo->tbo.base.resv
+		.cgroup_throttle = p->num_unsuccessful_evicts > 0 ||
+				   p->vm_eviction_throttle_soft,
+		.exec = &p->exec,
 	};
+	struct amdgpu_fpriv *fpriv = p->filp->driver_priv;
+	struct amdgpu_bo_va *bo_va;
+	bool in_allowed_domains;
 	uint32_t domain;
 	int r;
 
 	if (bo->tbo.pin_count)
 		return 0;
+
+	in_allowed_domains =
+		bo->tbo.resource &&
+		amdgpu_mem_type_to_domain(bo->tbo.resource->mem_type) &
+			bo->allowed_domains;
+
+	if (p->vm_eviction_throttle_hard && in_allowed_domains)
+		return 0;
+
+	if (amdgpu_vm_is_bo_always_valid(&fpriv->vm, bo) &&
+	    bo->tbo.type != ttm_bo_type_kernel) {
+		ctx.allow_bulk_evict = true;
+		bo_va = amdgpu_vm_bo_find(&fpriv->vm, bo);
+		if (bo_va->priority == 0 && in_allowed_domains) {
+			drm_dbg(adev_to_drm(p->adev),
+				"priority 0, skipping validation\n");
+			return 0;
+		}
+	}
 
 	/* Don't move this buffer if we have depleted our allowance
 	 * to move it. Don't move anything if the threshold is zero.
@@ -856,6 +880,7 @@ static int amdgpu_cs_bo_validate(void *param, struct amdgpu_bo *bo)
 retry:
 	amdgpu_bo_placement_from_domain(bo, domain);
 	r = ttm_bo_validate(&bo->tbo, &bo->placement, &ctx);
+	p->num_unsuccessful_evicts += ctx.unsuccessful_evicts;
 
 	p->bytes_moved += ctx.bytes_moved;
 	if (!amdgpu_gmc_vram_full_visible(&adev->gmc) &&
@@ -874,10 +899,12 @@ static int amdgpu_cs_parser_bos(struct amdgpu_cs_parser *p,
 				union drm_amdgpu_cs *cs)
 {
 	struct amdgpu_fpriv *fpriv = p->filp->driver_priv;
-	struct ttm_operation_ctx ctx = { true, false };
+	struct ttm_operation_ctx ctx = { .interruptible = true,
+					 .exec = &p->exec };
 	struct amdgpu_vm *vm = &fpriv->vm;
 	struct amdgpu_bo_list_entry *e;
 	struct drm_gem_object *obj;
+	u64 us_since_eviction_throttle;
 	unsigned int i;
 	int r;
 
@@ -934,6 +961,14 @@ static int amdgpu_cs_parser_bos(struct amdgpu_cs_parser *p,
 		if (unlikely(r))
 			goto out_free_user_pages;
 
+		us_since_eviction_throttle =
+			ktime_to_us(ktime_get()) -
+			READ_ONCE(fpriv->vm.last_evict_throttle_start_us);
+		p->vm_eviction_throttle_soft = us_since_eviction_throttle <=
+					       VM_EVICT_THROTTLE_SOFT_TIMEOUT;
+		p->vm_eviction_throttle_hard = us_since_eviction_throttle <=
+					       VM_EVICT_THROTTLE_HARD_TIMEOUT;
+
 		amdgpu_bo_list_for_each_entry(e, p->bo_list) {
 			r = drm_exec_prepare_obj(&p->exec, &e->bo->tbo.base,
 						 TTM_NUM_MOVE_FENCES + p->gang_size);
@@ -951,47 +986,53 @@ static int amdgpu_cs_parser_bos(struct amdgpu_cs_parser *p,
 			if (unlikely(r))
 				goto out_free_user_pages;
 		}
-	}
 
-	amdgpu_bo_list_for_each_userptr_entry(e, p->bo_list) {
-		struct mm_struct *usermm;
+		amdgpu_bo_list_for_each_userptr_entry(e, p->bo_list) {
+			struct mm_struct *usermm;
 
-		usermm = amdgpu_ttm_tt_get_usermm(e->bo->tbo.ttm);
-		if (usermm && usermm != current->mm) {
-			r = -EPERM;
-			goto out_free_user_pages;
-		}
-
-		if (amdgpu_ttm_tt_is_userptr(e->bo->tbo.ttm) &&
-		    e->user_invalidated) {
-			amdgpu_bo_placement_from_domain(e->bo,
-							AMDGPU_GEM_DOMAIN_CPU);
-			r = ttm_bo_validate(&e->bo->tbo, &e->bo->placement,
-					    &ctx);
-			if (r)
+			usermm = amdgpu_ttm_tt_get_usermm(e->bo->tbo.ttm);
+			if (usermm && usermm != current->mm) {
+				r = -EPERM;
 				goto out_free_user_pages;
+			}
 
-			amdgpu_ttm_tt_set_user_pages(e->bo->tbo.ttm,
-						     e->range);
+			if (amdgpu_ttm_tt_is_userptr(e->bo->tbo.ttm) &&
+			    e->user_invalidated) {
+				amdgpu_bo_placement_from_domain(e->bo,
+								AMDGPU_GEM_DOMAIN_CPU);
+				r = ttm_bo_validate(&e->bo->tbo, &e->bo->placement,
+						    &ctx);
+				drm_exec_retry_on_contention(&p->exec);
+				if (r)
+					goto out_free_user_pages;
+
+				amdgpu_ttm_tt_set_user_pages(e->bo->tbo.ttm,
+							     e->range);
+			}
 		}
-	}
 
-	amdgpu_cs_get_threshold_for_moves(p->adev, &p->bytes_moved_threshold,
-					  &p->bytes_moved_vis_threshold);
-	p->bytes_moved = 0;
-	p->bytes_moved_vis = 0;
+		amdgpu_cs_get_threshold_for_moves(p->adev, &p->bytes_moved_threshold,
+						  &p->bytes_moved_vis_threshold);
+		p->bytes_moved = 0;
+		p->bytes_moved_vis = 0;
 
-	r = amdgpu_vm_validate(p->adev, &fpriv->vm, NULL,
-			       amdgpu_cs_bo_validate, p);
-	if (r) {
-		drm_err(adev_to_drm(p->adev), "amdgpu_vm_validate() failed.\n");
-		goto out_free_user_pages;
-	}
-
-	drm_exec_for_each_locked_object(&p->exec, obj) {
-		r = amdgpu_cs_bo_validate(p, gem_to_amdgpu_bo(obj));
-		if (unlikely(r))
+		r = amdgpu_vm_validate(p->adev, &fpriv->vm, NULL,
+				       amdgpu_cs_bo_validate, p);
+		drm_exec_retry_on_contention(&p->exec);
+		if (r) {
+			drm_err(adev_to_drm(p->adev), "amdgpu_vm_validate() failed.\n");
 			goto out_free_user_pages;
+		}
+
+		drm_exec_for_each_locked_object(&p->exec, obj) {
+			r = amdgpu_cs_bo_validate(p, gem_to_amdgpu_bo(obj));
+			drm_exec_retry_on_contention(&p->exec);
+			if (unlikely(r))
+				goto out_free_user_pages;
+		}
+
+		amdgpu_cs_report_moved_bytes(p->adev, p->bytes_moved,
+					     p->bytes_moved_vis);
 	}
 
 	if (p->uf_bo) {
@@ -1001,9 +1042,6 @@ static int amdgpu_cs_parser_bos(struct amdgpu_cs_parser *p,
 
 		p->gang_leader->uf_addr += amdgpu_bo_gpu_offset(p->uf_bo);
 	}
-
-	amdgpu_cs_report_moved_bytes(p->adev, p->bytes_moved,
-				     p->bytes_moved_vis);
 
 	for (i = 0; i < p->gang_size; ++i)
 		amdgpu_job_set_resources(p->jobs[i], p->bo_list->gds_obj,
@@ -1392,9 +1430,15 @@ static int amdgpu_cs_submit(struct amdgpu_cs_parser *p,
 /* Cleanup the parser structure */
 static void amdgpu_cs_parser_fini(struct amdgpu_cs_parser *parser)
 {
+	struct amdgpu_fpriv *fpriv = parser->filp->driver_priv;
 	struct amdgpu_device *adev = parser->adev;
 	struct amdgpu_bo_list_entry *e;
 	unsigned int i;
+
+	if (parser->num_unsuccessful_evicts) {
+		WRITE_ONCE(fpriv->vm.last_evict_throttle_start_us,
+			   ktime_to_us(ktime_get()));
+	}
 
 	amdgpu_sync_free(&parser->sync);
 	drm_exec_fini(&parser->exec);

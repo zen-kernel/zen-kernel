@@ -1496,9 +1496,17 @@ static bool amdgpu_ttm_bo_eviction_valuable(struct ttm_buffer_object *bo,
 	if (bo->resource->mem_type == TTM_PL_SYSTEM)
 		return true;
 
-	if (bo->type == ttm_bo_type_kernel &&
-	    !amdgpu_vm_evictable(ttm_to_amdgpu_bo(bo)))
+	/*
+	 * XXX: Trying to evict page-table BOs is super scuffed and can lead
+	 * to spurious lost devices. This really needs to be reworked!
+	 * For the time being, just don't try.
+	 */
+	if (bo->type == ttm_bo_type_kernel)
 		return false;
+
+	/*if (bo->type == ttm_bo_type_kernel &&
+	    !amdgpu_vm_evictable(ttm_to_amdgpu_bo(bo)))
+		return false;*/
 
 	/* If bo is a KFD BO, check if the bo belongs to the current process.
 	 * If true, then return false as any KFD process needs all its BOs to
