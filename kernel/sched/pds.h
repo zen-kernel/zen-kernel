@@ -136,6 +136,10 @@ static inline void sched_task_deadline_reset(struct task_struct *p, const struct
 static inline void sched_task_renew(struct task_struct *p, const struct rq *rq)
 {
 	if (p->prio >= MIN_NORMAL_PRIO) {
+		u64 cap = max(SCHED_NICE_DELTA(p) - (NICE_WIDTH / 8 + 1), 0);
+
+		if (p->sleep_credit > cap)
+			p->sleep_credit = cap;
 		if (p->sleep_credit)
 			p->sleep_credit--;
 		p->deadline = rq->time_edge + SCHED_EDGE_DELTA + SCHED_NICE_DELTA(p) -
