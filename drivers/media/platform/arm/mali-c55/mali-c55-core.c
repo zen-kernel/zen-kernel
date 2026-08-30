@@ -730,8 +730,13 @@ static int __mali_c55_power_on(struct mali_c55 *mali_c55)
 	/* Set safe stop to ensure we're in a non-streaming state */
 	mali_c55_write(mali_c55, MALI_C55_REG_INPUT_MODE_REQUEST,
 		       MALI_C55_INPUT_SAFE_STOP);
-	readl_poll_timeout(mali_c55->base + MALI_C55_REG_MODE_STATUS,
-			   val, !val, 10 * USEC_PER_MSEC, 250 * USEC_PER_MSEC);
+	ret = readl_poll_timeout(mali_c55->base + MALI_C55_REG_MODE_STATUS,
+				 val, !val, 10 * USEC_PER_MSEC, 250 * USEC_PER_MSEC);
+	if (ret) {
+		dev_err(mali_c55->dev, "safe stop timed out\n");
+		__mali_c55_power_off(mali_c55);
+		return ret;
+	}
 
 	return 0;
 }
