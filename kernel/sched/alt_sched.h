@@ -7,6 +7,7 @@
 #include <linux/mmu_context.h>
 #include <linux/profile.h>
 #include <linux/psi.h>
+#include <linux/sched/clock.h>
 #include <linux/stop_machine.h>
 #include <linux/sched/rseq_api.h>
 #include <linux/sched/stat.h>

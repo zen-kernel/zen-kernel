@@ -4493,11 +4493,11 @@ void alt_sched_debug(void)
 #endif
 
 
-#ifdef CONFIG_PREEMPT_RT
+#if defined(CONFIG_PREEMPT_RT) || defined(CONFIG_ZEN_INTERACTIVE)
 #define SCHED_NR_MIGRATE_BREAK 8
-#else /* !CONFIG_PREEMPT_RT: */
+#else
 #define SCHED_NR_MIGRATE_BREAK 32
-#endif /* !CONFIG_PREEMPT_RT */
+#endif
 
 __read_mostly unsigned int sysctl_sched_nr_migrate = SCHED_NR_MIGRATE_BREAK;
 

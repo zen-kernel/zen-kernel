@@ -14,6 +14,8 @@ static const u64 RT_MASK = ((1ULL << MIN_SCHED_NORMAL_PRIO) - 1);
 /* default time slice 4ms -> shift 22, 2 time slice slots -> shift 23 */
 static const int sched_timeslice_shift = 23;
 static const int sched_boost_shift = 21;
+#define sched_credit_decay \
+	max_t(u64, sysctl_sched_base_slice >> sched_boost_shift, 1)
 
 #define SCHED_NICE_DELTA(p)	(((p)->static_prio - (MAX_PRIO - NICE_WIDTH)) / 2)
 
@@ -127,21 +129,21 @@ static inline void sched_update_rq_clock(struct rq *rq)
 
 static inline void sched_task_deadline_reset(struct task_struct *p, const struct rq *rq)
 {
-	if (p->prio >= MIN_NORMAL_PRIO) {
-		p->sleep_credit = 0;
+	p->sleep_credit = 0;
+	if (p->prio >= MIN_NORMAL_PRIO)
 		p->deadline = rq->time_edge + SCHED_EDGE_DELTA + SCHED_NICE_DELTA(p);
-	}
 }
 
 static inline void sched_task_renew(struct task_struct *p, const struct rq *rq)
 {
 	if (p->prio >= MIN_NORMAL_PRIO) {
-		u64 cap = max(SCHED_NICE_DELTA(p) - (NICE_WIDTH / 8 + 1), 0);
+		u64 cap = normal_policy(p->policy) ?
+			max(SCHED_NICE_DELTA(p) - (NICE_WIDTH / 8 + 1), 0) : 0;
 
 		if (p->sleep_credit > cap)
 			p->sleep_credit = cap;
-		if (p->sleep_credit)
-			p->sleep_credit--;
+		p->sleep_credit -= min_t(u64, sched_credit_decay,
+					 p->sleep_credit);
 		p->deadline = rq->time_edge + SCHED_EDGE_DELTA + SCHED_NICE_DELTA(p) -
 			p->sleep_credit;
 	}
@@ -168,19 +170,19 @@ static inline void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
 static inline void sched_task_ttwu(struct task_struct *p)
 {
 	const struct rq *rq = this_rq();
-	s64 delta = rq->clock - p->sleep_start;
+	s64 delta = local_clock() - p->sleep_start;
 	s64 credit;
 	u64 boost;
 
 	if (p->prio < MIN_NORMAL_PRIO || !normal_policy(p->policy) ||
-	    unlikely(delta <= 0))
+	    delta < (1LL << (sched_boost_shift - 2)))
 		return;
 
-	boost = min_t(u64, NICE_WIDTH / 4, (u64)delta >> sched_boost_shift);
+	boost = min_t(u64, NICE_WIDTH / 4,
+		      max_t(u64, 1, (u64)delta >> sched_boost_shift));
 	credit = SCHED_NICE_DELTA(p) - max_t(s64, NICE_WIDTH / 8 + 1,
 					     SCHED_NICE_DELTA(p) - (s64)boost);
-	if (credit <= 0)
-		return;
+	credit = max_t(s64, credit, 0);
 
 	p->deadline = min(p->deadline, rq->time_edge + SCHED_EDGE_DELTA +
 				       SCHED_NICE_DELTA(p) - credit);
