@@ -182,8 +182,7 @@ static inline void sched_task_ttwu(struct task_struct *p)
 		      max_t(u64, 1, (u64)delta >> sched_boost_shift));
 	credit = SCHED_NICE_DELTA(p) - max_t(s64, NICE_WIDTH / 8 + 1,
 					     SCHED_NICE_DELTA(p) - (s64)boost);
-	if (credit <= 0)
-		return;
+	credit = max_t(s64, credit, 0);
 
 	p->deadline = min(p->deadline, rq->time_edge + SCHED_EDGE_DELTA +
 				       SCHED_NICE_DELTA(p) - credit);
