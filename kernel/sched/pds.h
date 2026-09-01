@@ -173,10 +173,11 @@ static inline void sched_task_ttwu(struct task_struct *p)
 	u64 boost;
 
 	if (p->prio < MIN_NORMAL_PRIO || !normal_policy(p->policy) ||
-	    unlikely(delta <= 0))
+	    delta < (1LL << (sched_boost_shift - 2)))
 		return;
 
-	boost = min_t(u64, NICE_WIDTH / 4, (u64)delta >> sched_boost_shift);
+	boost = min_t(u64, NICE_WIDTH / 4,
+		      max_t(u64, 1, (u64)delta >> sched_boost_shift));
 	credit = SCHED_NICE_DELTA(p) - max_t(s64, NICE_WIDTH / 8 + 1,
 					     SCHED_NICE_DELTA(p) - (s64)boost);
 	if (credit <= 0)
