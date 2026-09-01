@@ -14,6 +14,8 @@ static const u64 RT_MASK = ((1ULL << MIN_SCHED_NORMAL_PRIO) - 1);
 /* default time slice 4ms -> shift 22, 2 time slice slots -> shift 23 */
 static const int sched_timeslice_shift = 23;
 static const int sched_boost_shift = 21;
+#define sched_credit_decay \
+	max_t(u64, sysctl_sched_base_slice >> sched_boost_shift, 1)
 
 #define SCHED_NICE_DELTA(p)	(((p)->static_prio - (MAX_PRIO - NICE_WIDTH)) / 2)
 
@@ -140,8 +142,8 @@ static inline void sched_task_renew(struct task_struct *p, const struct rq *rq)
 
 		if (p->sleep_credit > cap)
 			p->sleep_credit = cap;
-		if (p->sleep_credit)
-			p->sleep_credit--;
+		p->sleep_credit -= min_t(u64, sched_credit_decay,
+					 p->sleep_credit);
 		p->deadline = rq->time_edge + SCHED_EDGE_DELTA + SCHED_NICE_DELTA(p) -
 			p->sleep_credit;
 	}
