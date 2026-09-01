@@ -170,7 +170,7 @@ static inline void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
 static inline void sched_task_ttwu(struct task_struct *p)
 {
 	const struct rq *rq = this_rq();
-	s64 delta = rq->clock - p->sleep_start;
+	s64 delta = local_clock() - p->sleep_start;
 	s64 credit;
 	u64 boost;
 
