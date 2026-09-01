@@ -129,16 +129,16 @@ static inline void sched_update_rq_clock(struct rq *rq)
 
 static inline void sched_task_deadline_reset(struct task_struct *p, const struct rq *rq)
 {
-	if (p->prio >= MIN_NORMAL_PRIO) {
-		p->sleep_credit = 0;
+	p->sleep_credit = 0;
+	if (p->prio >= MIN_NORMAL_PRIO)
 		p->deadline = rq->time_edge + SCHED_EDGE_DELTA + SCHED_NICE_DELTA(p);
-	}
 }
 
 static inline void sched_task_renew(struct task_struct *p, const struct rq *rq)
 {
 	if (p->prio >= MIN_NORMAL_PRIO) {
-		u64 cap = max(SCHED_NICE_DELTA(p) - (NICE_WIDTH / 8 + 1), 0);
+		u64 cap = normal_policy(p->policy) ?
+			max(SCHED_NICE_DELTA(p) - (NICE_WIDTH / 8 + 1), 0) : 0;
 
 		if (p->sleep_credit > cap)
 			p->sleep_credit = cap;
