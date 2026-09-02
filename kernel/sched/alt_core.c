@@ -2035,7 +2035,7 @@ wake_affine_idle(int this_cpu, int prev_cpu, int sync)
 	    available_idle_cpu(prev_cpu))
 		return prev_cpu;
 
-	if (sync && prev_cpu != this_cpu) {
+	if (sync) {
 		struct rq *rq = cpu_rq(this_cpu);
 
 		if (rq->nr_running == 1)
@@ -2089,6 +2089,20 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 	if (want_affine) {
 		int affine_cpu = wake_affine_idle(cpu, prev_cpu, sync);
 
+		if (affine_cpu == cpu && cpumask_test_cpu(cpu, &allow_mask)) {
+			int i;
+
+			new_cpu = cpu;
+			if (cpumask_and(&mask, cpu_smt_mask(cpu), sched_idle_mask) &&
+			    cpumask_and(&mask, &mask, &allow_mask) &&
+			    !cpumask_test_cpu(cpu, &mask))
+				for_each_cpu(i, &mask)
+					if (available_idle_cpu(i)) {
+						new_cpu = i;
+						break;
+					}
+			goto out;
+		}
 		if (affine_cpu < nr_cpu_ids &&
 		    cpumask_test_cpu(affine_cpu, &allow_mask)) {
 			new_cpu = affine_cpu;
@@ -2098,7 +2112,8 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 
 	if (static_call(sched_idle_select_func)(&mask, &allow_mask, sched_idle_mask)) {
 		do {
-			new_cpu = best_mask_cpu(prev_cpu, &mask);
+			new_cpu = cpumask_test_cpu(prev_cpu, &mask) ?
+				  prev_cpu : best_mask_cpu(prev_cpu, &mask);
 			if (!__is_defined(ALT_SCHED_TTWU_QUEUE) ||
 			    !cpu_rq(new_cpu)->ttwu_pending)
 				goto out;
