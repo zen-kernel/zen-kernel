@@ -2053,7 +2053,7 @@ wake_affine_idle(int this_cpu, int prev_cpu, int sync)
 	    available_idle_cpu(prev_cpu))
 		return prev_cpu;
 
-	if (sync && prev_cpu != this_cpu) {
+	if (sync) {
 		struct rq *rq = cpu_rq(this_cpu);
 
 		if (rq->nr_running == 1)
@@ -2105,8 +2105,22 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 	}
 
 	if (want_affine) {
-		int affine_cpu = wake_affine_idle(cpu, prev_cpu, sync);
+		int affine_cpu = nr_cpu_ids;
+		s64 waker_ran = READ_ONCE(this_rq()->clock) -
+				READ_ONCE(current->wake_start);
 
+		if (!is_idle_task(current) && waker_ran < TICK_NSEC) {
+			cpumask_and(&mask, cpu_smt_mask(cpu), &allow_mask);
+			affine_cpu = cpumask_any_but(&mask, cpu);
+			if (affine_cpu >= nr_cpu_ids)
+				affine_cpu = cpu;
+		}
+		if (affine_cpu >= nr_cpu_ids)
+			affine_cpu = wake_affine_idle(cpu, prev_cpu, sync);
+		else if (!available_idle_cpu(affine_cpu) &&
+			 cpu_rq(cpu)->nr_running + cpu_rq(affine_cpu)->nr_running > 3 &&
+			 cpumask_intersects(&allow_mask, sched_idle_mask))
+			affine_cpu = nr_cpu_ids;
 		if (affine_cpu < nr_cpu_ids &&
 		    cpumask_test_cpu(affine_cpu, &allow_mask)) {
 			new_cpu = affine_cpu;
@@ -2114,8 +2128,13 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 		}
 	}
 
-	if (static_call(sched_idle_select_func)(&mask, &allow_mask, sched_idle_mask)	||
-	    preempt_mask_check(&mask, &allow_mask, task_sched_prio(p)))
+	if (static_call(sched_idle_select_func)(&mask, &allow_mask, sched_idle_mask)) {
+		new_cpu = cpumask_test_cpu(prev_cpu, &mask) ?
+			  prev_cpu : best_mask_cpu(prev_cpu, &mask);
+		goto out;
+	}
+
+	if (preempt_mask_check(&mask, &allow_mask, task_sched_prio(p)))
 		new_cpu = best_mask_cpu(prev_cpu, &mask);
 	else
 		new_cpu = best_mask_cpu(prev_cpu, &allow_mask);
