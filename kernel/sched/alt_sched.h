@@ -234,6 +234,9 @@ struct rq {
 	unsigned int  nr_running;
 	unsigned long nr_uninterruptible;
 
+	u64 idle_stamp;
+	u64 avg_idle;
+
 #ifdef CONFIG_SCHED_HRTICK
 	call_single_data_t hrtick_csd;
 	struct hrtimer		hrtick_timer;
