@@ -96,12 +96,6 @@ unsigned int sysctl_sched_base_slice __read_mostly	= (2 << 20);
 unsigned int sysctl_sched_base_slice __read_mostly	= (4 << 20);
 #endif
 
-#if defined(CONFIG_PREEMPT_RT) || defined(CONFIG_ZEN_INTERACTIVE)
-static const u64 sched_migration_cost = 300000ULL;
-#else
-static const u64 sched_migration_cost = 500000ULL;
-#endif
-
 #include "alt_core.h"
 #include "alt_topology.h"
 
@@ -2098,15 +2092,9 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 		if (affine_cpu == cpu && cpumask_test_cpu(cpu, &allow_mask)) {
 			int i;
 
-			new_cpu = cpu;
-			if (cpumask_and(&mask, cpu_smt_mask(cpu), sched_idle_mask) &&
-			    cpumask_and(&mask, &mask, &allow_mask) &&
-			    !cpumask_test_cpu(cpu, &mask))
-				for_each_cpu(i, &mask)
-					if (available_idle_cpu(i)) {
-						new_cpu = i;
-						break;
-					}
+			cpumask_and(&mask, cpu_smt_mask(cpu), &allow_mask);
+			i = cpumask_any_but(&mask, cpu);
+			new_cpu = i < nr_cpu_ids ? i : cpu;
 			goto out;
 		}
 		if (affine_cpu < nr_cpu_ids &&
@@ -4721,9 +4709,7 @@ choose_next_task(struct rq *rq, int cpu)
 
 	if (next == rq->idle) {
 		if (!take_other_rq_tasks(rq, cpu)) {
-			if (rq->avg_idle >= sched_migration_cost)
-				sched_cpu_topology_balance(cpu, rq);
-			rq->idle_stamp = rq->clock;
+			sched_cpu_topology_balance(cpu, rq);
 
 			schedstat_inc(rq->sched_goidle);
 			/*printk(KERN_INFO "sched: choose_next_task(%d) idle %px\n", cpu, next);*/
@@ -4898,14 +4884,6 @@ picked:
 
 	is_switch = prev != next;
 	if (likely(is_switch)) {
-		if (rq->idle_stamp) {
-			u64 delta = rq->clock - rq->idle_stamp;
-
-			rq->avg_idle += ((s64)delta - (s64)rq->avg_idle) / 8;
-			rq->avg_idle = min(rq->avg_idle, 2 * sched_migration_cost);
-			rq->idle_stamp = 0;
-		}
-
 		next->last_ran = rq->clock_task;
 
 		/*printk(KERN_INFO "sched: %px -> %px\n", prev, next);*/
@@ -6838,8 +6816,6 @@ void __init sched_init(void)
 		sched_queue_init(&rq->queue);
 		sched_rq_set_prio(rq, IDLE_TASK_SCHED_PRIO);
 		rq->prio_balance_time = 0;
-		rq->idle_stamp = 0;
-		rq->avg_idle = 2 * sched_migration_cost;
 
 		raw_spin_lock_init(rq_lockp(rq));
 		rq->nr_running = rq->nr_uninterruptible = 0;
