@@ -2092,15 +2092,9 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 		if (affine_cpu == cpu && cpumask_test_cpu(cpu, &allow_mask)) {
 			int i;
 
-			new_cpu = cpu;
-			if (cpumask_and(&mask, cpu_smt_mask(cpu), sched_idle_mask) &&
-			    cpumask_and(&mask, &mask, &allow_mask) &&
-			    !cpumask_test_cpu(cpu, &mask))
-				for_each_cpu(i, &mask)
-					if (available_idle_cpu(i)) {
-						new_cpu = i;
-						break;
-					}
+			cpumask_and(&mask, cpu_smt_mask(cpu), &allow_mask);
+			i = cpumask_any_but(&mask, cpu);
+			new_cpu = i < nr_cpu_ids ? i : cpu;
 			goto out;
 		}
 		if (affine_cpu < nr_cpu_ids &&
