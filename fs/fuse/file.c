@@ -864,18 +864,29 @@ static int fuse_do_readfolio(struct file *file, struct folio *folio,
 
 	attr_ver = fuse_get_attr_version(fm->fc);
 
-	/* Don't overflow end offset */
-	if (pos + (desc.length - 1) == LLONG_MAX)
-		desc.length--;
+	/*
+	 * Don't overflow end offset.
+	 *
+	 * Ask the server for len - 1 bytes. desc.length still holds the full
+	 * length. When the reply comes back, it will be one byte shorter than
+	 * desc.length and fuse_copy_folios() will zero that last byte.
+	 *
+	 * For this reason, desc.length must not be decremented too. The caller
+	 * reports the full length to iomap_finish_folio_read(), which marks
+	 * every block it covers uptodate. Shortening the descriptor would
+	 * suppress zeroing and leave the last byte holding stale data.
+	 */
+	if (pos + (len - 1) == LLONG_MAX)
+		len--;
 
-	fuse_read_args_fill(&ia, file, pos, desc.length, FUSE_READ);
+	fuse_read_args_fill(&ia, file, pos, len, FUSE_READ);
 	res = fuse_simple_request(fm, &ia.ap.args);
 	if (res < 0)
 		return res;
 	/*
 	 * Short read means EOF.  If file size is larger, truncate it
 	 */
-	if (res < desc.length)
+	if (res < len)
 		fuse_short_read(inode, attr_ver, res, &ia.ap);
 
 	return 0;
@@ -1068,11 +1079,20 @@ static void fuse_send_readpages(struct fuse_io_args *ia, struct file *file,
 	ap->args.page_zeroing = true;
 	ap->args.page_replace = true;
 
-	/* Don't overflow end offset */
-	if (pos + (count - 1) == LLONG_MAX) {
+	/*
+	 * Don't overflow end offset.
+	 *
+	 * Ask the server for count - 1 bytes. The reply is then one byte
+	 * shorter than what the descriptor lengths add up to, so
+	 * fuse_copy_folios() zeroes the last byte when it walks the folios.
+	 *
+	 * ap->descs[] must not be decremented here. It is what
+	 * fuse_readpages_end() reports back to iomap_finish_folio_read(), and
+	 * iomap has already accounted the full descriptor length, so shortening
+	 * it would leave ifs->read_bytes_pending nonzero and the folio locked.
+	 */
+	if (pos + (count - 1) == LLONG_MAX)
 		count--;
-		ap->descs[ap->num_folios - 1].length--;
-	}
 	WARN_ON((loff_t) (pos + count) < 0);
 
 	fuse_read_args_fill(ia, file, pos, count, FUSE_READ);
