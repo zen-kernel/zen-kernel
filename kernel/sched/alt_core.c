@@ -2087,16 +2087,17 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 	}
 
 	if (want_affine) {
-		int affine_cpu = wake_affine_idle(cpu, prev_cpu, sync);
+		int affine_cpu = nr_cpu_ids;
 
-		if (affine_cpu == cpu && cpumask_test_cpu(cpu, &allow_mask)) {
-			int i;
-
+		if (!is_idle_task(current)) {
 			cpumask_and(&mask, cpu_smt_mask(cpu), &allow_mask);
-			i = cpumask_any_but(&mask, cpu);
-			new_cpu = i < nr_cpu_ids ? i : cpu;
-			goto out;
+			affine_cpu = cpumask_any_but(&mask, cpu);
 		}
+		if (affine_cpu >= nr_cpu_ids)
+			affine_cpu = wake_affine_idle(cpu, prev_cpu, sync);
+		else if (!available_idle_cpu(affine_cpu) &&
+			 cpumask_intersects(&allow_mask, sched_idle_mask))
+			affine_cpu = nr_cpu_ids;
 		if (affine_cpu < nr_cpu_ids &&
 		    cpumask_test_cpu(affine_cpu, &allow_mask)) {
 			new_cpu = affine_cpu;
