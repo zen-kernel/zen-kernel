@@ -1971,11 +1971,11 @@ static void record_wakee(struct task_struct *p)
 	 */
 	if (time_after(jiffies, current->wakee_flip_decay_ts + HZ)) {
 		current->wakee_flips >>= 1;
-		current->wakee_flip_decay_ts = jiffies;
+		WRITE_ONCE(current->wakee_flip_decay_ts, jiffies);
 	}
 
 	if (current->last_wakee != p) {
-		current->last_wakee = p;
+		WRITE_ONCE(current->last_wakee, p);
 		current->wakee_flips++;
 	}
 }
@@ -2087,16 +2087,17 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 	}
 
 	if (want_affine) {
-		int affine_cpu = wake_affine_idle(cpu, prev_cpu, sync);
+		int affine_cpu = nr_cpu_ids;
 
-		if (affine_cpu == cpu && cpumask_test_cpu(cpu, &allow_mask)) {
-			int i;
-
+		if (!is_idle_task(current)) {
 			cpumask_and(&mask, cpu_smt_mask(cpu), &allow_mask);
-			i = cpumask_any_but(&mask, cpu);
-			new_cpu = i < nr_cpu_ids ? i : cpu;
-			goto out;
+			affine_cpu = cpumask_any_but(&mask, cpu);
 		}
+		if (affine_cpu >= nr_cpu_ids)
+			affine_cpu = wake_affine_idle(cpu, prev_cpu, sync);
+		else if (!available_idle_cpu(affine_cpu) &&
+			 cpumask_intersects(&allow_mask, sched_idle_mask))
+			affine_cpu = nr_cpu_ids;
 		if (affine_cpu < nr_cpu_ids &&
 		    cpumask_test_cpu(affine_cpu, &allow_mask)) {
 			new_cpu = affine_cpu;
@@ -4163,6 +4164,38 @@ static int __init setup_resched_latency_warn_ms(char *str)
 }
 __setup("resched_latency_warn_ms=", setup_resched_latency_warn_ms);
 
+#ifdef CONFIG_SCHED_SMT
+static void smt_balance_kick(struct rq *rq)
+{
+	int cpu = cpu_of(rq), sibling, target;
+	struct rq *target_rq;
+
+	if (rq->nr_running != 1 || cpumask_empty(sched_sg_idle_mask) ||
+	    !cpumask_test_cpu(cpu, &sched_smt_mask) ||
+	    !cpumask_intersects(rq->curr->cpus_ptr, sched_sg_idle_mask))
+		return;
+
+	for_each_cpu_and(sibling, cpu_smt_mask(cpu), &sched_smt_mask)
+		if (sibling != cpu &&
+		    (cpumask_test_cpu(sibling, sched_idle_mask) ||
+		     cpumask_test_cpu(sibling, &sched_rq_pending_mask)))
+			return;
+
+	if (sched_smt_group_paired(rq, cpu))
+		return;
+
+	target = best_mask_cpu(cpu, sched_sg_idle_mask);
+	target_rq = cpu_rq(target);
+	if (raw_spin_rq_trylock(target_rq)) {
+		if (is_idle_task(target_rq->curr))
+			resched_curr(target_rq);
+		raw_spin_rq_unlock(target_rq);
+	}
+}
+#else
+static inline void smt_balance_kick(struct rq *rq) { }
+#endif
+
 /*
  * This function gets called by the timer code, with HZ frequency.
  * We call it with interrupts disabled.
@@ -4190,6 +4223,7 @@ void sched_tick(void)
 		resched_curr(rq);
 
 	scheduler_task_tick(rq);
+	smt_balance_kick(rq);
 	if (sched_feat(LATENCY_WARN))
 		resched_latency = cpu_resched_latency(rq);
 	calc_global_load_tick(rq);
