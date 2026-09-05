@@ -336,37 +336,6 @@ static bool sched_smt_group_busy(int cpu, const struct cpumask *busy_mask)
 	return true;
 }
 
-static bool sched_wakee_recent(struct task_struct *p, u64 now)
-{
-	return time_before(jiffies, READ_ONCE(p->wakee_flip_decay_ts) + 2 * HZ) &&
-	       now - READ_ONCE(p->sleep_start) < TICK_NSEC;
-}
-
-bool sched_smt_group_paired(struct rq *rq, int cpu)
-{
-	struct task_struct *p = rcu_dereference_all(cpu_rq(cpu)->curr);
-	u64 now = rq_clock(rq);
-	int sibling;
-
-	if (!sched_wakee_recent(p, now))
-		return false;
-
-	for_each_cpu_and(sibling, cpu_smt_mask(cpu), &sched_smt_mask) {
-		struct task_struct *q;
-
-		if (sibling == cpu)
-			continue;
-
-		q = rcu_dereference_all(cpu_rq(sibling)->curr);
-		if (READ_ONCE(p->last_wakee) == q &&
-		    READ_ONCE(q->last_wakee) == p &&
-		    sched_wakee_recent(q, now))
-			return true;
-	}
-
-	return false;
-}
-
 static inline int
 smt_source_balance(struct rq *rq, cpumask_t *single_task_mask,
 		   const struct cpumask *source_mask, cpumask_t *target_mask)
@@ -383,7 +352,6 @@ smt_source_balance(struct rq *rq, cpumask_t *single_task_mask,
 
 		for_each_cpu_wrap(i, &smt_single_mask, cpu) {
 			if (sched_smt_group_busy(i, &smt_single_mask) &&
-			    !sched_smt_group_paired(rq, i) &&
 			    trigger_active_balance(rq, cpu_rq(i), target_mask))
 				return 1;
 		}

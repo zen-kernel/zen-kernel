@@ -136,7 +136,6 @@ extern void pcore_balance(struct rq *rq);
 #ifdef CONFIG_SCHED_SMT
 extern void ecore_balance(struct rq *rq);
 extern void smt_balance(struct rq *rq);
-bool sched_smt_group_paired(struct rq *rq, int cpu);
 extern void smt_pcore_balance(struct rq *rq);
 #endif
 
