@@ -789,12 +789,13 @@ static int atlantis_prcm_clocks_register(struct device *dev,
 {
 	struct clk_hw_onecell_data *clk_data;
 	int i, ret;
-	size_t num_clks = data->num;
 
 	clk_data = devm_kzalloc(dev, struct_size(clk_data, hws, data->num),
 				GFP_KERNEL);
 	if (!clk_data)
 		return -ENOMEM;
+
+	clk_data->num = data->num;
 
 	for (i = 0; i < data->num; i++) {
 		struct clk_hw *hw = data->hws[i];
@@ -808,8 +809,6 @@ static int atlantis_prcm_clocks_register(struct device *dev,
 
 		clk_data->hws[common->clkid] = hw;
 	}
-
-	clk_data->num = num_clks;
 
 	return devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get, clk_data);
 }
