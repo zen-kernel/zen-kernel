@@ -101,7 +101,6 @@ static inline void sched_task_ttwu(struct task_struct *p)
 
 static inline void sched_task_deactivate(struct task_struct *p, struct rq *rq)
 {
-	WRITE_ONCE(p->sleep_start, rq->clock);
 	boost_task(p, 1);
 }
 
