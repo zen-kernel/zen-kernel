@@ -641,6 +641,7 @@ void mali_c55_unregister_isp(struct mali_c55 *mali_c55)
 
 	mutex_destroy(&isp->capture_lock);
 	v4l2_device_unregister_subdev(&isp->sd);
+	v4l2_ctrl_handler_free(&isp->handler);
 	v4l2_subdev_cleanup(&isp->sd);
 	media_entity_cleanup(&isp->sd.entity);
 }
