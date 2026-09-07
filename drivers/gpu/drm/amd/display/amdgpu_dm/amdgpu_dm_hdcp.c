@@ -535,15 +535,27 @@ static bool enable_assr(void *handle, struct dc_link *link)
 static void update_config(void *handle, struct cp_psp_stream_config *config)
 {
 	struct hdcp_workqueue *hdcp_work = handle;
-	struct amdgpu_dm_connector *aconnector = config->dm_stream_ctx;
-	int link_index = aconnector->dc_link->link_index;
-	unsigned int conn_index = aconnector->base.index;
-	struct mod_hdcp_display *display = &hdcp_work[link_index].display;
-	struct mod_hdcp_link *link = &hdcp_work[link_index].link;
-	struct hdcp_workqueue *hdcp_w = &hdcp_work[link_index];
+	struct amdgpu_dm_connector *aconnector;
+	const struct dc *dc;
+	int link_index;
+	unsigned int conn_index;
+	struct mod_hdcp_display *display;
+	struct mod_hdcp_link *link;
+	struct hdcp_workqueue *hdcp_w;
 	struct dc_sink *sink = NULL;
 	bool link_is_hdcp14 = false;
-	const struct dc *dc = aconnector->dc_link->dc;
+
+	aconnector = config->dm_stream_ctx;
+	if (!aconnector || !aconnector->dc_link)
+		return;
+
+	link_index = aconnector->dc_link->link_index;
+	display = &hdcp_work[link_index].display;
+	link = &hdcp_work[link_index].link;
+	hdcp_w = &hdcp_work[link_index];
+
+	conn_index = aconnector->base.index;
+	dc = aconnector->dc_link->dc;
 
 	if (config->dpms_off) {
 		hdcp_remove_display(hdcp_work, link_index, aconnector);
@@ -581,7 +593,7 @@ static void update_config(void *handle, struct cp_psp_stream_config *config)
 	link->dp.mst_enabled = config->mst_enabled;
 	link->dp.dp2_enabled = config->dp2_enabled;
 	link->dp.usb4_enabled = config->usb4_enabled;
-	if (aconnector->dc_sink->sink_signal == SIGNAL_TYPE_HDMI_FRL)
+	if (sink && sink->sink_signal == SIGNAL_TYPE_HDMI_FRL)
 		link->hdmi.frl_enabled = config->frl_enabled;
 	display->adjust.disable = MOD_HDCP_DISPLAY_DISABLE_AUTHENTICATION;
 	link->adjust.auth_delay = 2;
