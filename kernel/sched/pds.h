@@ -192,7 +192,7 @@ static inline void sched_task_ttwu(struct task_struct *p)
 
 static inline void sched_task_deactivate(struct task_struct *p, struct rq *rq)
 {
-	p->sleep_start = rq->clock;
+	WRITE_ONCE(p->sleep_start, rq->clock);
 }
 
 #endif /* _KERNEL_SCHED_PDS_H */

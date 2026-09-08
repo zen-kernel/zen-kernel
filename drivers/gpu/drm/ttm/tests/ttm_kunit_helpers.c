@@ -189,6 +189,8 @@ struct ttm_buffer_object *ttm_bo_kunit_init(struct kunit *test,
 	bo->bdev = devs->ttm_dev;
 	bo->destroy = dummy_ttm_bo_destroy;
 
+	kref_init(&bo->kref);
+
 	return bo;
 }
 EXPORT_SYMBOL_GPL(ttm_bo_kunit_init);
