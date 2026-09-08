@@ -1971,11 +1971,11 @@ static void record_wakee(struct task_struct *p)
 	 */
 	if (time_after(jiffies, current->wakee_flip_decay_ts + HZ)) {
 		current->wakee_flips >>= 1;
-		current->wakee_flip_decay_ts = jiffies;
+		WRITE_ONCE(current->wakee_flip_decay_ts, jiffies);
 	}
 
 	if (current->last_wakee != p) {
-		current->last_wakee = p;
+		WRITE_ONCE(current->last_wakee, p);
 		current->wakee_flips++;
 	}
 }
@@ -2087,16 +2087,17 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 	}
 
 	if (want_affine) {
-		int affine_cpu = wake_affine_idle(cpu, prev_cpu, sync);
+		int affine_cpu = nr_cpu_ids;
 
-		if (affine_cpu == cpu && cpumask_test_cpu(cpu, &allow_mask)) {
-			int i;
-
+		if (!is_idle_task(current)) {
 			cpumask_and(&mask, cpu_smt_mask(cpu), &allow_mask);
-			i = cpumask_any_but(&mask, cpu);
-			new_cpu = i < nr_cpu_ids ? i : cpu;
-			goto out;
+			affine_cpu = cpumask_any_but(&mask, cpu);
 		}
+		if (affine_cpu >= nr_cpu_ids)
+			affine_cpu = wake_affine_idle(cpu, prev_cpu, sync);
+		else if (!available_idle_cpu(affine_cpu) &&
+			 cpumask_intersects(&allow_mask, sched_idle_mask))
+			affine_cpu = nr_cpu_ids;
 		if (affine_cpu < nr_cpu_ids &&
 		    cpumask_test_cpu(affine_cpu, &allow_mask)) {
 			new_cpu = affine_cpu;
@@ -2455,6 +2456,8 @@ ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags)
 		delayacct_blkio_end(p);
 		atomic_dec(&task_rq(p)->nr_iowait);
 	}
+
+	WRITE_ONCE(p->wake_start, rq->clock);
 
 	activate_task(p, rq, en_flags);
 	wakeup_preempt(rq);
@@ -4163,6 +4166,63 @@ static int __init setup_resched_latency_warn_ms(char *str)
 }
 __setup("resched_latency_warn_ms=", setup_resched_latency_warn_ms);
 
+#ifdef CONFIG_SCHED_SMT
+static void smt_balance_kick(struct rq *rq)
+{
+	int cpu = cpu_of(rq), sibling, target;
+	struct rq *target_rq;
+	cpumask_t mask;
+
+	if (rq->nr_running != 1 || cpumask_empty(sched_idle_mask) ||
+	    !cpumask_test_cpu(cpu, &sched_smt_mask))
+		return;
+
+	for_each_cpu_and(sibling, cpu_smt_mask(cpu), &sched_smt_mask)
+		if (sibling != cpu &&
+		    (cpumask_test_cpu(sibling, sched_idle_mask) ||
+		     cpumask_test_cpu(sibling, &sched_rq_pending_mask)))
+			return;
+
+	cpumask_copy(&mask, sched_sg_idle_mask);
+	if (per_cpu(sched_cpu_topo, cpu) == CPU_TOPOLOGY_PCORE &&
+	    cpumask_empty(sched_pcore_idle_mask))
+		cpumask_or(&mask, &mask, sched_ecore_idle_mask);
+
+	/*
+	 * Other CPUs can clear the last idle core while we hold only this
+	 * rq's lock. Select from a nonempty snapshot, restricted to CPUs the
+	 * task can use, rather than looking up a CPU in the live idle mask.
+	 */
+	if (!cpumask_and(&mask, &mask, rq->curr->cpus_ptr) ||
+	    !cpumask_and(&mask, &mask, cpu_active_mask))
+		return;
+
+	if (sched_smt_group_paired(rq, cpu))
+		return;
+
+	target = best_mask_cpu(cpu, &mask);
+	if (target >= nr_cpu_ids)
+		return;
+
+	target_rq = cpu_rq(target);
+	if (raw_spin_rq_trylock(target_rq)) {
+		if (target_rq->online && idle_rq(target_rq) &&
+		    (cpumask_test_cpu(target, sched_sg_idle_mask) ||
+		     cpumask_test_cpu(target, sched_ecore_idle_mask))) {
+			/*
+			 * The target queues its own callback in __schedule(),
+			 * including the SM_IDLE fast path. Callbacks must not
+			 * remain queued across an rq unlock/relock boundary.
+			 */
+			resched_curr(target_rq);
+		}
+		raw_spin_rq_unlock(target_rq);
+	}
+}
+#else
+static inline void smt_balance_kick(struct rq *rq) { }
+#endif
+
 /*
  * This function gets called by the timer code, with HZ frequency.
  * We call it with interrupts disabled.
@@ -4190,6 +4250,7 @@ void sched_tick(void)
 		resched_curr(rq);
 
 	scheduler_task_tick(rq);
+	smt_balance_kick(rq);
 	if (sched_feat(LATENCY_WARN))
 		resched_latency = cpu_resched_latency(rq);
 	calc_global_load_tick(rq);
@@ -4273,6 +4334,7 @@ static void sched_tick_remote(struct work_struct *work)
 				WARN_ON_ONCE(delta > (u64)NSEC_PER_SEC * 30);
 			}
 			scheduler_task_tick(rq);
+			smt_balance_kick(rq);
 
 			calc_load_nohz_remote(rq);
 		}
@@ -4866,6 +4928,7 @@ static void __sched notrace __schedule(int sched_mode)
 	prev_state = READ_ONCE(prev->__state);
 	if (sched_mode == SM_IDLE) {
 		if (!rq->nr_running) {
+			sched_cpu_topology_balance(cpu, rq);
 			next = prev;
 			goto picked;
 		}
