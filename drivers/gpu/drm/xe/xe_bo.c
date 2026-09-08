@@ -1654,6 +1654,31 @@ static unsigned long xe_ttm_io_mem_pfn(struct ttm_buffer_object *ttm_bo,
 
 static void __xe_bo_vunmap(struct xe_bo *bo);
 
+/*
+ * TODO: Move this function to TTM so we don't rely on how TTM does its
+ * locking, thereby abusing TTM internals.
+ */
+static bool xe_ttm_bo_lock_in_destructor(struct ttm_buffer_object *ttm_bo)
+{
+	struct xe_device *xe = ttm_to_xe_device(ttm_bo->bdev);
+	bool locked;
+
+	xe_assert(xe, !kref_read(&ttm_bo->kref));
+
+	/*
+	 * We can typically only race with TTM trylocking under the
+	 * lru_lock, which will immediately be unlocked again since
+	 * the ttm_bo refcount is zero at this point. So trylocking *should*
+	 * always succeed here, as long as we hold the lru lock.
+	 */
+	spin_lock(&ttm_bo->bdev->lru_lock);
+	locked = dma_resv_trylock(&ttm_bo->base._resv);
+	spin_unlock(&ttm_bo->bdev->lru_lock);
+	xe_assert(xe, locked);
+
+	return locked;
+}
+
 static void xe_ttm_bo_release_notify(struct ttm_buffer_object *ttm_bo)
 {
 	struct dma_resv_iter cursor;
@@ -1667,11 +1692,8 @@ static void xe_ttm_bo_release_notify(struct ttm_buffer_object *ttm_bo)
 	bo = ttm_to_xe_bo(ttm_bo);
 	xe_assert(xe_bo_device(bo), !(bo->created && kref_read(&ttm_bo->base.refcount)));
 
-	/*
-	 * This should never fail since there are no other references to the BO
-	 * any more.
-	 */
-	WARN_ON(!dma_resv_trylock(ttm_bo->base.resv));
+	if (!xe_ttm_bo_lock_in_destructor(ttm_bo))
+		return;
 
 	/*
 	 * Scrub the preempt fences if any. The unbind fence is already

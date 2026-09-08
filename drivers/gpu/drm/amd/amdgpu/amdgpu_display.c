@@ -42,7 +42,6 @@
 #include <drm/drm_damage_helper.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_edid.h>
-#include <drm/drm_exec.h>
 #include <drm/drm_fb_helper.h>
 #include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_fourcc.h>
@@ -201,7 +200,6 @@ int amdgpu_display_crtc_page_flip_target(struct drm_crtc *crtc,
 	struct drm_gem_object *obj;
 	struct amdgpu_flip_work *work;
 	struct amdgpu_bo *new_abo;
-	struct drm_exec exec;
 	unsigned long flags;
 	u64 tiling_flags;
 	int i, r;
@@ -229,27 +227,19 @@ int amdgpu_display_crtc_page_flip_target(struct drm_crtc *crtc,
 	new_abo = gem_to_amdgpu_bo(obj);
 
 	/* pin the new buffer */
-	drm_exec_init(&exec, 0, 0);
-	drm_exec_until_all_locked(&exec) {
-		r = drm_exec_lock_obj(&exec, &new_abo->tbo.base);
-		drm_exec_retry_on_contention(&exec);
-		if (unlikely(r != 0)) {
-			DRM_ERROR(
-				"failed to reserve new abo buffer before flip\n");
-			goto unreserve;
-		}
+	r = amdgpu_bo_reserve(new_abo, false);
+	if (unlikely(r != 0)) {
+		DRM_ERROR("failed to reserve new abo buffer before flip\n");
+		goto cleanup;
+	}
 
-		if (!adev->enable_virtual_display) {
-			new_abo->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
-			r = amdgpu_bo_pin(new_abo, &exec,
-					  amdgpu_display_supported_domains(
-						  adev, new_abo->flags));
-			drm_exec_retry_on_contention(&exec);
-			if (unlikely(r != 0)) {
-				DRM_ERROR(
-					"failed to pin new abo buffer before flip\n");
-				goto unreserve;
-			}
+	if (!adev->enable_virtual_display) {
+		new_abo->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
+		r = amdgpu_bo_pin(new_abo,
+				  amdgpu_display_supported_domains(adev, new_abo->flags));
+		if (unlikely(r != 0)) {
+			DRM_ERROR("failed to pin new abo buffer before flip\n");
+			goto unreserve;
 		}
 	}
 
@@ -268,7 +258,7 @@ int amdgpu_display_crtc_page_flip_target(struct drm_crtc *crtc,
 	}
 
 	amdgpu_bo_get_tiling_flags(new_abo, &tiling_flags);
-	drm_exec_fini(&exec);
+	amdgpu_bo_unreserve(new_abo);
 
 	if (!adev->enable_virtual_display)
 		work->base = amdgpu_bo_gpu_offset(new_abo);
@@ -306,7 +296,7 @@ unpin:
 		amdgpu_bo_unpin(new_abo);
 
 unreserve:
-	drm_exec_fini(&exec);
+	amdgpu_bo_unreserve(new_abo);
 
 cleanup:
 	amdgpu_bo_unref(&work->old_abo);
@@ -1803,37 +1793,25 @@ int amdgpu_display_resume_helper(struct amdgpu_device *adev)
 	struct drm_connector *connector;
 	struct drm_connector_list_iter iter;
 	struct drm_crtc *crtc;
-	struct drm_exec exec;
 	int r;
 
 	/* pin cursors */
 	list_for_each_entry(crtc, &dev->mode_config.crtc_list, head) {
 		struct amdgpu_crtc *amdgpu_crtc = to_amdgpu_crtc(crtc);
 
-		if (!amdgpu_crtc->cursor_bo || adev->enable_virtual_display)
-			continue;
-		drm_exec_init(&exec, 0, 0);
-
-		drm_exec_until_all_locked(&exec)
-		{
-			r = drm_exec_lock_obj(&exec, amdgpu_crtc->cursor_bo);
-			drm_exec_retry_on_contention(&exec);
-			if (r)
-				goto err_exec;
-
+		if (amdgpu_crtc->cursor_bo && !adev->enable_virtual_display) {
 			struct amdgpu_bo *aobj = gem_to_amdgpu_bo(amdgpu_crtc->cursor_bo);
-			aobj->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
-			r = amdgpu_bo_pin(aobj, &exec, AMDGPU_GEM_DOMAIN_VRAM);
-			drm_exec_retry_on_contention(&exec);
-			if (r != 0)
-				dev_err(adev->dev,
-					"Failed to pin cursor BO (%d)\n", r);
 
-			amdgpu_crtc->cursor_addr = amdgpu_bo_gpu_offset(aobj);
+			r = amdgpu_bo_reserve(aobj, true);
+			if (r == 0) {
+				aobj->flags |= AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS;
+				r = amdgpu_bo_pin(aobj, AMDGPU_GEM_DOMAIN_VRAM);
+				if (r != 0)
+					dev_err(adev->dev, "Failed to pin cursor BO (%d)\n", r);
+				amdgpu_crtc->cursor_addr = amdgpu_bo_gpu_offset(aobj);
+				amdgpu_bo_unreserve(aobj);
+			}
 		}
-
-err_exec:
-		drm_exec_fini(&exec);
 	}
 
 	drm_helper_resume_force_mode(dev);
