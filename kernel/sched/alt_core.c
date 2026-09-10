@@ -2092,6 +2092,8 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 		if (!is_idle_task(current)) {
 			cpumask_and(&mask, cpu_smt_mask(cpu), &allow_mask);
 			affine_cpu = cpumask_any_but(&mask, cpu);
+			if (affine_cpu >= nr_cpu_ids)
+				affine_cpu = cpu;
 		}
 		if (affine_cpu >= nr_cpu_ids)
 			affine_cpu = wake_affine_idle(cpu, prev_cpu, sync);
