@@ -2088,10 +2088,14 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 
 	if (want_affine) {
 		int affine_cpu = nr_cpu_ids;
+		s64 waker_ran = READ_ONCE(this_rq()->clock) -
+				READ_ONCE(current->wake_start);
 
-		if (!is_idle_task(current)) {
+		if (!is_idle_task(current) && waker_ran < TICK_NSEC) {
 			cpumask_and(&mask, cpu_smt_mask(cpu), &allow_mask);
 			affine_cpu = cpumask_any_but(&mask, cpu);
+			if (affine_cpu >= nr_cpu_ids)
+				affine_cpu = cpu;
 		}
 		if (affine_cpu >= nr_cpu_ids)
 			affine_cpu = wake_affine_idle(cpu, prev_cpu, sync);
