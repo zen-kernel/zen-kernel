@@ -1021,32 +1021,17 @@ static int rzt2h_gpio_irq_set_wake(struct irq_data *d, unsigned int on)
 	return 0;
 }
 
-static const struct irq_chip rzt2h_gpio_irqchip = {
-	.name = "rzt2h-gpio",
-	.irq_disable = rzt2h_gpio_irq_disable,
-	.irq_enable = rzt2h_gpio_irq_enable,
-	.irq_mask = irq_chip_mask_parent,
-	.irq_unmask = irq_chip_unmask_parent,
-	.irq_set_type = irq_chip_set_type_parent,
-	.irq_set_wake = rzt2h_gpio_irq_set_wake,
-	.irq_eoi = irq_chip_eoi_parent,
-	.irq_set_affinity = irq_chip_set_affinity_parent,
-	.flags = IRQCHIP_IMMUTABLE,
-	GPIOCHIP_IRQ_RESOURCE_HELPERS,
-};
-
-static int rzt2h_gpio_child_to_parent_hwirq(struct gpio_chip *gc,
-					    unsigned int child,
-					    unsigned int child_type,
-					    unsigned int *parent,
-					    unsigned int *parent_type)
+static int rzt2h_gpio_irq_request_resources(struct irq_data *d)
 {
+	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
 	struct rzt2h_pinctrl *pctrl = gpiochip_get_data(gc);
-	u8 port = RZT2H_PIN_ID_TO_PORT(child);
-	u8 pin = RZT2H_PIN_ID_TO_PIN(child);
+	irq_hw_number_t hwirq = irqd_to_hwirq(d);
+	u8 port = RZT2H_PIN_ID_TO_PORT(hwirq);
+	u8 pin = RZT2H_PIN_ID_TO_PIN(hwirq);
 	u8 parent_irq, irq_idx;
+	int ret;
 
-	parent_irq = rzt2h_gpio_irq_map[child];
+	parent_irq = rzt2h_gpio_irq_map[hwirq];
 	if (parent_irq < RZT2H_INTERRUPTS_START)
 		return -EINVAL;
 
@@ -1063,18 +1048,21 @@ static int rzt2h_gpio_child_to_parent_hwirq(struct gpio_chip *gc,
 
 	rzt2h_pinctrl_set_pfc_mode(pctrl, port, pin, PFC_FUNC_INTERRUPT);
 
-	*parent = parent_irq;
-	*parent_type = child_type;
+	ret = gpiochip_lock_as_irq(gc, hwirq);
+	if (ret) {
+		clear_bit(irq_idx, pctrl->used_irqs);
+		rzt2h_pin_write_pm(pctrl, port, pin, pctrl->saved_pm[irq_idx]);
+		rzt2h_pinctrl_set_gpio_en(pctrl, port, pin, true);
+		return ret;
+	}
 
 	return 0;
 }
 
-static void rzt2h_gpio_irq_domain_free(struct irq_domain *domain, unsigned int virq,
-				       unsigned int nr_irqs)
+static void rzt2h_gpio_irq_release_resources(struct irq_data *d)
 {
-	struct irq_data *d = irq_domain_get_irq_data(domain, virq);
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-	struct rzt2h_pinctrl *pctrl = container_of(gc, struct rzt2h_pinctrl, gpio_chip);
+	struct rzt2h_pinctrl *pctrl = gpiochip_get_data(gc);
 	irq_hw_number_t hwirq = irqd_to_hwirq(d);
 	u8 port = RZT2H_PIN_ID_TO_PORT(hwirq);
 	u8 pin = RZT2H_PIN_ID_TO_PIN(hwirq);
@@ -1090,7 +1078,39 @@ static void rzt2h_gpio_irq_domain_free(struct irq_domain *domain, unsigned int v
 		rzt2h_pinctrl_set_gpio_en(pctrl, port, pin, true);
 	}
 
-	irq_domain_free_irqs_common(domain, virq, nr_irqs);
+	gpiochip_unlock_as_irq(gc, hwirq);
+}
+
+static const struct irq_chip rzt2h_gpio_irqchip = {
+	.name = "rzt2h-gpio",
+	.irq_disable = rzt2h_gpio_irq_disable,
+	.irq_enable = rzt2h_gpio_irq_enable,
+	.irq_mask = irq_chip_mask_parent,
+	.irq_unmask = irq_chip_unmask_parent,
+	.irq_set_type = irq_chip_set_type_parent,
+	.irq_set_wake = rzt2h_gpio_irq_set_wake,
+	.irq_eoi = irq_chip_eoi_parent,
+	.irq_request_resources = rzt2h_gpio_irq_request_resources,
+	.irq_release_resources = rzt2h_gpio_irq_release_resources,
+	.irq_set_affinity = irq_chip_set_affinity_parent,
+	.flags = IRQCHIP_IMMUTABLE,
+};
+
+static int rzt2h_gpio_child_to_parent_hwirq(struct gpio_chip *gc,
+					    unsigned int child,
+					    unsigned int child_type,
+					    unsigned int *parent,
+					    unsigned int *parent_type)
+{
+	u8 parent_irq = rzt2h_gpio_irq_map[child];
+
+	if (parent_irq < RZT2H_INTERRUPTS_START)
+		return -EINVAL;
+
+	*parent = parent_irq;
+	*parent_type = child_type;
+
+	return 0;
 }
 
 static void rzt2h_gpio_init_irq_valid_mask(struct gpio_chip *gc,
@@ -1158,7 +1178,6 @@ static int rzt2h_gpio_register(struct rzt2h_pinctrl *pctrl)
 		girq->parent_domain = parent_domain;
 		girq->child_to_parent_hwirq = rzt2h_gpio_child_to_parent_hwirq;
 		girq->populate_parent_alloc_arg = gpiochip_populate_parent_fwspec_twocell;
-		girq->child_irq_domain_ops.free = rzt2h_gpio_irq_domain_free;
 		girq->init_valid_mask = rzt2h_gpio_init_irq_valid_mask;
 	}
 
