@@ -171,6 +171,16 @@ static int rzt2h_validate_pin(struct rzt2h_pinctrl *pctrl, unsigned int offset)
 	return (pincfg & BIT(pin)) ? 0 : -EINVAL;
 }
 
+static bool rzt2h_pin_mode_is_peripheral(struct rzt2h_pinctrl *pctrl, u8 port, u8 bit)
+{
+	return rzt2h_pinctrl_readb(pctrl, port, PMC(port)) & BIT(bit);
+}
+
+static bool rzt2h_pin_read_input(struct rzt2h_pinctrl *pctrl, u8 port, u8 bit)
+{
+	return rzt2h_pinctrl_readb(pctrl, port, PIN(port)) & BIT(bit);
+}
+
 static u8 rzt2h_pin_read_pm(struct rzt2h_pinctrl *pctrl, u8 port, u8 pin)
 {
 	u16 reg = rzt2h_pinctrl_readw(pctrl, port, PM(port));
@@ -847,6 +857,9 @@ static int rzt2h_gpio_get(struct gpio_chip *chip, unsigned int offset)
 	u8 port = RZT2H_PIN_ID_TO_PORT(offset);
 	u8 bit = RZT2H_PIN_ID_TO_PIN(offset);
 	u16 reg;
+
+	if (rzt2h_pin_mode_is_peripheral(pctrl, port, bit))
+		return rzt2h_pin_read_input(pctrl, port, bit);
 
 	reg = rzt2h_pinctrl_readw(pctrl, port, PM(port));
 	reg = (reg >> (bit * 2)) & PM_MASK;
