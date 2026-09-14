@@ -839,6 +839,7 @@
 	keep-power-in-suspend;
 	non-removable;
 	vmmc-supply = <&reg_wifi_en>;
+	status = "okay";
 };
 
 &scmi_bbm {
