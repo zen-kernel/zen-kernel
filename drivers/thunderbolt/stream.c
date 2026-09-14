@@ -512,8 +512,10 @@ tbstream_dev_alloc_tx(struct tbstream_dev *sdev, enum tbstream_frame_pdf pdf,
 	dma_sync_single_for_cpu(dma_dev, sf->frame.buffer_phy, size,
 				DMA_TO_DEVICE);
 	if (pdf == TBSTREAM_DATA) {
-		if (copy_page_from_iter(sf->page, 0, size, from) != size)
+		if (copy_page_from_iter(sf->page, 0, size, from) != size) {
+			sdev->tx_ring.cons--;
 			return ERR_PTR(-EFAULT);
+		}
 	} else {
 		memset(page_address(sf->page), 0, size);
 	}
@@ -671,7 +673,7 @@ tbstream_dev_fops_read_iter(struct kiocb *kiocb, struct iov_iter *to)
 	}
 
 	nbytes = 0;
-	while (nbytes < iov_iter_count(to)) {
+	while (iov_iter_count(to)) {
 		struct tbstream_frame *sf;
 		size_t size, sf_size;
 
@@ -693,7 +695,7 @@ tbstream_dev_fops_read_iter(struct kiocb *kiocb, struct iov_iter *to)
 		}
 
 		sf_size = tb_ring_frame_size(&sf->frame);
-		size = min(iov_iter_count(to) - nbytes, sf_size);
+		size = min(iov_iter_count(to), sf_size);
 
 		if (copy_page_to_iter(sf->page, sf->offset, size, to) != size) {
 			ret = -EFAULT;
@@ -763,10 +765,10 @@ tbstream_dev_fops_write_iter(struct kiocb *kiocb, struct iov_iter *from)
 	}
 
 	nbytes = 0;
-	while (nbytes < iov_iter_count(from)) {
+	while (iov_iter_count(from)) {
 		size_t size;
 
-		size = min(iov_iter_count(from) - nbytes, TB_MAX_FRAME_SIZE);
+		size = min(iov_iter_count(from), TB_MAX_FRAME_SIZE);
 		ret = tbstream_dev_send_data(sdev, from, size);
 		if (ret) {
 			/*

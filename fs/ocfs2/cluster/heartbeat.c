@@ -15,6 +15,7 @@
 #include <linux/file.h>
 #include <linux/kthread.h>
 #include <linux/configfs.h>
+#include <linux/mutex.h>
 #include <linux/random.h>
 #include <linux/crc32.h>
 #include <linux/time.h>
@@ -211,6 +212,7 @@ struct o2hb_region {
 
 	/* protected by the hr_callback_sem */
 	struct task_struct 	*hr_task;
+	u8			hr_node_num;
 
 	unsigned int		hr_blocks;
 	unsigned long long	hr_start_block;
@@ -265,6 +267,9 @@ struct o2hb_region {
 	/* Message key for negotiate timeout message. */
 	unsigned int		hr_key;
 	struct list_head	hr_handler_list;
+	/* Serializes timeout arming against failed-start and teardown. */
+	struct mutex		hr_arming_mutex;
+	bool			hr_stopping;
 
 	/* last hb status, 0 for success, other value for error. */
 	int			hr_last_hb_status;
@@ -329,9 +334,14 @@ static void o2hb_write_timeout(struct work_struct *work)
 
 static void o2hb_arm_timeout(struct o2hb_region *reg)
 {
+	mutex_lock(&reg->hr_arming_mutex);
+
+	if (reg->hr_stopping)
+		goto out_unlock;
+
 	/* Arm writeout only after thread reaches steady state */
 	if (atomic_read(&reg->hr_steady_iterations) != 0)
-		return;
+		goto out_unlock;
 
 	mlog(ML_HEARTBEAT, "Queue write timeout for %u ms\n",
 	     O2HB_MAX_WRITE_TIMEOUT_MS);
@@ -350,6 +360,18 @@ static void o2hb_arm_timeout(struct o2hb_region *reg)
 	schedule_delayed_work(&reg->hr_nego_timeout_work,
 			      msecs_to_jiffies(O2HB_NEGO_TIMEOUT_MS));
 	bitmap_zero(reg->hr_nego_node_bitmap, O2NM_MAX_NODES);
+
+out_unlock:
+	mutex_unlock(&reg->hr_arming_mutex);
+}
+
+static void o2hb_queue_nego_timeout(struct o2hb_region *reg,
+				    unsigned long delay)
+{
+	mutex_lock(&reg->hr_arming_mutex);
+	if (!reg->hr_stopping)
+		schedule_delayed_work(&reg->hr_nego_timeout_work, delay);
+	mutex_unlock(&reg->hr_arming_mutex);
 }
 
 static void o2hb_disarm_timeout(struct o2hb_region *reg)
@@ -358,12 +380,25 @@ static void o2hb_disarm_timeout(struct o2hb_region *reg)
 	cancel_delayed_work_sync(&reg->hr_nego_timeout_work);
 }
 
-static int o2hb_send_nego_msg(int key, int type, u8 target)
+static void o2hb_set_region_stopping(struct o2hb_region *reg, bool stopping)
+{
+	mutex_lock(&reg->hr_arming_mutex);
+	reg->hr_stopping = stopping;
+	mutex_unlock(&reg->hr_arming_mutex);
+}
+
+static void o2hb_quiesce_timeout(struct o2hb_region *reg)
+{
+	o2hb_set_region_stopping(reg, true);
+	o2hb_disarm_timeout(reg);
+}
+
+static int o2hb_send_nego_msg(int key, int type, u8 target, u8 node_num)
 {
 	struct o2hb_nego_msg msg;
 	int status, ret;
 
-	msg.node_num = o2nm_this_node();
+	msg.node_num = node_num;
 again:
 	ret = o2net_send_message(type, key, &msg, sizeof(msg),
 			target, &status);
@@ -381,8 +416,10 @@ static void o2hb_nego_timeout(struct work_struct *work)
 	unsigned long live_node_bitmap[BITS_TO_LONGS(O2NM_MAX_NODES)];
 	int master_node, i, ret;
 	struct o2hb_region *reg;
+	u8 node_num;
 
 	reg = container_of(work, struct o2hb_region, hr_nego_timeout_work.work);
+	node_num = reg->hr_node_num;
 	/* don't negotiate timeout if last hb failed since it is very
 	 * possible io failed. Should let write timeout fence self.
 	 */
@@ -393,10 +430,10 @@ static void o2hb_nego_timeout(struct work_struct *work)
 	/* lowest node as master node to make negotiate decision. */
 	master_node = find_first_bit(live_node_bitmap, O2NM_MAX_NODES);
 
-	if (master_node == o2nm_this_node()) {
+	if (master_node == node_num) {
 		if (!test_bit(master_node, reg->hr_nego_node_bitmap)) {
 			printk(KERN_NOTICE "o2hb: node %d hb write hung for %ds on region %s (%pg).\n",
-				o2nm_this_node(), O2HB_NEGO_TIMEOUT_MS/1000,
+				node_num, O2HB_NEGO_TIMEOUT_MS / 1000,
 				config_item_name(&reg->hr_item), reg_bdev(reg));
 			set_bit(master_node, reg->hr_nego_node_bitmap);
 		}
@@ -405,8 +442,7 @@ static void o2hb_nego_timeout(struct work_struct *work)
 			/* check negotiate bitmap every second to do timeout
 			 * approve decision.
 			 */
-			schedule_delayed_work(&reg->hr_nego_timeout_work,
-				msecs_to_jiffies(1000));
+			o2hb_queue_nego_timeout(reg, msecs_to_jiffies(1000));
 
 			return;
 		}
@@ -425,7 +461,7 @@ static void o2hb_nego_timeout(struct work_struct *work)
 
 			mlog(ML_HEARTBEAT, "send NEGO_APPROVE msg to node %d\n", i);
 			ret = o2hb_send_nego_msg(reg->hr_key,
-					O2HB_NEGO_APPROVE_MSG, i);
+					O2HB_NEGO_APPROVE_MSG, i, node_num);
 			if (ret)
 				mlog(ML_ERROR, "send NEGO_APPROVE msg to node %d fail %d\n",
 					i, ret);
@@ -433,10 +469,10 @@ static void o2hb_nego_timeout(struct work_struct *work)
 	} else {
 		/* negotiate timeout with master node. */
 		printk(KERN_NOTICE "o2hb: node %d hb write hung for %ds on region %s (%pg), negotiate timeout with node %d.\n",
-			o2nm_this_node(), O2HB_NEGO_TIMEOUT_MS/1000, config_item_name(&reg->hr_item),
+			node_num, O2HB_NEGO_TIMEOUT_MS / 1000, config_item_name(&reg->hr_item),
 			reg_bdev(reg), master_node);
 		ret = o2hb_send_nego_msg(reg->hr_key, O2HB_NEGO_TIMEOUT_MSG,
-				master_node);
+				master_node, node_num);
 		if (ret)
 			mlog(ML_ERROR, "send NEGO_TIMEOUT msg to node %d fail %d\n",
 				master_node, ret);
@@ -609,7 +645,9 @@ static int o2hb_issue_node_write(struct o2hb_region *reg,
 
 	o2hb_bio_wait_init(write_wc);
 
-	slot = o2nm_this_node();
+	slot = reg->hr_node_num;
+	if (slot >= O2NM_MAX_NODES)
+		return -EINVAL;
 
 	bio = o2hb_setup_one_bio(reg, write_wc, &slot, slot+1,
 				 REQ_OP_WRITE | REQ_SYNC);
@@ -678,8 +716,12 @@ static int o2hb_check_own_slot(struct o2hb_region *reg)
 	struct o2hb_disk_slot *slot;
 	struct o2hb_disk_heartbeat_block *hb_block;
 	char *errstr;
+	u8 node_num = reg->hr_node_num;
 
-	slot = &reg->hr_slots[o2nm_this_node()];
+	if (node_num >= O2NM_MAX_NODES)
+		return 0;
+
+	slot = &reg->hr_slots[node_num];
 	/* Don't check on our 1st timestamp */
 	if (!slot->ds_last_time)
 		return 0;
@@ -720,7 +762,10 @@ static inline void o2hb_prepare_block(struct o2hb_region *reg,
 	struct o2hb_disk_slot *slot;
 	struct o2hb_disk_heartbeat_block *hb_block;
 
-	node_num = o2nm_this_node();
+	node_num = reg->hr_node_num;
+	if (node_num >= O2NM_MAX_NODES)
+		return;
+
 	slot = &reg->hr_slots[node_num];
 
 	hb_block = (struct o2hb_disk_heartbeat_block *)slot->ds_raw_block;
@@ -1214,7 +1259,7 @@ static int o2hb_thread(void *data)
 	set_user_nice(current, MIN_NICE);
 
 	/* Pin node */
-	ret = o2nm_depend_this_node();
+	ret = o2nm_depend_node(reg->hr_node_num);
 	if (ret) {
 		mlog(ML_ERROR, "Node has been deleted, ret = %d\n", ret);
 		reg->hr_node_deleted = 1;
@@ -1223,7 +1268,8 @@ static int o2hb_thread(void *data)
 	}
 
 	while (!kthread_should_stop() &&
-	       !reg->hr_unclean_stop && !reg->hr_aborted_start) {
+	       !reg->hr_unclean_stop && !reg->hr_aborted_start &&
+	       o2nm_this_node() == reg->hr_node_num) {
 		/* We track the time spent inside
 		 * o2hb_do_disk_heartbeat so that we avoid more than
 		 * hr_timeout_ms between disk writes. On busy systems
@@ -1272,7 +1318,7 @@ static int o2hb_thread(void *data)
 	}
 
 	/* Unpin node */
-	o2nm_undepend_this_node();
+	o2nm_undepend_node(reg->hr_node_num);
 
 	mlog(ML_HEARTBEAT|ML_KTHREAD, "o2hb thread exiting\n");
 
@@ -1464,11 +1510,36 @@ void o2hb_init(void)
 	o2hb_debug_init();
 }
 
-/* if we're already in a callback then we're already serialized by the sem */
-static void o2hb_fill_node_map_from_callback(unsigned long *map,
-					     unsigned int bits)
+static void __o2hb_fill_node_map(unsigned long *map, unsigned int bits)
 {
 	bitmap_copy(map, o2hb_live_node_bitmap, bits);
+}
+
+void o2hb_callback_read_lock(void)
+{
+	down_read(&o2hb_callback_sem);
+}
+
+void o2hb_callback_read_unlock(void)
+{
+	up_read(&o2hb_callback_sem);
+}
+
+void o2hb_synchronize_callbacks(void)
+{
+	down_write(&o2hb_callback_sem);
+	up_write(&o2hb_callback_sem);
+}
+
+/*
+ * Callers must already hold o2hb_callback_sem for read or write so the copy
+ * stays serialized with callback delivery.
+ */
+void o2hb_fill_node_map_locked(unsigned long *map, unsigned int bits)
+{
+	spin_lock(&o2hb_live_lock);
+	__o2hb_fill_node_map(map, bits);
+	spin_unlock(&o2hb_live_lock);
 }
 
 /*
@@ -1478,11 +1549,9 @@ void o2hb_fill_node_map(unsigned long *map, unsigned int bits)
 {
 	/* callers want to serialize this map and callbacks so that they
 	 * can trust that they don't miss nodes coming to the party */
-	down_read(&o2hb_callback_sem);
-	spin_lock(&o2hb_live_lock);
-	o2hb_fill_node_map_from_callback(map, bits);
-	spin_unlock(&o2hb_live_lock);
-	up_read(&o2hb_callback_sem);
+	o2hb_callback_read_lock();
+	o2hb_fill_node_map_locked(map, bits);
+	o2hb_callback_read_unlock();
 }
 EXPORT_SYMBOL_GPL(o2hb_fill_node_map);
 
@@ -1530,6 +1599,8 @@ static void o2hb_region_release(struct config_item *item)
 
 	mlog(ML_HEARTBEAT, "hb region release (%pg)\n", reg_bdev(reg));
 
+	o2hb_quiesce_timeout(reg);
+	o2net_unregister_and_flush_handler_list(&reg->hr_handler_list);
 	o2hb_unmap_slot_data(reg);
 
 	if (reg->hr_bdev_file)
@@ -1545,7 +1616,6 @@ static void o2hb_region_release(struct config_item *item)
 	list_del(&reg->hr_all_item);
 	spin_unlock(&o2hb_live_lock);
 
-	o2net_unregister_handler_list(&reg->hr_handler_list);
 	kfree(reg);
 }
 
@@ -1799,7 +1869,8 @@ static ssize_t o2hb_region_dev_store(struct config_item *item,
 
 	/* We can't heartbeat without having had our node number
 	 * configured yet. */
-	if (o2nm_this_node() == O2NM_MAX_NODES)
+	reg->hr_node_num = o2nm_this_node();
+	if (reg->hr_node_num == O2NM_MAX_NODES)
 		return -EINVAL;
 
 	ret = kstrtol(p, 0, &fd);
@@ -1859,9 +1930,6 @@ static ssize_t o2hb_region_dev_store(struct config_item *item,
 		goto out;
 	}
 
-	INIT_DELAYED_WORK(&reg->hr_write_timeout_work, o2hb_write_timeout);
-	INIT_DELAYED_WORK(&reg->hr_nego_timeout_work, o2hb_nego_timeout);
-
 	/*
 	 * A node is considered live after it has beat LIVE_THRESHOLD
 	 * times.  We're not steady until we've given them a chance
@@ -1881,6 +1949,7 @@ static ssize_t o2hb_region_dev_store(struct config_item *item,
 	atomic_set(&reg->hr_steady_iterations, live_threshold);
 	/* unsteady_iterations is triple the steady_iterations */
 	atomic_set(&reg->hr_unsteady_iterations, (live_threshold * 3));
+	o2hb_set_region_stopping(reg, false);
 
 	hb_task = kthread_run(o2hb_thread, reg, "o2hb-%s",
 			      reg->hr_item.ci_name);
@@ -1930,6 +1999,8 @@ static ssize_t o2hb_region_dev_store(struct config_item *item,
 
 out:
 	if (ret < 0) {
+		o2hb_quiesce_timeout(reg);
+
 		spin_lock(&o2hb_live_lock);
 		hb_task = reg->hr_task;
 		reg->hr_task = NULL;
@@ -2044,6 +2115,7 @@ static struct config_item *o2hb_heartbeat_group_make_item(struct config_group *g
 		ret = -ENAMETOOLONG;
 		goto free;
 	}
+	reg->hr_node_num = O2NM_MAX_NODES;
 
 	spin_lock(&o2hb_live_lock);
 	reg->hr_region_num = 0;
@@ -2068,6 +2140,10 @@ static struct config_item *o2hb_heartbeat_group_make_item(struct config_group *g
 	 */
 	reg->hr_key = crc32_le(reg->hr_region_num + O2NM_MAX_REGIONS,
 		name, strlen(name));
+	mutex_init(&reg->hr_arming_mutex);
+	reg->hr_stopping = true;
+	INIT_DELAYED_WORK(&reg->hr_write_timeout_work, o2hb_write_timeout);
+	INIT_DELAYED_WORK(&reg->hr_nego_timeout_work, o2hb_nego_timeout);
 	INIT_LIST_HEAD(&reg->hr_handler_list);
 	ret = o2net_register_handler(O2HB_NEGO_TIMEOUT_MSG, reg->hr_key,
 			sizeof(struct o2hb_nego_msg),
@@ -2088,7 +2164,7 @@ static struct config_item *o2hb_heartbeat_group_make_item(struct config_group *g
 	return &reg->hr_item;
 
 unregister_handler:
-	o2net_unregister_handler_list(&reg->hr_handler_list);
+	o2net_unregister_and_flush_handler_list(&reg->hr_handler_list);
 remove_item:
 	spin_lock(&o2hb_live_lock);
 	list_del(&reg->hr_all_item);
@@ -2106,6 +2182,8 @@ static void o2hb_heartbeat_group_drop_item(struct config_group *group,
 	struct task_struct *hb_task;
 	struct o2hb_region *reg = to_o2hb_region(item);
 	int quorum_region = 0;
+
+	o2hb_quiesce_timeout(reg);
 
 	/* stop the thread when the user removes the region dir */
 	spin_lock(&o2hb_live_lock);
@@ -2579,7 +2657,7 @@ int o2hb_check_node_heartbeating_no_sem(u8 node_num)
 	unsigned long testing_map[BITS_TO_LONGS(O2NM_MAX_NODES)];
 
 	spin_lock(&o2hb_live_lock);
-	o2hb_fill_node_map_from_callback(testing_map, O2NM_MAX_NODES);
+	__o2hb_fill_node_map(testing_map, O2NM_MAX_NODES);
 	spin_unlock(&o2hb_live_lock);
 	if (!test_bit(node_num, testing_map)) {
 		mlog(ML_HEARTBEAT,
@@ -2596,7 +2674,7 @@ int o2hb_check_node_heartbeating_from_callback(u8 node_num)
 {
 	unsigned long testing_map[BITS_TO_LONGS(O2NM_MAX_NODES)];
 
-	o2hb_fill_node_map_from_callback(testing_map, O2NM_MAX_NODES);
+	o2hb_fill_node_map_locked(testing_map, O2NM_MAX_NODES);
 	if (!test_bit(node_num, testing_map)) {
 		mlog(ML_HEARTBEAT,
 		     "node (%u) does not have heartbeating enabled.\n",

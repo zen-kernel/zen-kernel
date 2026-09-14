@@ -351,7 +351,7 @@
 		};
 
 		opp-1094400000 {
-			opp-hz = /bits/ 64 <109440000>;
+			opp-hz = /bits/ 64 <1094400000>;
 			opp-peak-kBps = <(1017600 * 4) (940800 * 16)>;
 		};
 
@@ -1349,8 +1349,8 @@
 					 &config_noc SLAVE_PCIE_0 QCOM_ICC_TAG_ACTIVE_ONLY>;
 			interconnect-names = "pcie-mem", "cpu-pcie";
 
-			iommu-map = <0x0 &apps_smmu 0x400 0x1>,
-				    <0x100 &apps_smmu 0x401 0x1>;
+			iommu-map = <0x0 &apps_smmu 0x400 0x0 0x1>,
+				    <0x100 &apps_smmu 0x401 0x0 0x1>;
 
 			resets = <&gcc GCC_PCIE_0_BCR>;
 			reset-names = "pci";
@@ -2017,7 +2017,7 @@
 			};
 		};
 
-		gmu: gmu@506a000 {
+		gmu: gmu@506d000 {
 			compatible = "qcom,adreno-rgmu-612.0", "qcom,adreno-rgmu";
 			reg = <0x0 0x0506d000 0x0 0x2c000>;
 

@@ -18,7 +18,7 @@
 	};
 
 	chosen {
-		stdout-path = "serial0";
+		stdout-path = "serial0:115200n8";
 	};
 
 	memory@100000000 {
@@ -190,12 +190,14 @@
 	status = "okay";
 
 	mdio {
-		phy0: phy@1 {
-			compatible = "ethernet-phy-ieee802.3-c22";
+		phy0: ethernet-phy@1 {
+			compatible = "ethernet-phy-id001c.c916";
 			reg = <1>;
 			reset-gpios = <&gpio 0 15 GPIO_ACTIVE_LOW>;
 			reset-assert-us = <10000>;
-			reset-deassert-us = <10000>;
+			reset-deassert-us = <50000>;
+			realtek,aldps-enable;
+			realtek,clkout-disable;
 		};
 	};
 };

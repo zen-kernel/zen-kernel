@@ -524,11 +524,9 @@ static void acpi_device_release(struct device *dev)
 	kfree(acpi_dev);
 }
 
-static void acpi_device_del(struct acpi_device *device)
+static void acpi_device_cleanup(struct acpi_device *device)
 {
 	struct acpi_device_bus_id *acpi_device_bus_id;
-
-	mutex_lock(&acpi_device_lock);
 
 	list_for_each_entry(acpi_device_bus_id, &acpi_bus_id_list, node)
 		if (!strcmp(acpi_device_bus_id->bus_id,
@@ -544,6 +542,13 @@ static void acpi_device_del(struct acpi_device *device)
 		}
 
 	list_del(&device->wakeup_list);
+}
+
+static void acpi_device_del(struct acpi_device *device)
+{
+	mutex_lock(&acpi_device_lock);
+
+	acpi_device_cleanup(device);
 
 	mutex_unlock(&acpi_device_lock);
 
@@ -803,7 +808,7 @@ int acpi_device_add(struct acpi_device *device)
 err:
 	mutex_lock(&acpi_device_lock);
 
-	list_del(&device->wakeup_list);
+	acpi_device_cleanup(device);
 
 err_unlock:
 	mutex_unlock(&acpi_device_lock);
@@ -2208,29 +2213,27 @@ static void acpi_create_video_bus_device(struct acpi_device *adev,
 	struct auxiliary_device *aux_dev;
 	static unsigned int aux_dev_id;
 
+	struct device *phys_parent __free(put_device) = acpi_bus_get_primary_device(parent);
+	if (!phys_parent)
+		return;
+
 	aux_dev = kzalloc_obj(*aux_dev);
 	if (!aux_dev)
 		return;
 
 	aux_dev->id = aux_dev_id++;
 	aux_dev->name = "video_bus";
-	aux_dev->dev.parent = acpi_get_first_physical_node(parent);
-	if (!aux_dev->dev.parent)
-		goto err;
-
+	aux_dev->dev.parent = phys_parent;
 	aux_dev->dev.release = acpi_video_bus_device_release;
 
-	if (auxiliary_device_init(aux_dev))
-		goto err;
+	if (auxiliary_device_init(aux_dev)) {
+		kfree(aux_dev);
+		return;
+	}
 
 	ACPI_COMPANION_SET(&aux_dev->dev, adev);
 	if (__auxiliary_device_add(aux_dev, "acpi"))
 		auxiliary_device_uninit(aux_dev);
-
-	return;
-
-err:
-	kfree(aux_dev);
 }
 
 struct acpi_scan_system_dev {

@@ -240,12 +240,18 @@ static int tc9563_pwrctrl_disable_port(struct tc9563_pwrctrl *tc9563,
 	if (!cfg->disable_port)
 		return 0;
 
-	if (port == TC9563_DSP1) {
+	switch (port) {
+	case TC9563_DSP1:
 		seq = dsp1_pwroff_seq;
 		len = ARRAY_SIZE(dsp1_pwroff_seq);
-	} else {
+		break;
+	case TC9563_DSP2:
 		seq = dsp2_pwroff_seq;
 		len = ARRAY_SIZE(dsp2_pwroff_seq);
+		break;
+	default:
+		/* Only external downstream ports DSP1/DSP2 can be powered off */
+		return 0;
 	}
 
 	ret = tc9563_pwrctrl_i2c_bulk_write(tc9563->client, seq, len);
@@ -595,12 +601,18 @@ static int tc9563_pwrctrl_probe(struct platform_device *pdev)
 		ret = tc9563_pwrctrl_parse_device_dt(tc9563, child, port);
 		if (ret)
 			break;
-		/* Embedded ethernet device are under DSP3 */
+
+		/*
+		 * The integrated Ethernet MAC Endpoint under DSP3 is a single
+		 * device whose functions share the same config registers.
+		 */
 		if (port == TC9563_DSP3) {
-			for_each_child_of_node_scoped(child, child1) {
-				port++;
+			struct device_node *eth __free(device_node) =
+					of_get_next_available_child(child, NULL);
+
+			if (eth) {
 				ret = tc9563_pwrctrl_parse_device_dt(tc9563,
-								child1, port);
+								eth, TC9563_ETHERNET);
 				if (ret)
 					break;
 			}

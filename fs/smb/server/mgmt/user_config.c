@@ -26,6 +26,7 @@ struct ksmbd_user *ksmbd_login_user(const char *account)
 		resp_ext = ksmbd_ipc_login_request_ext(account);
 
 	user = ksmbd_alloc_user(resp, resp_ext);
+	kvfree(resp_ext);
 out:
 	kvfree(resp);
 	return user;
@@ -35,6 +36,17 @@ struct ksmbd_user *ksmbd_alloc_user(struct ksmbd_login_response *resp,
 		struct ksmbd_login_response_ext *resp_ext)
 {
 	struct ksmbd_user *user;
+
+	/*
+	 * resp->hash_sz is a __u16 taken from the mountd IPC login response but
+	 * resp->hash[] is only KSMBD_REQ_MAX_HASH_SZ bytes.  A malformed or
+	 * malicious response can set hash_sz far beyond that (up to 65535),
+	 * making the memcpy() below read past the response object
+	 * (slab-out-of-bounds in ksmbd_alloc_user()).  Reject any oversized
+	 * hash rather than trust the length.
+	 */
+	if (resp->hash_sz > sizeof(resp->hash))
+		return NULL;
 
 	user = kmalloc_obj(struct ksmbd_user, KSMBD_DEFAULT_GFP);
 	if (!user)

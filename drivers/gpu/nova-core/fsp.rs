@@ -57,12 +57,35 @@ struct NvdmPayloadCommandResponse {
     error_code: u32,
 }
 
+/// Common MCTP and NVDM headers shared by all FSP messages.
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+struct FspMessageHeader {
+    mctp_header: MctpHeader,
+    nvdm_header: NvdmHeader,
+}
+
+// SAFETY: FspMessageHeader is a packed C struct with only integral fields.
+unsafe impl AsBytes for FspMessageHeader {}
+
+// SAFETY: FspMessageHeader is a packed C struct with only integral fields.
+unsafe impl FromBytes for FspMessageHeader {}
+
+impl FspMessageHeader {
+    /// Construct a standard FSP message header for the given NVDM type.
+    fn new(nvdm_type: NvdmType) -> Self {
+        Self {
+            mctp_header: MctpHeader::single_packet(),
+            nvdm_header: NvdmHeader::new(nvdm_type),
+        }
+    }
+}
+
 /// Complete FSP response structure with MCTP and NVDM headers.
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 struct FspResponse {
-    mctp_header: MctpHeader,
-    nvdm_header: NvdmHeader,
+    header: FspMessageHeader,
     response: NvdmPayloadCommandResponse,
 }
 
@@ -94,29 +117,41 @@ struct NvdmPayloadCot {
     gsp_boot_args_sysmem_offset: u64,
 }
 
-/// Complete FSP message structure with MCTP and NVDM headers.
+/// Complete FSP COT (Chain of Trust) message structure.
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct FspMessage {
-    mctp_header: MctpHeader,
-    nvdm_header: NvdmHeader,
+struct FspCotMessage {
+    header: FspMessageHeader,
     cot: NvdmPayloadCot,
 }
 
-impl FspMessage {
-    /// Returns an in-place initializer for [`FspMessage`].
+impl FspCotMessage {
+    /// Computes the FRTS vidmem offset for the Chain-of-Trust message. It is measured backwards
+    /// from the end of the framebuffer.
+    fn frts_vidmem_offset(hal: &dyn hal::FspHal, fb_layout: &FbLayout) -> Result<u64> {
+        let mut offset = hal.fb_end_reserved_size();
+
+        // As per OpenRM's `kfspPrepareBootCommands_GH100`.
+        if fb_layout.pmu_reserved_size != 0 {
+            offset = (offset + u64::from(fb_layout.pmu_reserved_size))
+                // The 2 MiB alignment is r570-specific.
+                .align_up(Alignment::new::<SZ_2M>())
+                .ok_or(EINVAL)?;
+        }
+
+        Ok(offset)
+    }
+
+    /// Returns an in-place initializer for [`FspCotMessage`].
     fn new<'a>(
         fb_layout: &FbLayout,
         fsp_fw: &'a FspFirmware,
         args: &'a FmcBootArgs,
     ) -> Result<impl Init<Self> + 'a> {
-        // frts_offset is relative to FB end: FRTS_location = FB_END - frts_offset
-        let frts_vidmem_offset = if !args.resume {
-            let frts_reserved_size = fb_layout.heap.len() + u64::from(fb_layout.pmu_reserved_size);
+        let hal = hal::fsp_hal(args.chipset).ok_or(ENOTSUPP)?;
 
-            frts_reserved_size
-                .align_up(Alignment::new::<SZ_2M>())
-                .ok_or(EINVAL)?
+        let frts_vidmem_offset = if !args.resume {
+            Self::frts_vidmem_offset(hal, fb_layout)?
         } else {
             0
         };
@@ -127,12 +162,11 @@ impl FspMessage {
             0
         };
 
-        let version = hal::fsp_hal(args.chipset).ok_or(ENOTSUPP)?.cot_version();
+        let version = hal.cot_version();
         let size = num::usize_into_u16::<{ core::mem::size_of::<NvdmPayloadCot>() }>();
 
         Ok(init!(Self {
-            mctp_header: MctpHeader::single_packet(),
-            nvdm_header: NvdmHeader::new(NvdmType::Cot),
+            header: FspMessageHeader::new(NvdmType::Cot),
             // The payload is packed, so we cannot use `init!`. Initialize it member-by-member using
             // `chain`.
             cot <- pin_init::init_zeroed(),
@@ -143,8 +177,8 @@ impl FspMessage {
             msg.cot.gsp_fmc_sysmem_offset = fsp_fw.fmc_image.dma_handle();
             msg.cot.frts_vidmem_offset = frts_vidmem_offset;
             msg.cot.frts_vidmem_size = frts_size;
-            // frts_sysmem_* intentionally left at zero for now, but will be needed for e.g.
-            // systems without VRAM.
+            // frts_sysmem_* are left at zero because this path places FRTS in vidmem. The sysmem
+            // fields point to an FRTS buffer in sysmem instead, for systems without VRAM.
             msg.cot.gsp_boot_args_sysmem_offset = args.fmc_boot_params.dma_handle();
             msg.cot.sigs = *fsp_fw.fmc_sigs;
 
@@ -153,11 +187,11 @@ impl FspMessage {
     }
 }
 
-// SAFETY: `FspMessage` is `#[repr(C)]` with no padding, so all of its
+// SAFETY: `FspCotMessage` is `#[repr(C)]` with no padding, so all of its
 // bytes are initialized.
-unsafe impl AsBytes for FspMessage {}
+unsafe impl AsBytes for FspCotMessage {}
 
-impl MessageToFsp for FspMessage {
+impl MessageToFsp for FspCotMessage {
     const NVDM_TYPE: NvdmType = NvdmType::Cot;
 }
 
@@ -251,8 +285,8 @@ impl Fsp {
             EIO
         })?;
 
-        let mctp_header = response.mctp_header;
-        let nvdm_header = response.nvdm_header;
+        let mctp_header = response.header.mctp_header;
+        let nvdm_header = response.header.nvdm_header;
         let command_nvdm_type = response.response.command_nvdm_type;
         let error_code = response.response.error_code;
 
@@ -310,7 +344,10 @@ impl Fsp {
     ) -> Result {
         dev_dbg!(dev, "Starting FSP boot sequence for {}\n", args.chipset);
 
-        let msg = KBox::init(FspMessage::new(fb_layout, &self.fsp_fw, args)?, GFP_KERNEL)?;
+        let msg = KBox::init(
+            FspCotMessage::new(fb_layout, &self.fsp_fw, args)?,
+            GFP_KERNEL,
+        )?;
 
         self.send_sync_fsp(dev, bar, &*msg)?;
 

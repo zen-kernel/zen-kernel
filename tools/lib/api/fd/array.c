@@ -115,6 +115,9 @@ int fdarray__filter(struct fdarray *fda, short revents,
 		return 0;
 
 	for (fd = 0; fd < fda->nr; ++fd) {
+		if (fda->priv[fd].flags & fdarray_flag__nonfilterable)
+			continue;
+
 		if (!fda->entries[fd].events)
 			continue;
 
@@ -122,12 +125,17 @@ int fdarray__filter(struct fdarray *fda, short revents,
 			if (entry_destructor)
 				entry_destructor(fda, fd, arg);
 
+			/*
+			 * Set fd to -1 so poll() ignores this entry; otherwise
+			 * POLLHUP/POLLERR are still reported for events=0 fds
+			 * (POSIX: always checked), causing a poll storm.
+			 */
+			fda->entries[fd].fd = -1;
 			fda->entries[fd].revents = fda->entries[fd].events = 0;
 			continue;
 		}
 
-		if (!(fda->priv[fd].flags & fdarray_flag__nonfilterable))
-			++nr;
+		++nr;
 	}
 
 	return nr;

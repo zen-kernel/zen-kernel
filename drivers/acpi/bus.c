@@ -335,7 +335,7 @@ static int acpi_osc_handshake(acpi_handle handle, const char *uuid_str,
 		.length = bufsize * sizeof(u32),
 	};
 	struct acpi_buffer output;
-	u32 *retbuf, test;
+	u32 *retbuf, test, errors;
 	guid_t guid;
 	int ret, i;
 
@@ -395,10 +395,18 @@ static int acpi_osc_handshake(acpi_handle handle, const char *uuid_str,
 	 * Clear the feature bits in capbuf[] that have not been acknowledged.
 	 * After that, capbuf[] contains the resultant feature mask.
 	 */
-	for (i = OSC_QUERY_DWORD + 1; i < bufsize; i++)
+	for (i = OSC_QUERY_DWORD + 1, test = 0; i < bufsize; i++) {
+		test |= capbuf[i] & ~retbuf[i];
 		capbuf[i] &= retbuf[i];
+	}
 
-	if (retbuf[OSC_QUERY_DWORD] & OSC_ERROR_MASK) {
+	errors = retbuf[OSC_QUERY_DWORD] & OSC_ERROR_MASK;
+	/*
+	 * Some platforms set OSC_CAPABILITIES_MASK_ERROR even though they
+	 * acknowledge all of the requested features, so avoid complaining in
+	 * those cases unless any other error bits are also set.
+	 */
+	if (errors && (test || errors != OSC_CAPABILITIES_MASK_ERROR)) {
 		/*
 		 * Complain about the unexpected errors and print diagnostic
 		 * information related to them.
@@ -801,30 +809,52 @@ static int __init acpi_setup_sb_notify_handler(void)
                              Device Matching
    -------------------------------------------------------------------------- */
 
+
+static struct device *primary_physical_device(struct acpi_device *adev)
+{
+	struct acpi_device_physical_node *pn;
+
+	pn = list_first_entry_or_null(&adev->physical_node_list,
+				      struct acpi_device_physical_node, node);
+	if (pn)
+		return pn->dev;
+
+	return NULL;
+}
+
 /**
- * acpi_get_first_physical_node - Get first physical node of an ACPI device
+ * acpi_bus_get_primary_device - Get first physical device for a given ACPI one
+ * @adev: ACPI device to get the first physical device for.
+ *
+ * Find the first physical device for which @adev is the ACPI companion and
+ * reference count it if present.
+ *
+ * Return: Pointer to the first physical counterpart of @adev or NULL if there
+ * are none.  Callers are responsible for invoking put_device() on the returned
+ * device.
+ */
+struct device *acpi_bus_get_primary_device(struct acpi_device *adev)
+{
+	if (!adev)
+		return NULL;
+
+	guard(mutex)(&adev->physical_node_lock);
+
+	return get_device(primary_physical_device(adev));
+}
+EXPORT_SYMBOL_GPL(acpi_bus_get_primary_device);
+
+/**
+ * acpi_get_first_physical_node - Find first physical node of an ACPI device
  * @adev:	ACPI device in question
  *
  * Return: First physical node of ACPI device @adev
  */
 struct device *acpi_get_first_physical_node(struct acpi_device *adev)
 {
-	struct mutex *physical_node_lock = &adev->physical_node_lock;
-	struct device *phys_dev;
+	guard(mutex)(&adev->physical_node_lock);
 
-	mutex_lock(physical_node_lock);
-	if (list_empty(&adev->physical_node_list)) {
-		phys_dev = NULL;
-	} else {
-		const struct acpi_device_physical_node *node;
-
-		node = list_first_entry(&adev->physical_node_list,
-					struct acpi_device_physical_node, node);
-
-		phys_dev = node->dev;
-	}
-	mutex_unlock(physical_node_lock);
-	return phys_dev;
+	return primary_physical_device(adev);
 }
 EXPORT_SYMBOL_GPL(acpi_get_first_physical_node);
 

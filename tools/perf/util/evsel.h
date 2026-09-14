@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <sys/types.h>
 #include <linux/perf_event.h>
+#include <linux/refcount.h>
 #include <linux/types.h>
 #include <internal/evsel.h>
 #include <perf/evsel.h>
@@ -45,6 +46,7 @@ typedef int (evsel__sb_cb_t)(union perf_event *event, void *data);
 struct evsel {
 	struct perf_evsel	core;
 	struct evlist		*evlist;
+	refcount_t		refcnt;
 	off_t			id_offset;
 	int			id_pos;
 	int			is_pos;
@@ -271,7 +273,7 @@ static inline struct evsel *evsel__new(struct perf_event_attr *attr)
 	return evsel__new_idx(attr, 0);
 }
 
-struct evsel *evsel__clone(struct evsel *dest, struct evsel *orig);
+struct evsel *evsel__clone(struct evsel *orig);
 
 int copy_config_terms(struct list_head *dst, struct list_head *src);
 void free_config_terms(struct list_head *config_terms);
@@ -286,13 +288,12 @@ static inline struct evsel *evsel__newtp(const char *sys, const char *name)
 	return evsel__newtp_idx(sys, name, 0, true);
 }
 
+struct evsel *evsel__get(struct evsel *evsel);
+void evsel__put(struct evsel *evsel);
+
 #ifdef HAVE_LIBTRACEEVENT
 struct tep_event *evsel__tp_format(struct evsel *evsel);
 #endif
-
-void evsel__init(struct evsel *evsel, struct perf_event_attr *attr, int idx);
-void evsel__exit(struct evsel *evsel);
-void evsel__delete(struct evsel *evsel);
 
 void evsel__set_priv_destructor(void (*destructor)(void *priv));
 
@@ -400,6 +401,12 @@ static inline char *perf_sample__strval(struct perf_sample *sample, const char *
 
 struct tep_format_field;
 
+void *format_field__get_raw_data(struct tep_format_field *field,
+				 struct perf_sample *sample,
+				 bool needs_swap, u16 *len_out);
+unsigned long *format_field__get_cpumask(struct tep_format_field *field,
+					 struct perf_sample *sample,
+					 bool needs_swap, u16 *len_out);
 u64 format_field__intval(struct tep_format_field *field, struct perf_sample *sample, bool needs_swap);
 
 #ifdef HAVE_LIBTRACEEVENT
@@ -534,7 +541,7 @@ for ((_evsel) = list_entry((_leader)->core.node.next, struct evsel, core.node);	
 	(_evsel) = list_entry((_evsel)->core.node.next, struct evsel, core.node))
 
 #define for_each_group_member(_evsel, _leader)				\
-	for_each_group_member_head(_evsel, _leader, &(_leader)->evlist->core.entries)
+	for_each_group_member_head(_evsel, _leader, &evlist__core((_leader)->evlist)->entries)
 
 /* Iterates group WITH the leader. */
 #define for_each_group_evsel_head(_evsel, _leader, _head)				\
@@ -544,7 +551,7 @@ for ((_evsel) = _leader;								\
 	(_evsel) = list_entry((_evsel)->core.node.next, struct evsel, core.node))
 
 #define for_each_group_evsel(_evsel, _leader)				\
-	for_each_group_evsel_head(_evsel, _leader, &(_leader)->evlist->core.entries)
+	for_each_group_evsel_head(_evsel, _leader, &evlist__core((_leader)->evlist)->entries)
 
 static inline bool evsel__has_branch_callstack(const struct evsel *evsel)
 {

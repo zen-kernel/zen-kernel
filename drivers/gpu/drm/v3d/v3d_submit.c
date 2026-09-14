@@ -20,37 +20,57 @@
  * to v3d, so we don't attach dma-buf fences to them.
  */
 static int
-v3d_lock_bo_reservations(struct v3d_job *job,
-			 struct ww_acquire_ctx *acquire_ctx)
+v3d_submit_lock_reservations(struct v3d_submit *submit)
 {
-	int i, ret;
+	int i, j, ret;
 
-	ret = drm_gem_lock_reservations(job->bo, job->bo_count, acquire_ctx);
-	if (ret)
-		return ret;
+	drm_exec_init(&submit->exec,
+		      DRM_EXEC_INTERRUPTIBLE_WAIT | DRM_EXEC_IGNORE_DUPLICATES, 0);
+	drm_exec_until_all_locked(&submit->exec) {
+		for (i = 0; i < submit->job_count; i++) {
+			struct v3d_job *job = submit->jobs[i];
 
-	for (i = 0; i < job->bo_count; i++) {
-		ret = dma_resv_reserve_fences(job->bo[i]->resv, 1);
+			ret = drm_exec_prepare_array(&submit->exec, job->bo,
+						     job->bo_count, 1);
+			if (ret)
+				break;
+		}
+		drm_exec_retry_on_contention(&submit->exec);
 		if (ret)
 			goto fail;
+	}
 
-		ret = drm_sched_job_add_implicit_dependencies(&job->base,
-							      job->bo[i], true);
-		if (ret)
-			goto fail;
+	for (i = 0; i < submit->job_count; i++) {
+		struct v3d_job *job = submit->jobs[i];
+
+		if (!job->has_implicit_dep)
+			continue;
+
+		for (j = 0; j < job->bo_count; j++) {
+			ret = drm_sched_job_add_implicit_dependencies(&job->base,
+								      job->bo[j],
+								      true);
+			if (ret)
+				goto fail;
+		}
 	}
 
 	return 0;
 
 fail:
-	drm_gem_unlock_reservations(job->bo, job->bo_count, acquire_ctx);
+	drm_exec_fini(&submit->exec);
 	return ret;
+}
+
+static void
+v3d_submit_unlock_reservations(struct v3d_submit *submit)
+{
+	drm_exec_fini(&submit->exec);
 }
 
 /**
  * v3d_lookup_bos() - Sets up job->bo[] with the GEM objects
  * referenced by the job.
- * @dev: DRM device
  * @file_priv: DRM file for this fd
  * @job: V3D job being set up
  * @bo_handles: GEM handles
@@ -64,25 +84,44 @@ fail:
  * failure, because that will happen at `v3d_job_free()`.
  */
 static int
-v3d_lookup_bos(struct drm_device *dev,
-	       struct drm_file *file_priv,
-	       struct v3d_job *job,
-	       u64 bo_handles,
-	       u32 bo_count)
+v3d_lookup_bos(struct drm_file *file_priv, struct v3d_job *job,
+	       u64 bo_handles, u32 bo_count)
 {
-	job->bo_count = bo_count;
-
-	if (!job->bo_count) {
-		/* See comment on bo_index for why we have to check
-		 * this.
-		 */
-		drm_warn(dev, "Rendering requires BOs\n");
+	if (!bo_count) {
+		drm_warn(&job->v3d->drm, "Rendering requires BOs\n");
 		return -EINVAL;
 	}
+
+	job->bo_count = bo_count;
 
 	return drm_gem_objects_lookup(file_priv,
 				      (void __user *)(uintptr_t)bo_handles,
 				      job->bo_count, &job->bo);
+}
+
+/**
+ * v3d_job_reference_bos() - Share another job's BOs with @dst
+ * @dst: job that acquires references to the BOs
+ * @src: job whose already-resolved BO list is shared
+ *
+ * For submissions with multiple jobs that use the same BOs, a trailing job
+ * shouldn't look the handles up again, as it could cause inconsistencies.
+ * Instead, it should reference the previous job's BOs.
+ */
+static int
+v3d_job_reference_bos(struct v3d_job *dst, struct v3d_job *src)
+{
+	dst->bo = kvmalloc_objs(*dst->bo, src->bo_count);
+	if (!dst->bo)
+		return -ENOMEM;
+
+	dst->bo_count = src->bo_count;
+	for (int i = 0; i < dst->bo_count; i++) {
+		dst->bo[i] = src->bo[i];
+		drm_gem_object_get(dst->bo[i]);
+	}
+
+	return 0;
 }
 
 static void
@@ -162,74 +201,88 @@ void v3d_job_put(struct v3d_job *job)
 }
 
 static int
-v3d_job_allocate(struct v3d_dev *v3d, void **container, size_t size)
+v3d_job_add_syncobjs(struct v3d_job *job, struct drm_file *file_priv,
+		     u32 in_sync, struct v3d_submit_ext *se)
 {
-	*container = kcalloc(1, size, GFP_KERNEL);
-	if (!*container) {
-		drm_err(&v3d->drm, "Cannot allocate memory for V3D job.\n");
-		return -ENOMEM;
+	bool has_multisync = se && (se->flags & DRM_V3D_EXT_ID_MULTI_SYNC);
+	struct v3d_dev *v3d = job->v3d;
+	int ret = 0;
+
+	if (!has_multisync) {
+		ret = drm_sched_job_add_syncobj_dependency(&job->base, file_priv,
+							   in_sync, 0);
+		// TODO: Investigate why this was filtered out for the IOCTL.
+		if (ret && ret != -ENOENT)
+			return ret;
+		return 0;
+	}
+
+	if (se->in_sync_count && se->wait_stage == job->queue) {
+		struct drm_v3d_sem __user *handle = u64_to_user_ptr(se->in_syncs);
+
+		for (int i = 0; i < se->in_sync_count; i++) {
+			struct drm_v3d_sem in;
+
+			if (copy_from_user(&in, handle++, sizeof(in))) {
+				drm_dbg(&v3d->drm, "Failed to copy wait dep handle.\n");
+				return -EFAULT;
+			}
+
+			ret = drm_sched_job_add_syncobj_dependency(&job->base,
+								   file_priv, in.handle, 0);
+			// TODO: Investigate why this was filtered out for the IOCTL.
+			if (ret && ret != -ENOENT)
+				return ret;
+		}
 	}
 
 	return 0;
 }
 
-static void
-v3d_job_deallocate(void **container)
-{
-	kfree(*container);
-	*container = NULL;
-}
+static const struct {
+	size_t size;
+	void (*free)(struct kref *ref);
+	bool has_implicit_dep;
+} v3d_job_types[] = {
+	[V3D_BIN]		= { sizeof(struct v3d_bin_job), v3d_job_free, false },
+	[V3D_RENDER]		= { sizeof(struct v3d_render_job), v3d_render_job_free, true },
+	[V3D_TFU]		= { sizeof(struct v3d_tfu_job), v3d_job_free, true },
+	[V3D_CSD]		= { sizeof(struct v3d_csd_job), v3d_job_free, true },
+	[V3D_CACHE_CLEAN]	= { sizeof(struct v3d_job), v3d_job_free, false },
+	[V3D_CPU]		= { sizeof(struct v3d_cpu_job), v3d_cpu_job_free, true },
+};
 
-static int
-v3d_job_init(struct v3d_dev *v3d, struct drm_file *file_priv,
-	     struct v3d_job *job, void (*free)(struct kref *ref),
-	     u32 in_sync, struct v3d_submit_ext *se, enum v3d_queue queue)
+static struct v3d_job *
+v3d_submit_add_job(struct v3d_submit *submit, enum v3d_queue queue)
 {
-	struct v3d_file_priv *v3d_priv = file_priv->driver_priv;
-	bool has_multisync = se && (se->flags & DRM_V3D_EXT_ID_MULTI_SYNC);
-	int ret, i;
+	struct v3d_file_priv *v3d_priv = submit->file_priv->driver_priv;
+	struct v3d_dev *v3d = submit->v3d;
+	struct v3d_job *job;
+	int ret;
+
+	if (queue >= V3D_MAX_QUEUES)
+		return ERR_PTR(-EINVAL);
+
+	job = kzalloc(v3d_job_types[queue].size, GFP_KERNEL);
+	if (!job)
+		return ERR_PTR(-ENOMEM);
 
 	job->v3d = v3d;
-	job->free = free;
+	job->queue = queue;
 	job->file_priv = v3d_priv;
+	job->free = v3d_job_types[queue].free;
+	job->has_implicit_dep = v3d_job_types[queue].has_implicit_dep;
 
 	ret = drm_sched_job_init(&job->base, &v3d_priv->sched_entity[queue],
-				 1, v3d_priv, file_priv->client_id);
+				 1, v3d_priv, submit->file_priv->client_id);
 	if (ret)
-		return ret;
-
-	if (has_multisync) {
-		if (se->in_sync_count && se->wait_stage == queue) {
-			struct drm_v3d_sem __user *handle = u64_to_user_ptr(se->in_syncs);
-
-			for (i = 0; i < se->in_sync_count; i++) {
-				struct drm_v3d_sem in;
-
-				if (copy_from_user(&in, handle++, sizeof(in))) {
-					ret = -EFAULT;
-					drm_dbg(&v3d->drm, "Failed to copy wait dep handle.\n");
-					goto fail_job_init;
-				}
-				ret = drm_sched_job_add_syncobj_dependency(&job->base, file_priv, in.handle, 0);
-
-				// TODO: Investigate why this was filtered out for the IOCTL.
-				if (ret && ret != -ENOENT)
-					goto fail_job_init;
-			}
-		}
-	} else {
-		ret = drm_sched_job_add_syncobj_dependency(&job->base, file_priv, in_sync, 0);
-
-		// TODO: Investigate why this was filtered out for the IOCTL.
-		if (ret && ret != -ENOENT)
-			goto fail_job_init;
-	}
+		goto fail_free;
 
 	/* CPU jobs don't require hardware resources */
 	if (queue != V3D_CPU) {
 		ret = v3d_pm_runtime_get(v3d);
 		if (ret)
-			goto fail_job_init;
+			goto fail_sched_job;
 		job->has_pm_ref = true;
 	}
 
@@ -238,11 +291,100 @@ v3d_job_init(struct v3d_dev *v3d, struct drm_file *file_priv,
 	job->client_stats = v3d_stats_get(v3d_priv->stats[queue]);
 	job->global_stats = v3d_stats_get(v3d->queue[queue].stats);
 
-	return 0;
+	submit->jobs[submit->job_count++] = job;
 
-fail_job_init:
+	return job;
+
+fail_sched_job:
 	drm_sched_job_cleanup(&job->base);
-	return ret;
+fail_free:
+	kfree(job);
+	return ERR_PTR(ret);
+}
+
+static void
+v3d_submit_put_jobs(struct v3d_submit *submit)
+{
+	for (int i = 0; i < submit->job_count; i++)
+		v3d_job_put(submit->jobs[i]);
+}
+
+static void
+v3d_submit_cleanup_jobs(struct v3d_submit *submit)
+{
+	for (int i = 0; i < submit->job_count; i++)
+		v3d_job_cleanup(submit->jobs[i]);
+}
+
+static int
+v3d_attach_perfmon_to_jobs(struct v3d_submit *submit, u32 perfmon_id)
+{
+	struct v3d_file_priv *v3d_priv = submit->file_priv->driver_priv;
+	struct v3d_dev *v3d = submit->v3d;
+	struct v3d_perfmon *perfmon;
+
+	if (!perfmon_id)
+		return 0;
+
+	if (v3d->global_perfmon)
+		return -EAGAIN;
+
+	perfmon = v3d_perfmon_find(v3d_priv, perfmon_id);
+	if (!perfmon)
+		return -ENOENT;
+
+	for (int i = 0; i < submit->job_count; i++) {
+		submit->jobs[i]->perfmon = perfmon;
+		if (i != 0)
+			v3d_perfmon_get(perfmon);
+	}
+
+	return 0;
+}
+
+static void
+v3d_attach_fences_and_unlock_reservation(struct v3d_submit *submit,
+					 u32 out_sync, struct v3d_submit_ext *se)
+{
+	bool has_multisync = se && (se->flags & DRM_V3D_EXT_ID_MULTI_SYNC);
+	struct v3d_job *last_job = submit->jobs[submit->job_count - 1];
+	struct drm_syncobj *sync_out;
+
+	/* The submission's last fence covers the entire submission. Attach it
+	 * to every BO touched by any job in the submission.
+	 */
+	for (int i = 0; i < submit->job_count; i++) {
+		struct v3d_job *job = submit->jobs[i];
+
+		for (int j = 0; j < job->bo_count; j++) {
+			/* XXX: Use shared fences for read-only objects. */
+			dma_resv_add_fence(job->bo[j]->resv, last_job->done_fence,
+					   DMA_RESV_USAGE_WRITE);
+		}
+	}
+
+	v3d_submit_unlock_reservations(submit);
+
+	/* Update the return sync object for the job */
+	/* If it only supports a single signal semaphore*/
+	if (!has_multisync) {
+		sync_out = drm_syncobj_find(submit->file_priv, out_sync);
+		if (sync_out) {
+			drm_syncobj_replace_fence(sync_out, last_job->done_fence);
+			drm_syncobj_put(sync_out);
+		}
+		return;
+	}
+
+	/* If multiple semaphores extension is supported */
+	if (se->out_sync_count) {
+		for (int i = 0; i < se->out_sync_count; i++) {
+			drm_syncobj_replace_fence(se->out_syncs[i].syncobj,
+						  last_job->done_fence);
+			drm_syncobj_put(se->out_syncs[i].syncobj);
+		}
+		kvfree(se->out_syncs);
+	}
 }
 
 static void
@@ -258,89 +400,69 @@ v3d_push_job(struct v3d_job *job)
 	drm_sched_entity_push_job(&job->base);
 }
 
-static void
-v3d_attach_fences_and_unlock_reservation(struct drm_file *file_priv,
-					 struct v3d_job *job,
-					 struct ww_acquire_ctx *acquire_ctx,
-					 u32 out_sync,
-					 struct v3d_submit_ext *se,
-					 struct dma_fence *done_fence)
+static int
+v3d_submit_jobs(struct v3d_submit *submit, u32 out_sync,
+		struct v3d_submit_ext *se)
 {
-	struct drm_syncobj *sync_out;
-	bool has_multisync = se && (se->flags & DRM_V3D_EXT_ID_MULTI_SYNC);
-	int i;
+	struct v3d_dev *v3d = submit->v3d;
+	int ret = 0;
 
-	for (i = 0; i < job->bo_count; i++) {
-		/* XXX: Use shared fences for read-only objects. */
-		dma_resv_add_fence(job->bo[i]->resv, job->done_fence,
-				   DMA_RESV_USAGE_WRITE);
-	}
+	mutex_lock(&v3d->sched_lock);
 
-	drm_gem_unlock_reservations(job->bo, job->bo_count, acquire_ctx);
+	for (int i = 0; i < submit->job_count; i++) {
+		struct v3d_job *job = submit->jobs[i];
 
-	/* Update the return sync object for the job */
-	/* If it only supports a single signal semaphore*/
-	if (!has_multisync) {
-		sync_out = drm_syncobj_find(file_priv, out_sync);
-		if (sync_out) {
-			drm_syncobj_replace_fence(sync_out, done_fence);
-			drm_syncobj_put(sync_out);
+		v3d_push_job(job);
+
+		if (i + 1 < submit->job_count) {
+			ret = drm_sched_job_add_dependency(&submit->jobs[i + 1]->base,
+							   dma_fence_get(job->done_fence));
+			if (ret)
+				goto err;
 		}
-		return;
 	}
 
-	/* If multiple semaphores extension is supported */
-	if (se->out_sync_count) {
-		for (i = 0; i < se->out_sync_count; i++) {
-			drm_syncobj_replace_fence(se->out_syncs[i].syncobj,
-						  done_fence);
-			drm_syncobj_put(se->out_syncs[i].syncobj);
-		}
-		kvfree(se->out_syncs);
-	}
+	mutex_unlock(&v3d->sched_lock);
+
+	v3d_attach_fences_and_unlock_reservation(submit, out_sync, se);
+	v3d_submit_put_jobs(submit);
+
+	return 0;
+
+err:
+	mutex_unlock(&v3d->sched_lock);
+	return ret;
 }
 
 static int
-v3d_setup_csd_jobs_and_bos(struct drm_file *file_priv,
-			   struct v3d_dev *v3d,
+v3d_setup_csd_jobs_and_bos(struct v3d_submit *submit,
 			   struct drm_v3d_submit_csd *args,
-			   struct v3d_csd_job **job,
-			   struct v3d_job **clean_job,
-			   struct v3d_submit_ext *se,
-			   struct ww_acquire_ctx *acquire_ctx)
+			   struct v3d_submit_ext *se)
 {
+	struct v3d_csd_job *job;
+	struct v3d_job *clean_job;
 	int ret;
 
-	ret = v3d_job_allocate(v3d, (void *)job, sizeof(**job));
+	job = (struct v3d_csd_job *)v3d_submit_add_job(submit, V3D_CSD);
+	if (IS_ERR(job))
+		return PTR_ERR(job);
+
+	ret = v3d_job_add_syncobjs(&job->base, submit->file_priv, args->in_sync, se);
 	if (ret)
 		return ret;
 
-	ret = v3d_job_init(v3d, file_priv, &(*job)->base,
-			   v3d_job_free, args->in_sync, se, V3D_CSD);
-	if (ret) {
-		v3d_job_deallocate((void *)job);
-		return ret;
-	}
-
-	ret = v3d_job_allocate(v3d, (void *)clean_job, sizeof(**clean_job));
+	ret = v3d_lookup_bos(submit->file_priv, &job->base, args->bo_handles,
+			     args->bo_handle_count);
 	if (ret)
 		return ret;
 
-	ret = v3d_job_init(v3d, file_priv, *clean_job,
-			   v3d_job_free, 0, NULL, V3D_CACHE_CLEAN);
-	if (ret) {
-		v3d_job_deallocate((void *)clean_job);
-		return ret;
-	}
+	job->args = *args;
 
-	(*job)->args = *args;
+	clean_job = v3d_submit_add_job(submit, V3D_CACHE_CLEAN);
+	if (IS_ERR(clean_job))
+		return PTR_ERR(clean_job);
 
-	ret = v3d_lookup_bos(&v3d->drm, file_priv, *clean_job,
-			     args->bo_handles, args->bo_handle_count);
-	if (ret)
-		return ret;
-
-	return v3d_lock_bo_reservations(*clean_job, acquire_ctx);
+	return v3d_job_reference_bos(clean_job, &job->base);
 }
 
 static void
@@ -489,6 +611,7 @@ v3d_get_cpu_indirect_csd_params(struct drm_file *file_priv,
 	}
 
 	job->job_type = V3D_CPU_JOB_TYPE_INDIRECT_CSD;
+	info->args = indirect_csd.submit;
 	info->offset = indirect_csd.offset;
 	info->wg_size = indirect_csd.wg_size;
 	memcpy(&info->wg_uniform_offsets, &indirect_csd.wg_uniform_offsets,
@@ -498,9 +621,7 @@ v3d_get_cpu_indirect_csd_params(struct drm_file *file_priv,
 	if (!info->indirect)
 		return -ENOENT;
 
-	return v3d_setup_csd_jobs_and_bos(file_priv, v3d, &indirect_csd.submit,
-					  &info->job, &info->clean_job,
-					  NULL, &info->acquire_ctx);
+	return 0;
 }
 
 /* Get data for the query timestamp job submission. */
@@ -907,18 +1028,15 @@ int
 v3d_submit_cl_ioctl(struct drm_device *dev, void *data,
 		    struct drm_file *file_priv)
 {
-	struct v3d_dev *v3d = to_v3d_dev(dev);
-	struct v3d_file_priv *v3d_priv = file_priv->driver_priv;
+	struct v3d_submit submit = { .v3d = to_v3d_dev(dev), .file_priv = file_priv };
 	struct drm_v3d_submit_cl *args = data;
 	struct v3d_submit_ext se = {0};
 	struct v3d_bin_job *bin = NULL;
-	struct v3d_render_job *render = NULL;
-	struct v3d_job *clean_job = NULL;
-	struct v3d_job *last_job;
-	struct ww_acquire_ctx acquire_ctx;
-	int ret = 0;
+	struct v3d_render_job *render;
+	struct v3d_job *clean_job;
+	int ret;
 
-	trace_v3d_submit_cl_ioctl(&v3d->drm, args->rcl_start, args->rcl_end);
+	trace_v3d_submit_cl_ioctl(dev, args->rcl_start, args->rcl_end);
 
 	if (args->pad)
 		return -EINVAL;
@@ -938,30 +1056,10 @@ v3d_submit_cl_ioctl(struct drm_device *dev, void *data,
 		}
 	}
 
-	ret = v3d_job_allocate(v3d, (void *)&render, sizeof(*render));
-	if (ret)
-		return ret;
-
-	ret = v3d_job_init(v3d, file_priv, &render->base,
-			   v3d_render_job_free, args->in_sync_rcl, &se, V3D_RENDER);
-	if (ret) {
-		v3d_job_deallocate((void *)&render);
-		goto fail;
-	}
-
-	render->start = args->rcl_start;
-	render->end = args->rcl_end;
-	INIT_LIST_HEAD(&render->unref_list);
-
 	if (args->bcl_start != args->bcl_end) {
-		ret = v3d_job_allocate(v3d, (void *)&bin, sizeof(*bin));
-		if (ret)
-			goto fail;
-
-		ret = v3d_job_init(v3d, file_priv, &bin->base,
-				   v3d_job_free, args->in_sync_bcl, &se, V3D_BIN);
-		if (ret) {
-			v3d_job_deallocate((void *)&bin);
+		bin = (struct v3d_bin_job *)v3d_submit_add_job(&submit, V3D_BIN);
+		if (IS_ERR(bin)) {
+			ret = PTR_ERR(bin);
 			goto fail;
 		}
 
@@ -970,100 +1068,71 @@ v3d_submit_cl_ioctl(struct drm_device *dev, void *data,
 		bin->qma = args->qma;
 		bin->qms = args->qms;
 		bin->qts = args->qts;
-		bin->render = render;
-	}
 
-	if (args->flags & DRM_V3D_SUBMIT_CL_FLUSH_CACHE) {
-		ret = v3d_job_allocate(v3d, (void *)&clean_job, sizeof(*clean_job));
+		ret = v3d_job_add_syncobjs(&bin->base, file_priv, args->in_sync_bcl,
+					   &se);
 		if (ret)
 			goto fail;
-
-		ret = v3d_job_init(v3d, file_priv, clean_job,
-				   v3d_job_free, 0, NULL, V3D_CACHE_CLEAN);
-		if (ret) {
-			v3d_job_deallocate((void *)&clean_job);
-			goto fail;
-		}
-
-		last_job = clean_job;
-	} else {
-		last_job = &render->base;
 	}
 
-	ret = v3d_lookup_bos(dev, file_priv, last_job,
+	render = (struct v3d_render_job *)v3d_submit_add_job(&submit, V3D_RENDER);
+	if (IS_ERR(render)) {
+		ret = PTR_ERR(render);
+		goto fail;
+	}
+
+	INIT_LIST_HEAD(&render->unref_list);
+	render->start = args->rcl_start;
+	render->end = args->rcl_end;
+
+	if (bin)
+		bin->render = render;
+
+	ret = v3d_job_add_syncobjs(&render->base, file_priv, args->in_sync_rcl, &se);
+	if (ret)
+		goto fail;
+
+	/*
+	 * We don't associate the BOs with the BIN job. Fences are only
+	 * attached to the last job in the submission chain, and BIN jobs
+	 * don't need implicit dependencies since depending on results from
+	 * another context is not a realistic scenario for binning.
+	 */
+	ret = v3d_lookup_bos(submit.file_priv, &render->base,
 			     args->bo_handles, args->bo_handle_count);
 	if (ret)
 		goto fail;
 
-	ret = v3d_lock_bo_reservations(last_job, &acquire_ctx);
+	if (args->flags & DRM_V3D_SUBMIT_CL_FLUSH_CACHE) {
+		clean_job = v3d_submit_add_job(&submit, V3D_CACHE_CLEAN);
+		if (IS_ERR(clean_job)) {
+			ret = PTR_ERR(clean_job);
+			goto fail;
+		}
+
+		ret = v3d_job_reference_bos(clean_job, &render->base);
+		if (ret)
+			goto fail;
+	}
+
+	ret = v3d_attach_perfmon_to_jobs(&submit, args->perfmon_id);
 	if (ret)
 		goto fail;
 
-	if (args->perfmon_id) {
-		if (v3d->global_perfmon) {
-			ret = -EAGAIN;
-			goto fail_perfmon;
-		}
+	ret = v3d_submit_lock_reservations(&submit);
+	if (ret)
+		goto fail;
 
-		render->base.perfmon = v3d_perfmon_find(v3d_priv,
-							args->perfmon_id);
-
-		if (!render->base.perfmon) {
-			ret = -ENOENT;
-			goto fail_perfmon;
-		}
-	}
-
-	mutex_lock(&v3d->sched_lock);
-	if (bin) {
-		bin->base.perfmon = render->base.perfmon;
-		v3d_perfmon_get(bin->base.perfmon);
-		v3d_push_job(&bin->base);
-
-		ret = drm_sched_job_add_dependency(&render->base.base,
-						   dma_fence_get(bin->base.done_fence));
-		if (ret)
-			goto fail_unreserve;
-	}
-
-	v3d_push_job(&render->base);
-
-	if (clean_job) {
-		struct dma_fence *render_fence =
-			dma_fence_get(render->base.done_fence);
-		ret = drm_sched_job_add_dependency(&clean_job->base,
-						   render_fence);
-		if (ret)
-			goto fail_unreserve;
-		clean_job->perfmon = render->base.perfmon;
-		v3d_perfmon_get(clean_job->perfmon);
-		v3d_push_job(clean_job);
-	}
-
-	mutex_unlock(&v3d->sched_lock);
-
-	v3d_attach_fences_and_unlock_reservation(file_priv,
-						 last_job,
-						 &acquire_ctx,
-						 args->out_sync,
-						 &se,
-						 last_job->done_fence);
-
-	v3d_job_put(&bin->base);
-	v3d_job_put(&render->base);
-	v3d_job_put(clean_job);
+	ret = v3d_submit_jobs(&submit, args->out_sync, &se);
+	if (ret)
+		goto fail_unreserve;
 
 	return 0;
 
 fail_unreserve:
-	mutex_unlock(&v3d->sched_lock);
-fail_perfmon:
-	drm_gem_unlock_reservations(last_job->bo,
-				    last_job->bo_count, &acquire_ctx);
+	v3d_submit_unlock_reservations(&submit);
 fail:
-	v3d_job_cleanup((void *)bin);
-	v3d_job_cleanup((void *)render);
-	v3d_job_cleanup(clean_job);
+	v3d_submit_cleanup_jobs(&submit);
 	v3d_put_multisync_post_deps(&se);
 
 	return ret;
@@ -1082,14 +1151,13 @@ int
 v3d_submit_tfu_ioctl(struct drm_device *dev, void *data,
 		     struct drm_file *file_priv)
 {
-	struct v3d_dev *v3d = to_v3d_dev(dev);
+	struct v3d_submit submit = { .v3d = to_v3d_dev(dev), .file_priv = file_priv };
 	struct drm_v3d_submit_tfu *args = data;
 	struct v3d_submit_ext se = {0};
-	struct v3d_tfu_job *job = NULL;
-	struct ww_acquire_ctx acquire_ctx;
+	struct v3d_tfu_job *job;
 	int ret = 0;
 
-	trace_v3d_submit_tfu_ioctl(&v3d->drm, args->iia);
+	trace_v3d_submit_tfu_ioctl(dev, args->iia);
 
 	if (args->flags && !(args->flags & DRM_V3D_SUBMIT_EXTENSION)) {
 		drm_dbg(dev, "invalid flags: %d\n", args->flags);
@@ -1104,16 +1172,15 @@ v3d_submit_tfu_ioctl(struct drm_device *dev, void *data,
 		}
 	}
 
-	ret = v3d_job_allocate(v3d, (void *)&job, sizeof(*job));
-	if (ret)
-		return ret;
-
-	ret = v3d_job_init(v3d, file_priv, &job->base,
-			   v3d_job_free, args->in_sync, &se, V3D_TFU);
-	if (ret) {
-		v3d_job_deallocate((void *)&job);
+	job = (struct v3d_tfu_job *)v3d_submit_add_job(&submit, V3D_TFU);
+	if (IS_ERR(job)) {
+		ret = PTR_ERR(job);
 		goto fail;
 	}
+
+	ret = v3d_job_add_syncobjs(&job->base, file_priv, args->in_sync, &se);
+	if (ret)
+		goto fail;
 
 	job->base.bo = kzalloc_objs(*job->base.bo, ARRAY_SIZE(args->bo_handles));
 	if (!job->base.bo) {
@@ -1142,26 +1209,20 @@ v3d_submit_tfu_ioctl(struct drm_device *dev, void *data,
 		job->base.bo[job->base.bo_count] = bo;
 	}
 
-	ret = v3d_lock_bo_reservations(&job->base, &acquire_ctx);
+	ret = v3d_submit_lock_reservations(&submit);
 	if (ret)
 		goto fail;
 
-	mutex_lock(&v3d->sched_lock);
-	v3d_push_job(&job->base);
-	mutex_unlock(&v3d->sched_lock);
-
-	v3d_attach_fences_and_unlock_reservation(file_priv,
-						 &job->base, &acquire_ctx,
-						 args->out_sync,
-						 &se,
-						 job->base.done_fence);
-
-	v3d_job_put(&job->base);
+	ret = v3d_submit_jobs(&submit, args->out_sync, &se);
+	if (ret)
+		goto fail_unreserve;
 
 	return 0;
 
+fail_unreserve:
+	v3d_submit_unlock_reservations(&submit);
 fail:
-	v3d_job_cleanup((void *)job);
+	v3d_submit_cleanup_jobs(&submit);
 	v3d_put_multisync_post_deps(&se);
 
 	return ret;
@@ -1180,21 +1241,17 @@ int
 v3d_submit_csd_ioctl(struct drm_device *dev, void *data,
 		     struct drm_file *file_priv)
 {
-	struct v3d_dev *v3d = to_v3d_dev(dev);
-	struct v3d_file_priv *v3d_priv = file_priv->driver_priv;
+	struct v3d_submit submit = { .v3d = to_v3d_dev(dev), .file_priv = file_priv };
 	struct drm_v3d_submit_csd *args = data;
 	struct v3d_submit_ext se = {0};
-	struct v3d_csd_job *job = NULL;
-	struct v3d_job *clean_job = NULL;
-	struct ww_acquire_ctx acquire_ctx;
 	int ret;
 
-	trace_v3d_submit_csd_ioctl(&v3d->drm, args->cfg[5], args->cfg[6]);
+	trace_v3d_submit_csd_ioctl(dev, args->cfg[5], args->cfg[6]);
 
 	if (args->pad)
 		return -EINVAL;
 
-	if (!v3d_has_csd(v3d)) {
+	if (!v3d_has_csd(submit.v3d)) {
 		drm_warn(dev, "Attempting CSD submit on non-CSD hardware\n");
 		return -EINVAL;
 	}
@@ -1212,57 +1269,28 @@ v3d_submit_csd_ioctl(struct drm_device *dev, void *data,
 		}
 	}
 
-	ret = v3d_setup_csd_jobs_and_bos(file_priv, v3d, args,
-					 &job, &clean_job, &se,
-					 &acquire_ctx);
+	ret = v3d_setup_csd_jobs_and_bos(&submit, args, &se);
 	if (ret)
 		goto fail;
 
-	if (args->perfmon_id) {
-		if (v3d->global_perfmon) {
-			ret = -EAGAIN;
-			goto fail_perfmon;
-		}
+	ret = v3d_attach_perfmon_to_jobs(&submit, args->perfmon_id);
+	if (ret)
+		goto fail;
 
-		job->base.perfmon = v3d_perfmon_find(v3d_priv,
-						     args->perfmon_id);
-		if (!job->base.perfmon) {
-			ret = -ENOENT;
-			goto fail_perfmon;
-		}
-	}
+	ret = v3d_submit_lock_reservations(&submit);
+	if (ret)
+		goto fail;
 
-	mutex_lock(&v3d->sched_lock);
-	v3d_push_job(&job->base);
-
-	ret = drm_sched_job_add_dependency(&clean_job->base,
-					   dma_fence_get(job->base.done_fence));
+	ret = v3d_submit_jobs(&submit, args->out_sync, &se);
 	if (ret)
 		goto fail_unreserve;
-
-	v3d_push_job(clean_job);
-	mutex_unlock(&v3d->sched_lock);
-
-	v3d_attach_fences_and_unlock_reservation(file_priv,
-						 clean_job,
-						 &acquire_ctx,
-						 args->out_sync,
-						 &se,
-						 clean_job->done_fence);
-
-	v3d_job_put(&job->base);
-	v3d_job_put(clean_job);
 
 	return 0;
 
 fail_unreserve:
-	mutex_unlock(&v3d->sched_lock);
-fail_perfmon:
-	drm_gem_unlock_reservations(clean_job->bo, clean_job->bo_count,
-				    &acquire_ctx);
+	v3d_submit_unlock_reservations(&submit);
 fail:
-	v3d_job_cleanup((void *)job);
-	v3d_job_cleanup(clean_job);
+	v3d_submit_cleanup_jobs(&submit);
 	v3d_put_multisync_post_deps(&se);
 
 	return ret;
@@ -1291,13 +1319,14 @@ v3d_submit_cpu_ioctl(struct drm_device *dev, void *data,
 		     struct drm_file *file_priv)
 {
 	struct v3d_dev *v3d = to_v3d_dev(dev);
+	struct v3d_submit submit = { .v3d = to_v3d_dev(dev), .file_priv = file_priv };
+	struct v3d_submit indirect_submit = { .v3d = to_v3d_dev(dev), .file_priv = file_priv };
 	struct drm_v3d_submit_cpu *args = data;
 	struct v3d_submit_ext se = {0};
 	struct v3d_submit_ext *out_se = NULL;
 	struct v3d_cpu_job *cpu_job = NULL;
 	struct v3d_csd_job *csd_job = NULL;
 	struct v3d_job *clean_job = NULL;
-	struct ww_acquire_ctx acquire_ctx;
 	int ret;
 
 	if (args->flags && !(args->flags & DRM_V3D_SUBMIT_EXTENSION)) {
@@ -1305,9 +1334,9 @@ v3d_submit_cpu_ioctl(struct drm_device *dev, void *data,
 		return -EINVAL;
 	}
 
-	ret = v3d_job_allocate(v3d, (void *)&cpu_job, sizeof(*cpu_job));
-	if (ret)
-		return ret;
+	cpu_job = (struct v3d_cpu_job *)v3d_submit_add_job(&submit, V3D_CPU);
+	if (IS_ERR(cpu_job))
+		return PTR_ERR(cpu_job);
 
 	if (args->flags & DRM_V3D_SUBMIT_EXTENSION) {
 		ret = v3d_get_extensions(file_priv, args->extensions, &se, cpu_job);
@@ -1332,23 +1361,36 @@ v3d_submit_cpu_ioctl(struct drm_device *dev, void *data,
 
 	trace_v3d_submit_cpu_ioctl(&v3d->drm, cpu_job->job_type);
 
-	ret = v3d_job_init(v3d, file_priv, &cpu_job->base,
-			   v3d_cpu_job_free, 0, &se, V3D_CPU);
-	if (ret) {
-		v3d_job_deallocate((void *)&cpu_job);
+	ret = v3d_job_add_syncobjs(&cpu_job->base, file_priv, 0, &se);
+	if (ret)
 		goto fail;
+
+	if (cpu_job->job_type == V3D_CPU_JOB_TYPE_INDIRECT_CSD) {
+		ret = v3d_setup_csd_jobs_and_bos(&indirect_submit,
+						 &cpu_job->indirect_csd.args,
+						 NULL);
+		if (ret)
+			goto fail;
+
+		ret = v3d_submit_lock_reservations(&indirect_submit);
+		if (ret)
+			goto fail;
+
+		cpu_job->indirect_csd.job = container_of(indirect_submit.jobs[0],
+							 struct v3d_csd_job, base);
+		cpu_job->indirect_csd.clean_job = indirect_submit.jobs[1];
+
+		clean_job = cpu_job->indirect_csd.clean_job;
+		csd_job = cpu_job->indirect_csd.job;
 	}
 
-	clean_job = cpu_job->indirect_csd.clean_job;
-	csd_job = cpu_job->indirect_csd.job;
-
 	if (args->bo_handle_count) {
-		ret = v3d_lookup_bos(dev, file_priv, &cpu_job->base,
+		ret = v3d_lookup_bos(submit.file_priv, &cpu_job->base,
 				     args->bo_handles, args->bo_handle_count);
 		if (ret)
 			goto fail;
 
-		ret = v3d_lock_bo_reservations(&cpu_job->base, &acquire_ctx);
+		ret = v3d_submit_lock_reservations(&submit);
 		if (ret)
 			goto fail;
 	}
@@ -1380,41 +1422,28 @@ v3d_submit_cpu_ioctl(struct drm_device *dev, void *data,
 
 	out_se = (cpu_job->job_type == V3D_CPU_JOB_TYPE_INDIRECT_CSD) ? NULL : &se;
 
-	v3d_attach_fences_and_unlock_reservation(file_priv,
-						 &cpu_job->base,
-						 &acquire_ctx, 0,
-						 out_se, cpu_job->base.done_fence);
+	v3d_attach_fences_and_unlock_reservation(&submit, 0, out_se);
 
 	switch (cpu_job->job_type) {
 	case V3D_CPU_JOB_TYPE_INDIRECT_CSD:
-		v3d_attach_fences_and_unlock_reservation(file_priv,
-							 clean_job,
-							 &cpu_job->indirect_csd.acquire_ctx,
-							 0, &se, clean_job->done_fence);
+		v3d_attach_fences_and_unlock_reservation(&indirect_submit, 0, &se);
 		break;
 	default:
 		break;
 	}
 
-	v3d_job_put(&cpu_job->base);
-	v3d_job_put(&csd_job->base);
-	v3d_job_put(clean_job);
+	v3d_submit_put_jobs(&submit);
+	v3d_submit_put_jobs(&indirect_submit);
 
 	return 0;
 
 fail_unreserve:
 	mutex_unlock(&v3d->sched_lock);
-
-	drm_gem_unlock_reservations(cpu_job->base.bo, cpu_job->base.bo_count,
-				    &acquire_ctx);
-
-	drm_gem_unlock_reservations(clean_job->bo, clean_job->bo_count,
-				    &cpu_job->indirect_csd.acquire_ctx);
-
+	v3d_submit_unlock_reservations(&submit);
+	v3d_submit_unlock_reservations(&indirect_submit);
 fail:
-	v3d_job_cleanup((void *)cpu_job);
-	v3d_job_cleanup((void *)csd_job);
-	v3d_job_cleanup(clean_job);
+	v3d_submit_cleanup_jobs(&submit);
+	v3d_submit_cleanup_jobs(&indirect_submit);
 	v3d_put_multisync_post_deps(&se);
 
 	return ret;

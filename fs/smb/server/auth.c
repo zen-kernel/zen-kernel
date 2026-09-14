@@ -24,7 +24,6 @@
 
 #include <linux/fips.h>
 #include <crypto/arc4.h>
-#include <crypto/des.h>
 
 #include "server.h"
 #include "smb_common.h"
@@ -439,6 +438,7 @@ int ksmbd_krb5_authenticate(struct ksmbd_session *sess, char *in_blob,
 		resp_ext = ksmbd_ipc_login_request_ext(resp->login_response.account);
 
 	user = ksmbd_alloc_user(&resp->login_response, resp_ext);
+	kvfree(resp_ext);
 	if (!user) {
 		ksmbd_debug(AUTH, "login failure\n");
 		retval = -ENOMEM;
@@ -462,6 +462,7 @@ int ksmbd_krb5_authenticate(struct ksmbd_session *sess, char *in_blob,
 	memcpy(out_blob, resp->payload + resp->session_key_len,
 	       resp->spnego_blob_len);
 	*out_len = resp->spnego_blob_len;
+	sess->kerberos_expiry = resp->session_expiry;
 	retval = 0;
 out:
 	kvfree(resp);
@@ -716,8 +717,21 @@ static int ksmbd_get_encryption_key(struct ksmbd_work *work, __u64 ses_id,
 
 	if (enc)
 		sess = work->sess;
-	else
-		sess = ksmbd_session_lookup_all(work->conn, ses_id);
+	else {
+		/*
+		 * A previous-session replacement leaves the old encryption key in
+		 * place.  Use it to authenticate an encrypted request, then let
+		 * session validation reject the expired session.  This preserves the
+		 * encrypted STATUS_USER_SESSION_DELETED response without reviving
+		 * the session.
+		 */
+		sess = ksmbd_session_lookup_all_states(work->conn, ses_id);
+		if (sess && sess->state != SMB2_SESSION_VALID &&
+		    (sess->state != SMB2_SESSION_EXPIRED || !sess->enc)) {
+			ksmbd_user_session_put(sess);
+			sess = NULL;
+		}
+	}
 	if (!sess)
 		return -EINVAL;
 

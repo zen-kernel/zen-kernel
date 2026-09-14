@@ -19,8 +19,7 @@ void dmsintc_inject_irq(struct kvm_vcpu *vcpu)
 
 	for (i = 0; i < 4; i++) {
 		old = atomic64_read(&(ds->vector_map[i]));
-		if (old)
-			vector[i] = atomic64_xchg(&(ds->vector_map[i]), 0);
+		vector[i] = old ? atomic64_xchg(&(ds->vector_map[i]), 0) : 0;
 	}
 
 	if (vector[0]) {
@@ -179,4 +178,9 @@ static struct kvm_device_ops kvm_dmsintc_dev_ops = {
 int kvm_loongarch_register_dmsintc_device(void)
 {
 	return kvm_register_device_ops(&kvm_dmsintc_dev_ops, KVM_DEV_TYPE_LOONGARCH_DMSINTC);
+}
+
+void kvm_loongarch_unregister_dmsintc_device(void)
+{
+	kvm_unregister_device_ops(KVM_DEV_TYPE_LOONGARCH_DMSINTC);
 }

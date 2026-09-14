@@ -10169,16 +10169,16 @@ static void ath12k_mac_update_vif_offload(struct ath12k_link_vif *arvif)
 	if (vif->type != NL80211_IFTYPE_STATION &&
 	    vif->type != NL80211_IFTYPE_AP)
 		vif->offload_flags &= ~(IEEE80211_OFFLOAD_ENCAP_ENABLED |
-					IEEE80211_OFFLOAD_DECAP_ENABLED);
+					IEEE80211_OFFLOAD_DECAP_ENABLED |
+					IEEE80211_OFFLOAD_ENCAP_MCAST |
+					IEEE80211_OFFLOAD_ENCAP_4ADDR);
 
-	if (vif->offload_flags & IEEE80211_OFFLOAD_ENCAP_ENABLED) {
+	if (vif->offload_flags & IEEE80211_OFFLOAD_ENCAP_ENABLED)
 		ahvif->dp_vif.tx_encap_type = ATH12K_HW_TXRX_ETHERNET;
-		vif->offload_flags |= IEEE80211_OFFLOAD_ENCAP_4ADDR;
-	} else if (test_bit(ATH12K_FLAG_RAW_MODE, &ab->dev_flags)) {
+	else if (test_bit(ATH12K_FLAG_RAW_MODE, &ab->dev_flags))
 		ahvif->dp_vif.tx_encap_type = ATH12K_HW_TXRX_RAW;
-	} else {
+	else
 		ahvif->dp_vif.tx_encap_type = ATH12K_HW_TXRX_NATIVE_WIFI;
-	}
 
 	ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
 					    param_id, ahvif->dp_vif.tx_encap_type);
@@ -10187,6 +10187,10 @@ static void ath12k_mac_update_vif_offload(struct ath12k_link_vif *arvif)
 			    arvif->vdev_id, ret);
 		vif->offload_flags &= ~IEEE80211_OFFLOAD_ENCAP_ENABLED;
 	}
+
+	if (vif->offload_flags & IEEE80211_OFFLOAD_ENCAP_ENABLED)
+		vif->offload_flags |= (IEEE80211_OFFLOAD_ENCAP_MCAST |
+				       IEEE80211_OFFLOAD_ENCAP_4ADDR);
 
 	param_id = WMI_VDEV_PARAM_RX_DECAP_TYPE;
 	if (vif->offload_flags & IEEE80211_OFFLOAD_DECAP_ENABLED)
@@ -10616,22 +10620,8 @@ int ath12k_mac_vdev_create(struct ath12k *ar, struct ath12k_link_vif *arvif)
 
 err_peer_del:
 	if (ahvif->vdev_type == WMI_VDEV_TYPE_AP) {
-		reinit_completion(&ar->peer_delete_done);
-
-		ret = ath12k_wmi_send_peer_delete_cmd(ar, arvif->bssid,
-						      arvif->vdev_id);
-		if (ret) {
-			ath12k_warn(ar->ab, "failed to delete peer vdev_id %d addr %pM\n",
-				    arvif->vdev_id, arvif->bssid);
-			goto err_dp_peer_del;
-		}
-
-		ret = ath12k_wait_for_peer_delete_done(ar, arvif->vdev_id,
-						       arvif->bssid);
-		if (ret)
-			goto err_dp_peer_del;
-
-		ar->num_peers--;
+		/* ignore return value: propagate the original error */
+		ath12k_peer_delete(ar, arvif->vdev_id, arvif->bssid);
 	}
 
 err_dp_peer_del:
@@ -11305,6 +11295,8 @@ ath12k_mac_mlo_get_vdev_args(struct ath12k_link_vif *arvif,
 
 	ml_arg->assoc_link = arvif->is_sta_assoc_link;
 
+	ml_arg->ieee_link_id = arvif->link_id;
+
 	partner_info = ml_arg->partner_info;
 
 	links = ahvif->links_map;
@@ -11328,6 +11320,7 @@ ath12k_mac_mlo_get_vdev_args(struct ath12k_link_vif *arvif,
 
 		partner_info->vdev_id = arvif_p->vdev_id;
 		partner_info->hw_link_id = arvif_p->ar->pdev->hw_link_id;
+		partner_info->ieee_link_id = arvif_p->link_id;
 		ether_addr_copy(partner_info->addr, link_conf->addr);
 		ml_arg->num_partner_links++;
 		partner_info++;
@@ -13633,52 +13626,54 @@ ath12k_mac_update_bss_chan_survey(struct ath12k *ar,
 int ath12k_mac_op_get_survey(struct ieee80211_hw *hw, int idx,
 			     struct survey_info *survey)
 {
+	struct ath12k_hw *ah = hw->priv;
 	struct ath12k *ar;
 	struct ieee80211_supported_band *sband;
-	struct survey_info *ar_survey;
+	struct survey_info *ah_survey;
+	int sband_idx = idx;
 
 	lockdep_assert_wiphy(hw->wiphy);
 
-	if (idx >= ATH12K_NUM_CHANS)
+	if (sband_idx >= ATH12K_NUM_CHANS)
 		return -ENOENT;
 
 	sband = hw->wiphy->bands[NL80211_BAND_2GHZ];
-	if (sband && idx >= sband->n_channels) {
-		idx -= sband->n_channels;
+	if (sband && sband_idx >= sband->n_channels) {
+		sband_idx -= sband->n_channels;
 		sband = NULL;
 	}
 
 	if (!sband)
 		sband = hw->wiphy->bands[NL80211_BAND_5GHZ];
-	if (sband && idx >= sband->n_channels) {
-		idx -= sband->n_channels;
+	if (sband && sband_idx >= sband->n_channels) {
+		sband_idx -= sband->n_channels;
 		sband = NULL;
 	}
 
 	if (!sband)
 		sband = hw->wiphy->bands[NL80211_BAND_6GHZ];
 
-	if (!sband || idx >= sband->n_channels)
+	if (!sband || sband_idx >= sband->n_channels)
 		return -ENOENT;
 
-	ar = ath12k_mac_get_ar_by_chan(hw, &sband->channels[idx]);
+	ar = ath12k_mac_get_ar_by_chan(hw, &sband->channels[sband_idx]);
 	if (!ar) {
-		if (sband->channels[idx].flags & IEEE80211_CHAN_DISABLED) {
+		if (sband->channels[sband_idx].flags & IEEE80211_CHAN_DISABLED) {
 			memset(survey, 0, sizeof(*survey));
 			return 0;
 		}
 		return -ENOENT;
 	}
 
-	ar_survey = &ar->survey[idx];
+	ah_survey = &ah->survey[idx];
 
-	ath12k_mac_update_bss_chan_survey(ar, &sband->channels[idx]);
+	ath12k_mac_update_bss_chan_survey(ar, &sband->channels[sband_idx]);
 
-	spin_lock_bh(&ar->data_lock);
-	memcpy(survey, ar_survey, sizeof(*survey));
-	spin_unlock_bh(&ar->data_lock);
+	scoped_guard(spinlock_bh, &ah->survey_lock) {
+		memcpy(survey, ah_survey, sizeof(*survey));
+	}
 
-	survey->channel = &sband->channels[idx];
+	survey->channel = &sband->channels[sband_idx];
 
 	if (ar->rx_channel == survey->channel)
 		survey->filled |= SURVEY_INFO_IN_USE;
@@ -15106,11 +15101,11 @@ static void ath12k_mac_setup(struct ath12k *ar)
 	spin_lock_init(&ar->dp.ppdu_list_lock);
 	INIT_LIST_HEAD(&ar->arvifs);
 	INIT_LIST_HEAD(&ar->dp.ppdu_stats_info);
+	INIT_LIST_HEAD(&ar->peer_delete_waits);
 
 	init_completion(&ar->vdev_setup_done);
 	init_completion(&ar->vdev_delete_done);
 	init_completion(&ar->peer_assoc_done);
-	init_completion(&ar->peer_delete_done);
 	init_completion(&ar->install_key_done);
 	init_completion(&ar->bss_survey_done);
 	init_completion(&ar->scan.started);
@@ -15360,6 +15355,7 @@ static struct ath12k_hw *ath12k_mac_hw_allocate(struct ath12k_hw_group *ag,
 	mutex_init(&ah->hw_mutex);
 	init_completion(&ah->peer_ml_id_done);
 
+	spin_lock_init(&ah->survey_lock);
 	spin_lock_init(&ah->dp_hw.peer_lock);
 	INIT_LIST_HEAD(&ah->dp_hw.dp_peers_list);
 

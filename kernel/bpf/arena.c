@@ -484,8 +484,12 @@ static vm_fault_t arena_vm_fault(struct vm_fault *vmf)
 	kaddr = kbase + (u32)(vmf->address);
 
 	if (raw_res_spin_lock_irqsave(&arena->spinlock, flags))
-		/* Make a reasonable effort to address impossible case */
-		return VM_FAULT_RETRY;
+		/*
+		 * A failed lock means a possible deadlock was detected. Don't
+		 * return VM_FAULT_RETRY: this handler never took mmap_lock, but
+		 * the fault path would re-take it on retry and deadlock. Fail.
+		 */
+		return VM_FAULT_SIGBUS;
 
 	page = vmalloc_to_page((void *)kaddr);
 	if (page) {
@@ -853,6 +857,8 @@ static void arena_free_pages(struct bpf_arena *arena, long uaddr, long page_cnt,
 	uaddr &= PAGE_MASK;
 	kaddr = bpf_arena_get_kern_vm_start(arena) + uaddr;
 	full_uaddr = clear_lo32(arena->user_vm_start) + uaddr;
+	if (full_uaddr < arena->user_vm_start)
+		return;
 	uaddr_end = min(arena->user_vm_end, full_uaddr + (page_cnt << PAGE_SHIFT));
 	if (full_uaddr >= uaddr_end)
 		return;
