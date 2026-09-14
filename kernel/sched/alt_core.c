@@ -36,6 +36,12 @@
 #include <linux/rseq.h>
 #include <linux/scs.h>
 
+#ifdef CONFIG_PREEMPT_DYNAMIC
+# ifdef CONFIG_GENERIC_IRQ_ENTRY
+#  include <linux/irq-entry-common.h>
+# endif
+#endif
+
 #include <uapi/linux/sched/types.h>
 
 #include <asm/irq_regs.h>
