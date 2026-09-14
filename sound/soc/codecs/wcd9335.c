@@ -5096,6 +5096,13 @@ static int wcd9335_slim_probe(struct slim_device *slim)
 	return 0;
 }
 
+static void wcd9335_put_device_action(void *data)
+{
+	struct device *dev = data;
+
+	put_device(dev);
+}
+
 static int wcd9335_slim_status(struct slim_device *sdev,
 			       enum slim_device_status status)
 {
@@ -5119,6 +5126,11 @@ static int wcd9335_slim_status(struct slim_device *sdev,
 		dev_err(dev, "Unable to get SLIM Interface device\n");
 		return -EINVAL;
 	}
+
+	ret = devm_add_action_or_reset(dev, wcd9335_put_device_action,
+			&wcd->slim_ifc_dev->dev);
+	if (ret)
+		return ret;
 
 	slim_get_logical_addr(wcd->slim_ifc_dev);
 
