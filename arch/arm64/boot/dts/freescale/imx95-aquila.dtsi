@@ -406,10 +406,10 @@
 		#gpio-cells = <2>;
 		gpio-controller;
 		gpio-line-names =
-			"AQUILA_C1", /* 0 */
-			"AQUILA_C2",
-			"AQUILA_C3",
-			"AQUILA_C4",
+			"AQUILA_C01", /* 0 */
+			"AQUILA_C02",
+			"AQUILA_C03",
+			"AQUILA_C04",
 			"AQUILA_C36",
 			"AQUILA_B74",
 			"AQUILA_B75",
