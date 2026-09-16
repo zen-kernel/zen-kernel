@@ -18,6 +18,7 @@
 #include <linux/cpufreq.h>
 #include <linux/irq_work.h>
 #include <linux/kthread.h>
+#include <linux/mutex.h>
 #include <linux/time.h>
 #include <linux/vmalloc.h>
 #include <uapi/linux/sched/types.h>
@@ -49,10 +50,12 @@ struct cppc_freq_invariance {
 
 static DEFINE_PER_CPU(struct cppc_freq_invariance, cppc_freq_inv);
 static struct kthread_worker *kworker_fie;
+static DEFINE_MUTEX(cppc_fie_lock);
 
 static int cppc_perf_from_fbctrs(u64 reference_perf,
 				 struct cppc_perf_fb_ctrs *fb_ctrs_t0,
 				 struct cppc_perf_fb_ctrs *fb_ctrs_t1);
+static int cppc_fie_kworker_init(void);
 
 /**
  * __cppc_scale_freq_tick - CPPC arch_freq_scale updater for frequency invariance
@@ -161,6 +164,9 @@ static void cppc_cpufreq_cpu_fie_init(struct cpufreq_policy *policy)
 		cppc_fi->cpu = cpu;
 		cppc_fi->cpu_data = policy->driver_data;
 		if (cppc_perf_ctrs_in_pcc_cpu(cpu)) {
+			if (cppc_fie_kworker_init())
+				return;
+
 			kthread_init_work(&cppc_fi->work, cppc_scale_freq_workfn);
 			init_irq_work(&cppc_fi->irq_work, cppc_irq_work);
 			sftd = &cppc_sftd_pcc;
@@ -211,8 +217,9 @@ static void cppc_cpufreq_cpu_fie_exit(struct cpufreq_policy *policy)
 	}
 }
 
-static void cppc_fie_kworker_init(void)
+static int cppc_fie_kworker_init(void)
 {
+	struct kthread_worker *worker;
 	struct sched_attr attr = {
 		.size		= sizeof(struct sched_attr),
 		.sched_policy	= SCHED_DEADLINE,
@@ -228,23 +235,28 @@ static void cppc_fie_kworker_init(void)
 	};
 	int ret;
 
-	kworker_fie = kthread_run_worker(0, "cppc_fie");
-	if (IS_ERR(kworker_fie)) {
+	guard(mutex)(&cppc_fie_lock);
+
+	if (kworker_fie)
+		return 0;
+
+	worker = kthread_run_worker(0, "cppc_fie");
+	if (IS_ERR(worker)) {
 		pr_warn("%s: failed to create kworker_fie: %ld\n", __func__,
-			PTR_ERR(kworker_fie));
-		fie_disabled = FIE_DISABLED;
-		kworker_fie = NULL;
-		return;
+			PTR_ERR(worker));
+		return PTR_ERR(worker);
 	}
 
-	ret = sched_setattr_nocheck(kworker_fie->task, &attr);
+	ret = sched_setattr_nocheck(worker->task, &attr);
 	if (ret) {
 		pr_warn("%s: failed to set SCHED_DEADLINE: %d\n", __func__,
 			ret);
-		kthread_destroy_worker(kworker_fie);
-		fie_disabled = FIE_DISABLED;
-		kworker_fie = NULL;
+		kthread_destroy_worker(worker);
+		return ret;
 	}
+
+	kworker_fie = worker;
+	return 0;
 }
 
 static void __init cppc_freq_invariance_init(void)
@@ -259,11 +271,6 @@ static void __init cppc_freq_invariance_init(void)
 			fie_disabled = FIE_ENABLED;
 		}
 	}
-
-	if (fie_disabled || !perf_ctrs_in_pcc)
-		return;
-
-	cppc_fie_kworker_init();
 }
 
 static void cppc_freq_invariance_exit(void)
