@@ -447,7 +447,7 @@ static int mcp47feb02_write_to_eeprom(struct mcp47feb02_data *data, unsigned int
 	ret = regmap_read_poll_timeout(data->regmap, MCP47FEB02_GAIN_CTRL_STATUS_REG_ADDR,
 				       eewa_val,
 				       !(eewa_val & MCP47FEB02_GAIN_BIT_STATUS_EEWA_MASK),
-				       USEC_PER_MSEC, USEC_PER_MSEC * 5);
+				       1 * USEC_PER_MSEC, 150 * USEC_PER_MSEC);
 	if (ret)
 		return ret;
 
@@ -507,7 +507,7 @@ static ssize_t store_eeprom_store(struct device *dev, struct device_attribute *a
 
 	ret = regmap_read_poll_timeout(data->regmap, MCP47FEB02_GAIN_CTRL_STATUS_REG_ADDR, eewa_val,
 				       !(eewa_val & MCP47FEB02_GAIN_BIT_STATUS_EEWA_MASK),
-				       USEC_PER_MSEC, USEC_PER_MSEC * 5);
+				       1 * USEC_PER_MSEC, 150 * USEC_PER_MSEC);
 	if (ret)
 		return ret;
 
