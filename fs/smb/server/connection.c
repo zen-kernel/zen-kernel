@@ -13,6 +13,7 @@
 #include "mgmt/ksmbd_ida.h"
 #include "mgmt/user_session.h"
 #include "connection.h"
+#include "vfs_cache.h"
 #include "compress.h"
 #include "transport_tcp.h"
 #include "transport_rdma.h"
@@ -294,6 +295,26 @@ void ksmbd_conn_try_dequeue_request(struct ksmbd_work *work)
 	wake_up_all(&conn->req_running_q);
 }
 
+static void ksmbd_conn_cancel_async_requests(struct ksmbd_conn *conn)
+{
+	struct ksmbd_work *work, *tmp;
+
+	ksmbd_debug(CONN, "Cancel pending async requests on releasing connection\n");
+	spin_lock(&conn->request_lock);
+	list_for_each_entry_safe(work, tmp, &conn->async_requests,
+				 async_request_entry) {
+		if (cmpxchg(&work->state, KSMBD_WORK_ACTIVE,
+			    KSMBD_WORK_CANCELLED) != KSMBD_WORK_ACTIVE)
+			continue;
+
+		ksmbd_debug(CONN, "Cancel async request id %d\n",
+			    work->async_id);
+		if (work->cancel_fn)
+			work->cancel_fn(work->cancel_argv);
+	}
+	spin_unlock(&conn->request_lock);
+}
+
 void ksmbd_conn_lock(struct ksmbd_conn *conn)
 {
 	mutex_lock(&conn->srv_mutex);
@@ -370,6 +391,9 @@ int ksmbd_conn_wait_idle_sess(struct ksmbd_conn *curr_conn,
 retry_idle:
 	if (retry_count >= max_timeout)
 		return -EIO;
+
+	/* A blocked byte-range lock cannot drain until teardown wakes it. */
+	ksmbd_wake_session_blocked_works(sess);
 
 	down_read(&conn_list_lock);
 	hash_for_each(conn_list, bkt, conn, hlist) {
@@ -608,6 +632,7 @@ recheck:
 	}
 
 	ksmbd_conn_set_releasing(conn);
+	ksmbd_conn_cancel_async_requests(conn);
 	/* Wait till all reference dropped to the Server object*/
 	ksmbd_debug(CONN, "Wait for all pending requests(%d)\n", atomic_read(&conn->r_count));
 	wait_event(conn->r_count_q, atomic_read(&conn->r_count) == 0);

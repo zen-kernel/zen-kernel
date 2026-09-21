@@ -1751,11 +1751,11 @@ static long vduse_dev_compat_ioctl(struct file *file, unsigned int cmd,
 		break;
 	}
 	default:
-		ret = -ENOIOCTLCMD;
-		break;
+		return vduse_dev_ioctl(file, cmd,
+				       (unsigned long)compat_ptr(arg));
 	}
 
-	return vduse_dev_ioctl(file, cmd, (unsigned long)compat_ptr(arg));
+	return ret;
 }
 #else
 #define vduse_dev_compat_ioctl compat_ptr_ioctl
@@ -2094,7 +2094,9 @@ static bool vduse_validate_config(struct vduse_dev_config *config,
 			return false;
 	}
 
-	if (config->vq_align > PAGE_SIZE)
+	if (config->vq_align < VRING_USED_ALIGN_SIZE ||
+	    !is_power_of_2(config->vq_align) ||
+	    config->vq_align > PAGE_SIZE)
 		return false;
 
 	if (config->config_size > PAGE_SIZE)

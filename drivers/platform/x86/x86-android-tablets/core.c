@@ -367,6 +367,7 @@ static void gpio_secondary_unset(void *data)
 	struct device *dev = data;
 
 	set_secondary_fwnode(dev, NULL);
+	put_device(dev);
 }
 
 static void gpio_secondary_unregister_node_group(void *data)
@@ -380,6 +381,7 @@ static int gpio_secondary_fwnode_init(struct device *parent)
 {
 	const struct software_node *const *swnode;
 	struct fwnode_handle *fwnode;
+	struct device *phys_dev;
 	int ret;
 
 	if (!gpiochip_node_group)
@@ -407,9 +409,15 @@ static int gpio_secondary_fwnode_init(struct device *parent)
 		if (WARN_ON(!fwnode))
 			return -ENOENT;
 
-		set_secondary_fwnode(dev, fwnode);
+		phys_dev = acpi_get_first_physical_node(to_acpi_device(dev));
+		if (!phys_dev)
+			return dev_err_probe(parent, -ENODEV,
+					     "No physical device for ACPI GPIO dev: %pfwP\n",
+					     fwnode);
 
-		ret = devm_add_action_or_reset(parent, gpio_secondary_unset, dev);
+		set_secondary_fwnode(phys_dev, fwnode);
+
+		ret = devm_add_action_or_reset(parent, gpio_secondary_unset, get_device(phys_dev));
 		if (ret)
 			return ret;
 	}
