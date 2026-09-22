@@ -685,7 +685,8 @@ static int ad4080_setup_channel(struct ad4080_state *st, unsigned int ch)
 		return ret;
 
 	ret = regmap_write(st->regmap[ch], AD4080_REG_INTERFACE_CONFIG_A,
-			   AD4080_INTERFACE_CONFIG_A_SDO_ENABLE);
+			   AD4080_INTERFACE_CONFIG_A_SDO_ENABLE |
+			   AD4080_INTERFACE_CONFIG_A_ADDR_ASC);
 	if (ret)
 		return ret;
 
