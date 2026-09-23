@@ -975,7 +975,7 @@ int plpks_gen_wrapping_key(void)
 
 	kfree(label);
 out:
-	kfree(auth);
+	kfree_sensitive(auth);
 	return rc;
 }
 EXPORT_SYMBOL_GPL(plpks_gen_wrapping_key);
@@ -1100,7 +1100,7 @@ int plpks_wrap_object(u8 **input_buf, u32 input_len, u16 wrap_flags,
 out_free_label:
 	kfree(label);
 out:
-	kfree(auth);
+	kfree_sensitive(auth);
 	return rc;
 }
 EXPORT_SYMBOL_GPL(plpks_wrap_object);
@@ -1177,14 +1177,14 @@ int plpks_unwrap_object(u8 **input_buf, u32 input_len, u8 **output_buf,
 	if (rc) {
 		pr_err("H_PKS_UNWRAP_OBJECT failed. pseries_status=%d, rc=%d",
 		       pseries_status, rc);
-		kfree(*output_buf);
+		kfree_sensitive(*output_buf);
 		*output_buf = NULL;
 	} else {
 		*output_len = retbuf[1];
 	}
 
 out:
-	kfree(auth);
+	kfree_sensitive(auth);
 	return rc;
 }
 EXPORT_SYMBOL_GPL(plpks_unwrap_object);
