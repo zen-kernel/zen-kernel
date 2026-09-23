@@ -510,11 +510,16 @@ bool mali_c55_pipeline_ready(struct mali_c55 *mali_c55)
 	struct mali_c55_params *params = &mali_c55->params;
 	struct mali_c55_stats *stats = &mali_c55->stats;
 
-	return vb2_start_streaming_called(&fr->queue) &&
+	/* Only wait for queues connected through enabled media links. */
+	return (!media_pad_remote_pad_first(&fr->pad) ||
+		vb2_start_streaming_called(&fr->queue)) &&
 	       (!(mali_c55->capabilities & MALI_C55_GPS_DS_PIPE_FITTED) ||
+		!media_pad_remote_pad_first(&ds->pad) ||
 		vb2_start_streaming_called(&ds->queue)) &&
-	       vb2_start_streaming_called(&params->queue) &&
-	       vb2_start_streaming_called(&stats->queue);
+	       (!media_pad_remote_pad_first(&params->pad) ||
+		vb2_start_streaming_called(&params->queue)) &&
+	       (!media_pad_remote_pad_first(&stats->pad) ||
+		vb2_start_streaming_called(&stats->queue));
 }
 
 static int mali_c55_check_hwcfg(struct mali_c55 *mali_c55)
