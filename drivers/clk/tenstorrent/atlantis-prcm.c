@@ -397,22 +397,21 @@ static int atlantis_clk_gate_shared_enable(struct clk_hw *hw)
 
 	scoped_guard(spinlock_irqsave, gate->config.refcount_lock)
 	{
-		need_enable = (*gate->config.share_count)++ == 0;
+		need_enable = (*gate->config.share_count) == 0;
 		if (need_enable) {
 			regmap_set_bits(gate->common.regmap,
 					gate->config.reg_offset,
 					gate->config.enable);
-		}
-	}
 
-	if (need_enable) {
-		if (!regmap_test_bits(gate->common.regmap,
-				      gate->config.reg_offset,
-				      gate->config.enable)) {
-			pr_warn("%s: gate enable %d failed to enable\n",
-				clk_hw_get_name(hw), gate->config.enable);
-			return -EIO;
+			if (!regmap_test_bits(gate->common.regmap,
+					      gate->config.reg_offset,
+					      gate->config.enable)) {
+				pr_warn("%s: gate enable %d failed to enable\n",
+					clk_hw_get_name(hw), gate->config.enable);
+				return -EIO;
+			}
 		}
+		(*gate->config.share_count)++;
 	}
 
 	return 0;
