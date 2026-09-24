@@ -3127,6 +3127,7 @@ static int cpuset_can_attach_check(struct cpuset *cs, struct cpuset *oldcs,
 	return 0;
 }
 
+#ifndef CONFIG_SCHED_ALT
 static int cpuset_reserve_dl_bw(void)
 {
 	struct cpuset *cs;
@@ -3148,6 +3149,7 @@ static int cpuset_reserve_dl_bw(void)
 	}
 	return 0;
 }
+#endif /* !CONFIG_SCHED_ALT */
 
 /*
  * Clear and optionally apply (@cancel is false) the attach related data in the
@@ -3278,7 +3280,11 @@ static int cpuset_can_attach(struct cgroup_taskset *tset)
 		goto out_unlock;
 	}
 
+#ifndef CONFIG_SCHED_ALT
 	ret = cpuset_reserve_dl_bw();
+#else /* !CONFIG_SCHED_ALT */
+	ret = 0;
+#endif /* CONFIG_SCHED_ALT */
 
 out_unlock:
 	if (ret) {
