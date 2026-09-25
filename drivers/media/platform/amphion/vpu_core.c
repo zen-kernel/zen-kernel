@@ -299,21 +299,22 @@ static void vpu_core_put_vpu(struct vpu_core *core)
 	core->vpu->put_vpu(core->vpu);
 }
 
+static void vpu_core_cancel_work(struct vpu_core *core);
+
 static int vpu_core_unregister(struct device *dev, struct vpu_core *core)
 {
 	list_del_init(&core->list);
+
+	if (core->workqueue) {
+		vpu_core_cancel_work(core);
+		destroy_workqueue(core->workqueue);
+		core->workqueue = NULL;
+	}
 
 	vpu_core_put_vpu(core);
 	core->vpu = NULL;
 	kfree(core->msg_buffer);
 	core->msg_buffer = NULL;
-
-	if (core->workqueue) {
-		cancel_work_sync(&core->msg_work);
-		cancel_delayed_work_sync(&core->msg_delayed_work);
-		destroy_workqueue(core->workqueue);
-		core->workqueue = NULL;
-	}
 
 	return 0;
 }
