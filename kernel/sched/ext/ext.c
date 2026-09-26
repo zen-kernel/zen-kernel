@@ -7282,21 +7282,23 @@ static void scx_root_enable_workfn(struct kthread_work *work)
 #ifdef CONFIG_EXT_SUB_SCHED
 	cgroup_get(cgrp);
 #endif
+	/*
+	 * Transition to ENABLING to arm the disable path. Allocation failure
+	 * still unwinds locally. Full disabling on failure applies only after
+	 * scx_alloc_and_add_sched() succeeds.
+	 */
+	WARN_ON_ONCE(scx_set_enable_state(SCX_ENABLING) != SCX_DISABLED);
+	WARN_ON_ONCE(scx_root);
+
 	sch = scx_alloc_and_add_sched(cmd, cgrp, NULL);
 	if (IS_ERR(sch)) {
 		ret = PTR_ERR(sch);
+		WARN_ON_ONCE(scx_set_enable_state(SCX_DISABLED) != SCX_ENABLING);
 		goto err_free_tid_hash;
 	}
 
 	if (sch->is_cid_type)
 		static_branch_enable(&__scx_is_cid_type);
-
-	/*
-	 * Transition to ENABLING and clear exit info to arm the disable path.
-	 * Failure triggers full disabling from here on.
-	 */
-	WARN_ON_ONCE(scx_set_enable_state(SCX_ENABLING) != SCX_DISABLED);
-	WARN_ON_ONCE(scx_root);
 
 	atomic_long_set(&scx_nr_rejected, 0);
 
@@ -8964,10 +8966,17 @@ __bpf_kfunc void scx_bpf_dsq_insert_vtime(struct task_struct *p, u64 dsq_id,
 #ifdef CONFIG_EXT_SUB_SCHED
 	/*
 	 * Disallow if any sub-scheds are attached. There is no way to tell
-	 * which scheduler called us, just error out @p's scheduler.
+	 * which scheduler called us, so error out @p's scheduler -- read it
+	 * under RCU as @p's locks aren't necessarily held here. @p may be a
+	 * task past sched_ext_dead() or an idle task, in which case its
+	 * scheduler can't be determined and there is nothing obviously wrong
+	 * to report; just refuse the call.
 	 */
 	if (unlikely(!list_empty(&sch->children))) {
-		scx_error(scx_task_sched(p), "__scx_bpf_dsq_insert_vtime() must be used");
+		struct scx_sched *tsch = scx_task_sched_rcu(p);
+
+		if (tsch)
+			scx_error(tsch, "__scx_bpf_dsq_insert_vtime() must be used");
 		return;
 	}
 #endif

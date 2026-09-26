@@ -156,8 +156,11 @@ andx_again:
 	}
 
 	ret = cmds->proc(work);
-	if (conn->ops->inc_reqs)
-		conn->ops->inc_reqs(command);
+	if (conn->ops->inc_reqs) {
+		struct smb2_hdr *rsp = ksmbd_resp_buf_curr(work);
+
+		conn->ops->inc_reqs(command, rsp->Status);
+	}
 
 	if (ret < 0)
 		ksmbd_debug(CONN, "Failed to process %u [%d]\n", command, ret);
@@ -400,7 +403,7 @@ static int ksmbd_server_process_request(struct ksmbd_conn *conn)
 
 static int ksmbd_server_terminate_conn(struct ksmbd_conn *conn)
 {
-	ksmbd_sessions_deregister(conn);
+	ksmbd_conn_sessions_cleanup(conn);
 	destroy_lease_table(conn);
 	return 0;
 }

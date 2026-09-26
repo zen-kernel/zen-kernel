@@ -2345,7 +2345,7 @@ static bool reg_wdev_chan_valid(struct wiphy *wiphy, struct wireless_dev *wdev)
 	iftype = wdev->iftype;
 
 	/* make sure the interface is active */
-	if (!wdev->netdev || !netif_running(wdev->netdev))
+	if (!wdev_running(wdev))
 		return true;
 
 	/* NAN doesn't have links, handle it separately */

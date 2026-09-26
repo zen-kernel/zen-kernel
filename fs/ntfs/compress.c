@@ -1390,7 +1390,7 @@ static int ntfs_write_cb(struct ntfs_inode *ni, loff_t pos, struct page **pages,
 	ni->runlist.count = new_rl_count;
 	ni->runlist.rl = rl;
 
-	err = ntfs_attr_update_mapping_pairs(ni, 0);
+	err = ntfs_attr_update_mapping_pairs_locked(ni, 0, ni);
 	up_write(&ni->runlist.lock);
 	if (err) {
 		err = -EIO;

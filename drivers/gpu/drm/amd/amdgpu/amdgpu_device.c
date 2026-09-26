@@ -750,6 +750,67 @@ void amdgpu_device_mm_access(struct amdgpu_device *adev, loff_t pos,
 	drm_dev_exit(idx);
 }
 
+#ifdef CONFIG_64BIT
+/*
+ * During early SR-IOV VF init, host-provided init data can live in FB before
+ * the normal VRAM aperture mapping is ready.  Use a temporary BAR0 mapping for
+ * reads only, and verify it matches the VRAM aperture when aperture information
+ * is already available.
+ */
+static int amdgpu_device_read_fb_via_bar0(struct amdgpu_device *adev,
+					  u64 offset, void *buf, size_t size)
+{
+	resource_size_t aper_base, aper_size, bar_start, bar_size, map_base;
+	void __iomem *vram;
+	size_t map_offset, map_size;
+	unsigned long flags;
+	u64 end;
+
+	if (!buf || !size)
+		return -EINVAL;
+
+	if (!amdgpu_sriov_vf(adev))
+		return -EINVAL;
+
+	flags = pci_resource_flags(adev->pdev, 0);
+	if ((flags & IORESOURCE_UNSET) || !(flags & IORESOURCE_MEM))
+		return -EINVAL;
+
+	bar_start = pci_resource_start(adev->pdev, 0);
+	bar_size = pci_resource_len(adev->pdev, 0);
+	if (!bar_size)
+		return -ENODEV;
+
+	aper_base = adev->gmc.aper_base;
+	aper_size = adev->gmc.visible_vram_size ? adev->gmc.visible_vram_size :
+						  adev->gmc.aper_size;
+
+	if (aper_base || aper_size) {
+		if (aper_base != bar_start || aper_size > bar_size)
+			return -EINVAL;
+	} else {
+		aper_base = bar_start;
+		aper_size = bar_size;
+	}
+
+	if (check_add_overflow(offset, size, &end) || end > aper_size)
+		return -EINVAL;
+
+	map_offset = offset_in_page(offset);
+	map_base = aper_base + (offset & PAGE_MASK);
+	map_size = PAGE_ALIGN(map_offset + size);
+
+	vram = ioremap_wc(map_base, map_size);
+	if (!vram)
+		return -ENOMEM;
+
+	memcpy_fromio(buf, (u8 __iomem *)vram + map_offset, size);
+	iounmap(vram);
+
+	return 0;
+}
+#endif
+
 /**
  * amdgpu_device_aper_access - access vram by vram aperture
  *
@@ -769,8 +830,12 @@ size_t amdgpu_device_aper_access(struct amdgpu_device *adev, loff_t pos,
 	size_t count = 0;
 	uint64_t last;
 
-	if (!adev->mman.aper_base_kaddr)
+	if (!adev->mman.aper_base_kaddr) {
+		/* Writes still require the regular aperture/MM path. */
+		if (!write && !amdgpu_device_read_fb_via_bar0(adev, pos, buf, size))
+			return size;
 		return 0;
+	}
 
 	last = min(pos + size, adev->gmc.visible_vram_size);
 	if (last > pos) {
@@ -1983,18 +2048,17 @@ static void amdgpu_uid_fini(struct amdgpu_device *adev)
 	adev->uid_info = NULL;
 }
 
-static struct pci_dev *amdgpu_device_find_parent(struct amdgpu_device *adev)
+static void amdgpu_device_init_pcie_links(struct amdgpu_device *adev)
 {
-	struct pci_dev *parent = adev->pdev;
+	adev->link_dev = adev->pdev;
+	adev->link_partner = pci_upstream_bridge(adev->link_dev);
 
-	/* skip upstream/downstream switches internal to dGPU */
-	while ((parent = pci_upstream_bridge(parent))) {
-		if (parent->vendor == PCI_VENDOR_ID_ATI)
-			continue;
-		break;
+	/* Skip upstream/downstream switches internal to the dGPU. */
+	while (adev->link_partner &&
+	       adev->link_partner->vendor == PCI_VENDOR_ID_ATI) {
+		adev->link_dev = adev->link_partner;
+		adev->link_partner = pci_upstream_bridge(adev->link_dev);
 	}
-
-	return parent;
 }
 
 /**
@@ -2010,17 +2074,25 @@ static struct pci_dev *amdgpu_device_find_parent(struct amdgpu_device *adev)
 static int amdgpu_device_ip_early_init(struct amdgpu_device *adev)
 {
 	struct amdgpu_ip_block *ip_block;
-	struct pci_dev *parent;
-	bool total, skip_bios;
+	bool total, skip_bios, early_full_gpu_access = false;
 	uint32_t bios_flags;
 	int i, r;
 
 	amdgpu_device_enable_virtual_display(adev);
 
 	if (amdgpu_sriov_vf(adev)) {
-		r = amdgpu_virt_request_full_gpu(adev, true);
-		if (r)
-			return r;
+		/*
+		 * Legacy hosts do not provide init data before early init, so
+		 * keep the original early full GPU access request for them.  Newer
+		 * hosts publish the init data through VF FB, which lets us defer
+		 * full GPU access until after non-GPU early init work is done.
+		 */
+		early_full_gpu_access = (adev->virt.req_init_data_ver == 0);
+		if (early_full_gpu_access) {
+			r = amdgpu_virt_request_full_gpu(adev, true);
+			if (r)
+				return r;
+		}
 
 		r = amdgpu_virt_init_critical_region(adev);
 		if (r)
@@ -2097,10 +2169,9 @@ static int amdgpu_device_ip_early_init(struct amdgpu_device *adev)
 	    !dev_is_removable(&adev->pdev->dev))
 		adev->flags |= AMD_IS_PX;
 
-	if (!(adev->flags & AMD_IS_APU)) {
-		parent = amdgpu_device_find_parent(adev);
-		adev->has_pr3 = parent ? pci_pr3_present(parent) : false;
-	}
+	if (!(adev->flags & AMD_IS_APU))
+		adev->has_pr3 = adev->link_partner &&
+			pci_pr3_present(adev->link_partner);
 
 	adev->pm.pp_feature = amdgpu_pp_feature_mask;
 	if (amdgpu_sriov_vf(adev) || sched_policy == KFD_SCHED_POLICY_NO_HWS)
@@ -2182,6 +2253,13 @@ static int amdgpu_device_ip_early_init(struct amdgpu_device *adev)
 	}
 	if (!total)
 		return -ENODEV;
+
+	/* Request full GPU access only for the remaining SR-IOV init work. */
+	if (amdgpu_sriov_vf(adev) && !early_full_gpu_access) {
+		r = amdgpu_virt_request_full_gpu(adev, true);
+		if (r)
+			return r;
+	}
 
 	if (adev->gmc.xgmi.supported)
 		amdgpu_xgmi_early_init(adev);
@@ -3785,6 +3863,7 @@ int amdgpu_device_init(struct amdgpu_device *adev,
 
 	adev->shutdown = false;
 	adev->flags = flags;
+	amdgpu_device_init_pcie_links(adev);
 
 	if (amdgpu_force_asic_type >= 0 && amdgpu_force_asic_type < CHIP_LAST)
 		adev->asic_type = amdgpu_force_asic_type;
@@ -4344,7 +4423,7 @@ void amdgpu_device_fini_hw(struct amdgpu_device *adev)
 
 void amdgpu_device_fini_sw(struct amdgpu_device *adev)
 {
-	int i, idx;
+	int i;
 	bool px;
 
 	amdgpu_device_ip_fini(adev);
@@ -4386,11 +4465,9 @@ void amdgpu_device_fini_sw(struct amdgpu_device *adev)
 	if ((adev->pdev->class >> 8) == PCI_CLASS_DISPLAY_VGA)
 		vga_client_unregister(adev->pdev);
 
-	if (drm_dev_enter(adev_to_drm(adev), &idx)) {
-
+	if (adev->rmmio) {
 		iounmap(adev->rmmio);
 		adev->rmmio = NULL;
-		drm_dev_exit(idx);
 	}
 
 	if (IS_ENABLED(CONFIG_PERF_EVENTS))
@@ -6048,11 +6125,9 @@ static void amdgpu_device_partner_bandwidth(struct amdgpu_device *adev,
 	*width = PCIE_LNK_WIDTH_UNKNOWN;
 
 	if (amdgpu_device_pcie_dynamic_switching_supported(adev)) {
-		struct pci_dev *parent = amdgpu_device_find_parent(adev);
-
-		if (parent) {
-			*speed = pcie_get_speed_cap(parent);
-			*width = pcie_get_width_cap(parent);
+		if (adev->link_partner) {
+			*speed = pcie_get_speed_cap(adev->link_partner);
+			*width = pcie_get_width_cap(adev->link_partner);
 		}
 	} else {
 		/* use the current speeds rather than max if switching is not supported */
@@ -6074,21 +6149,11 @@ static void amdgpu_device_gpu_bandwidth(struct amdgpu_device *adev,
 					enum pci_bus_speed *speed,
 					enum pcie_link_width *width)
 {
-	struct pci_dev *parent = adev->pdev;
-
 	if (!speed || !width)
 		return;
 
-	/* use the device itself */
-	*speed = pcie_get_speed_cap(adev->pdev);
-	*width = pcie_get_width_cap(adev->pdev);
-
-	/* use the link outside the device */
-	parent = amdgpu_device_find_parent(adev);
-	if (parent) {
-		*speed = pcie_get_speed_cap(parent);
-		*width = pcie_get_width_cap(parent);
-	}
+	*speed = pcie_get_speed_cap(adev->link_dev);
+	*width = pcie_get_width_cap(adev->link_dev);
 }
 
 /**

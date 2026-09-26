@@ -832,8 +832,13 @@ struct xps_dev_maps {
 #define TC_BITMASK	15
 /* HW offloaded queuing disciplines txq count and offset maps */
 struct netdev_tc_txq {
-	u16 count;
-	u16 offset;
+	union {
+		struct {
+			u16 count;
+			u16 offset;
+		};
+		u32 combined;
+	};
 };
 
 #if defined(CONFIG_FCOE) || defined(CONFIG_FCOE_MODULE)
@@ -894,6 +899,7 @@ struct net_device_path {
 			u8		h_dest[ETH_ALEN];
 		} encap;
 		struct {
+			struct dst_entry *dst;
 			union {
 				struct in_addr	src_v4;
 				struct in6_addr	src_v6;
@@ -3422,8 +3428,9 @@ void dev_remove_offload(struct packet_offload *po);
 
 int dev_get_iflink(const struct net_device *dev);
 int dev_fill_metadata_dst(struct net_device *dev, struct sk_buff *skb);
-int dev_fill_forward_path(const struct net_device *dev, const u8 *daddr,
+int dev_fill_forward_path(struct net_device_path_ctx *ctx,
 			  struct net_device_path_stack *stack);
+void dev_fill_forward_path_release(struct net_device_path_stack *stack);
 struct net_device *dev_get_by_name(struct net *net, const char *name);
 struct net_device *dev_get_by_name_rcu(struct net *net, const char *name);
 struct net_device *__dev_get_by_name(struct net *net, const char *name);

@@ -1232,7 +1232,8 @@ unm_err_out:
 	if (m)
 		unmap_mft_record(ni);
 err_out:
-	if (err != -EOPNOTSUPP && err != -ENOMEM && vol_err == true) {
+	if (err != -EOPNOTSUPP && err != -ENOMEM &&
+	    err != -EINTR && err != -ERESTARTSYS && vol_err == true) {
 		ntfs_error(vol->sb,
 			"Failed with error code %i.  Marking corrupt inode 0x%llx as bad.  Run chkdsk.",
 			err, ni->mft_no);
@@ -1458,12 +1459,13 @@ unm_err_out:
 		ntfs_attr_put_search_ctx(ctx);
 	unmap_mft_record(base_ni);
 err_out:
-	if (err != -ENOENT)
+	if (err != -ENOENT && err != -EINTR && err != -ERESTARTSYS)
 		ntfs_error(vol->sb,
 			"Failed with error code %i while reading attribute inode (mft_no 0x%llx, type 0x%x, name_len %i).  Marking corrupt inode and base inode 0x%llx as bad.  Run chkdsk.",
 			err, ni->mft_no, ni->type, ni->name_len,
 			base_ni->mft_no);
-	if (err != -ENOENT && err != -ENOMEM)
+	if (err != -ENOENT && err != -ENOMEM &&
+	    err != -EINTR && err != -ERESTARTSYS)
 		NVolSetErrors(vol);
 	return err;
 }
@@ -1667,8 +1669,9 @@ static int ntfs_read_locked_index_inode(struct inode *base_vi, struct inode *vi)
 	/* Get the index bitmap attribute inode. */
 	bvi = ntfs_attr_iget(base_vi, AT_BITMAP, ni->name, ni->name_len);
 	if (IS_ERR(bvi)) {
-		ntfs_error(vi->i_sb, "Failed to get bitmap attribute.");
 		err = PTR_ERR(bvi);
+		if (err != -EINTR && err != -ERESTARTSYS)
+			ntfs_error(vi->i_sb, "Failed to get bitmap attribute.");
 		goto unm_err_out;
 	}
 	bni = NTFS_I(bvi);
@@ -1712,10 +1715,12 @@ unm_err_out:
 	if (m)
 		unmap_mft_record(base_ni);
 err_out:
-	ntfs_error(vi->i_sb,
-		"Failed with error code %i while reading index inode (mft_no 0x%llx, name_len %i.",
-		err, ni->mft_no, ni->name_len);
-	if (err != -EOPNOTSUPP && err != -ENOMEM)
+	if (err != -EINTR && err != -ERESTARTSYS)
+		ntfs_error(vi->i_sb,
+			"Failed with error code %i while reading index inode (mft_no 0x%llx, name_len %i.",
+			err, ni->mft_no, ni->name_len);
+	if (err != -EOPNOTSUPP && err != -ENOMEM &&
+	    err != -EINTR && err != -ERESTARTSYS)
 		NVolSetErrors(vol);
 	return err;
 }
@@ -2772,7 +2777,7 @@ int __ntfs_write_inode(struct inode *vi, int sync)
 
 	if (NInoNonResident(ni) && NInoRunlistDirty(ni)) {
 		down_write(&ni->runlist.lock);
-		err = ntfs_attr_update_mapping_pairs(ni, 0);
+		err = ntfs_attr_update_mapping_pairs_locked(ni, 0, ni);
 		if (!err)
 			NInoClearRunlistDirty(ni);
 		up_write(&ni->runlist.lock);
@@ -3713,7 +3718,7 @@ static s64 __ntfs_inode_non_resident_attr_pwrite(struct inode *vi,
 					FGP_CREAT | FGP_LOCK,
 					mapping_gfp_mask(mapping));
 			if (IS_ERR(folio)) {
-				ret = -ENOMEM;
+				ret = PTR_ERR(folio);
 				break;
 			}
 		} else {
@@ -3745,6 +3750,7 @@ static s64 __ntfs_inode_non_resident_attr_pwrite(struct inode *vi,
 			u64 rl_length = 0;
 			s64 vcn;
 			struct runlist_element *rl;
+			int bio_err;
 
 			lcn_count = max_t(s64, 1, ntfs_bytes_to_cluster(vol, attr_len));
 			vcn = ntfs_pidx_to_cluster(vol, folio->index);
@@ -3788,8 +3794,15 @@ static s64 __ntfs_inode_non_resident_attr_pwrite(struct inode *vi,
 					goto err_unlock_folio;
 				}
 
-				submit_bio_wait(bio);
+				bio_err = submit_bio_wait(bio);
 				bio_put(bio);
+				if (bio_err) {
+					ntfs_error(vi->i_sb,
+						   "Synchronous attribute write failed (%d)",
+						   bio_err);
+					ret = bio_err;
+					goto err_unlock_folio;
+				}
 				vcn += rl_length;
 				offset += length;
 			} while (lcn_count != 0);

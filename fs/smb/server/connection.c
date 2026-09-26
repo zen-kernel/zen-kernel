@@ -22,6 +22,8 @@
 static DEFINE_MUTEX(init_lock);
 
 static struct ksmbd_conn_ops default_conn_ops;
+static struct delayed_work session_expiration_work;
+static bool stopping_session_expiration_work;
 
 DEFINE_HASHTABLE(conn_list, CONN_HASH_BITS);
 DECLARE_RWSEM(conn_list_lock);
@@ -35,9 +37,9 @@ static int proc_show_clients(struct seq_file *m, void *v)
 	struct timespec64 now, t;
 	int i;
 
-	seq_printf(m, "#%-20s %-10s %-10s %-10s %-10s %-10s\n",
-			"<name>", "<dialect>", "<credits>", "<open files>",
-			"<requests>", "<last active>");
+	seq_printf(m, "#%-40s %-10s %-10s %-12s %-10s %s\n",
+		   "<client>", "<dialect>", "<credits>", "<open files>",
+		   "<requests>", "<last active>");
 
 	down_read(&conn_list_lock);
 	hash_for_each(conn_list, i, conn, hlist) {
@@ -46,11 +48,11 @@ static int proc_show_clients(struct seq_file *m, void *v)
 		t = timespec64_sub(now, t);
 #if IS_ENABLED(CONFIG_IPV6)
 		if (!conn->inet_addr)
-			seq_printf(m, "%-20pI6c", &conn->inet6_addr);
+			seq_printf(m, " %-40pI6c", &conn->inet6_addr);
 		else
 #endif
-			seq_printf(m, "%-20pI4", &conn->inet_addr);
-		seq_printf(m, "   0x%-10x %-10u %-12d %-10d %ptT\n",
+			seq_printf(m, " %-40pI4", &conn->inet_addr);
+		seq_printf(m, " 0x%-8x %-10u %-12d %-10d %ptT\n",
 			   conn->dialect,
 			   conn->total_credits,
 			   atomic_read(&conn->stats.open_files_count),
@@ -84,18 +86,28 @@ static void delete_proc_clients(void) {}
 
 static struct workqueue_struct *ksmbd_conn_wq;
 
+static void ksmbd_session_expiration_worker(struct work_struct *work);
+
 int ksmbd_conn_wq_init(void)
 {
 	ksmbd_conn_wq = alloc_workqueue("ksmbd-conn-release",
 					WQ_UNBOUND | WQ_MEM_RECLAIM, 0);
 	if (!ksmbd_conn_wq)
 		return -ENOMEM;
+
+	WRITE_ONCE(stopping_session_expiration_work, false);
+	INIT_DELAYED_WORK(&session_expiration_work,
+			  ksmbd_session_expiration_worker);
+	queue_delayed_work(ksmbd_conn_wq, &session_expiration_work,
+			   KSMBD_SESSION_EXPIRATION_INTERVAL);
 	return 0;
 }
 
 void ksmbd_conn_wq_destroy(void)
 {
 	if (ksmbd_conn_wq) {
+		WRITE_ONCE(stopping_session_expiration_work, true);
+		cancel_delayed_work_sync(&session_expiration_work);
 		destroy_workqueue(ksmbd_conn_wq);
 		ksmbd_conn_wq = NULL;
 	}
@@ -205,6 +217,7 @@ struct ksmbd_conn *ksmbd_conn_alloc(void)
 		return NULL;
 
 	conn->need_neg = true;
+	conn->creation_time = jiffies;
 	ksmbd_conn_set_new(conn);
 	conn->local_nls = load_nls("utf8");
 	if (!conn->local_nls)
@@ -487,6 +500,20 @@ bool ksmbd_conn_alive(struct ksmbd_conn *conn)
 	if (kthread_should_stop())
 		return false;
 
+	/*
+	 * Stale connections that have not completed NEGOTIATE and SESSION_SETUP
+	 * must be disconnected. Do not race a request that is currently
+	 * completing authentication.
+	 */
+	if (!atomic_read(&conn->req_running) &&
+	    time_after(jiffies, conn->creation_time +
+		       KSMBD_UNAUTHENTICATED_CONN_TIMEOUT) &&
+	    (READ_ONCE(conn->need_neg) ||
+	     !ksmbd_conn_has_valid_or_expired_session(conn))) {
+		ksmbd_debug(CONN, "Connection setup timed out\n");
+		return false;
+	}
+
 	if (atomic_read(&conn->stats.open_files_count) > 0)
 		return true;
 
@@ -502,6 +529,51 @@ bool ksmbd_conn_alive(struct ksmbd_conn *conn)
 		return false;
 	}
 	return true;
+}
+
+static void ksmbd_session_expiration_worker(struct work_struct *work)
+{
+	struct ksmbd_conn *conn, *target;
+	int bkt;
+
+	if (!ksmbd_server_running())
+		goto reschedule;
+
+	ksmbd_expire_sessions();
+
+	/*
+	 * An old connection without a Valid or Expired session must be
+	 * disconnected. Process one connection at a time without holding
+	 * conn_list_lock across transport shutdown.
+	 */
+again:
+	target = NULL;
+	down_read(&conn_list_lock);
+	hash_for_each(conn_list, bkt, conn, hlist) {
+		if (ksmbd_conn_exiting(conn) || ksmbd_conn_releasing(conn) ||
+		    atomic_read(&conn->req_running) ||
+		    time_before_eq(jiffies, conn->creation_time +
+				   KSMBD_UNAUTHENTICATED_CONN_TIMEOUT) ||
+		    (!READ_ONCE(conn->need_neg) &&
+		     ksmbd_conn_has_valid_or_expired_session(conn)))
+			continue;
+
+		target = ksmbd_conn_get(conn);
+		break;
+	}
+	up_read(&conn_list_lock);
+
+	if (target) {
+		ksmbd_debug(CONN, "Connection setup timed out\n");
+		ksmbd_conn_abort(target);
+		ksmbd_conn_put(target);
+		goto again;
+	}
+
+reschedule:
+	if (!READ_ONCE(stopping_session_expiration_work))
+		queue_delayed_work(ksmbd_conn_wq, &session_expiration_work,
+				   KSMBD_SESSION_EXPIRATION_INTERVAL);
 }
 
 /* "+2" for BCC field (ByteCount, 2 bytes) */
