@@ -4889,6 +4889,38 @@ intel_edp_set_sink_rates(struct intel_dp *intel_dp)
 	intel_edp_set_data_override_rates(intel_dp);
 }
 
+static void intel_edp_wake_sink(struct intel_dp *intel_dp)
+{
+	u8 value = 0;
+	int ret;
+
+	/*
+	 * Read the current sink power state. drm_dp_dpcd_read_byte() already
+	 * retries the AUX transaction internally, so a single read suffices.
+	 * First commercial eDP panels are Ver1.0 or 1.1, on which DPCD
+	 * DP_SET_POWER is supported.
+	 */
+	ret = drm_dp_dpcd_read_byte(&intel_dp->aux, DP_SET_POWER, &value);
+
+	/*
+	 * If the AUX read failed the sink may be asleep and not responding,
+	 * or it read back D3; in either case wake it up to D0.
+	 * In case of AUX read failure which is usually a POR case, the
+	 * remaining bits of register 0x600 is set to '0' on POR. So a bare
+	 * write should be fine.
+	 */
+	if (ret < 0 || value == DP_SET_POWER_D3) {
+		value &= ~DP_SET_POWER_MASK;
+		value |= DP_SET_POWER_D0;
+		drm_dp_dpcd_write_byte(&intel_dp->aux, DP_SET_POWER,
+				       value);
+		/* After setting to D0 need a min of 1ms to wake (Spec DP2.1 sec 2.3.1.2) */
+		fsleep(1000);
+		drm_dp_dpcd_write_byte(&intel_dp->aux, DP_SET_POWER,
+				       value);
+	}
+}
+
 static bool
 intel_edp_init_dpcd(struct intel_dp *intel_dp, struct intel_connector *connector)
 {
@@ -4898,6 +4930,12 @@ intel_edp_init_dpcd(struct intel_dp *intel_dp, struct intel_connector *connector
 
 	/* this function is meant to be called only once */
 	drm_WARN_ON(display->drm, intel_dp->dpcd[DP_DPCD_REV] != 0);
+
+	/*
+	 * Spec DP2.1 Section 3.5.2.16 page 966.
+	 * Also if sink is asleep, this will wake the sink.
+	 */
+	intel_edp_wake_sink(intel_dp);
 
 	if (drm_dp_read_dpcd_caps(&intel_dp->aux, intel_dp->dpcd) != 0)
 		return false;

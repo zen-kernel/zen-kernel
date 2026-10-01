@@ -36,6 +36,12 @@
 #include <linux/rseq.h>
 #include <linux/scs.h>
 
+#ifdef CONFIG_PREEMPT_DYNAMIC
+# ifdef CONFIG_GENERIC_IRQ_ENTRY
+#  include <linux/irq-entry-common.h>
+# endif
+#endif
+
 #include <uapi/linux/sched/types.h>
 
 #include <asm/irq_regs.h>
@@ -1139,6 +1145,26 @@ static __always_inline void wakeup_preempt(struct rq *rq)
 		resched_curr(rq);
 }
 
+#define SCHED_PAIR_SLICE	(3 << 18)
+
+static inline bool sched_pair_next(struct rq *rq, struct task_struct *p)
+{
+	struct task_struct *next;
+
+	if (p->prio < MIN_NORMAL_PRIO || !task_on_rq_queued(p) ||
+	    !cpumask_empty(sched_idle_mask))
+		return false;
+
+	next = sched_rq_next_task(p, rq);
+	return next != rq->idle && next->prio >= MIN_NORMAL_PRIO &&
+	       (next == READ_ONCE(p->last_wakee) || READ_ONCE(next->last_wakee) == p);
+}
+
+static inline bool sched_pair_slice_expired(struct rq *rq, struct task_struct *p)
+{
+	return rq->clock - rq->curr_pick >= SCHED_PAIR_SLICE && sched_pair_next(rq, p);
+}
+
 static __always_inline
 int __task_state_match(struct task_struct *p, unsigned int state)
 {
@@ -1426,6 +1452,21 @@ static inline void hrtick_rq_init(struct rq *rq) { }
 static inline void hrtick_schedule_enter(struct rq *rq) { }
 static inline void hrtick_schedule_exit(struct rq *rq) { }
 #endif	/* !CONFIG_SCHED_HRTICK */
+
+static inline void sched_pair_hrtick(struct rq *rq)
+{
+	struct task_struct *curr = rq->curr;
+	s64 left;
+
+	if (is_idle_task(curr) || test_tsk_need_resched(curr) || !sched_pair_next(rq, curr))
+		return;
+
+	left = rq->curr_pick + SCHED_PAIR_SLICE - rq->clock;
+	if (left <= 0)
+		resched_curr(rq);
+	else if (left < curr->time_slice)
+		hrtick_start(rq, left);
+}
 
 /*
  * activate_task - move a task to the runqueue.
@@ -2466,6 +2507,7 @@ ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags)
 
 	activate_task(p, rq, en_flags);
 	wakeup_preempt(rq);
+	sched_pair_hrtick(rq);
 
 	ttwu_do_wakeup(p);
 }
@@ -4120,7 +4162,7 @@ static inline void scheduler_task_tick(struct rq *rq)
 	 * Tasks have less than RESCHED_NS of time slice left they will be
 	 * rescheduled.
 	 */
-	if (p->time_slice >= RESCHED_NS)
+	if (p->time_slice >= RESCHED_NS && !sched_pair_slice_expired(rq, p))
 		return;
 	set_tsk_need_resched(p);
 	set_preempt_need_resched();
@@ -4764,7 +4806,7 @@ static inline void check_curr(struct task_struct *p, struct rq *rq)
 
 	update_curr(rq, p);
 
-	if (p->time_slice < RESCHED_NS)
+	if (p->time_slice < RESCHED_NS || sched_pair_slice_expired(rq, p))
 		time_slice_expired(p, rq);
 }
 
@@ -4784,8 +4826,10 @@ choose_next_task(struct rq *rq, int cpu)
 		}
 		next = sched_rq_first_task(rq);
 	}
+	rq->curr_pick = rq->clock;
 	if (SCHED_FIFO != next->policy)
-		hrtick_start(rq, next->time_slice);
+		hrtick_start(rq, sched_pair_next(rq, next) ?
+			     min_t(u64, next->time_slice, SCHED_PAIR_SLICE) : next->time_slice);
 	/*printk(KERN_INFO "sched: choose_next_task(%d) next %px\n", cpu, next);*/
 	return next;
 }
