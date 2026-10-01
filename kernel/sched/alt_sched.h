@@ -222,6 +222,7 @@ struct rq {
 	u64			clock ____cacheline_aligned;
 	u64			clock_task;
 	u64			prio_balance_time;
+	u64			curr_pick;
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
 	u64 prev_irq_time;
 #endif /* CONFIG_IRQ_TIME_ACCOUNTING */
