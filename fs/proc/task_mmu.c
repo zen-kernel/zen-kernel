@@ -955,7 +955,7 @@ static bool smap_check_folio_referenced(struct folio *folio)
 static void smap_clear_folio_referenced(struct folio *folio)
 {
 	if (lru_gen_enabled())
-		folio_set_lru_refs(folio, 0);
+		folio_reset_lru_refs(folio);
 	else
 		folio_clear_referenced(folio);
 }

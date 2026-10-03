@@ -364,7 +364,8 @@ static void madvise_cold_prep_folio(struct folio *folio)
 	 * list should have PG_workingset so its refault is still accounted
 	 * as a workingset refault, and the referenced bit always needs to
 	 * be cleared even for inactive folios. Nothing to do for MGLRU as
-	 * folio_deactivate() always calls lru_gen_clear_refs().
+	 * folio_deactivate() clears the refs count through
+	 * folio_reset_lru_refs().
 	 */
 	if (!lru_gen_enabled()) {
 		folio_clear_referenced(folio);
@@ -385,7 +386,7 @@ static void madvise_pageout_prep_folio(struct folio *folio)
 	 * the workingset classification is preserved for PSI.
 	 */
 	if (lru_gen_enabled())
-		folio_set_lru_refs(folio, refs >= LRU_REFS_WORKINGSET ? LRU_REFS_WORKINGSET : 0);
+		__folio_set_lru_refs(folio, refs >= LRU_REFS_WORKINGSET ? LRU_REFS_WORKINGSET : 0);
 }
 
 static int madvise_cold_or_pageout_pte_range(pmd_t *pmd,
