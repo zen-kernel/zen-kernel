@@ -95,16 +95,19 @@ at most ``MAX_NR_GENS`` generations. The gen counter stores a value
 within ``[1, MAX_NR_GENS]`` while a page is on one of
 ``lrugen->folios[]``; otherwise it stores zero.
 
-Each generation is divided into multiple tiers. A page accessed ``N``
-times through file descriptors is in tier ``order_base_2(N)``. Unlike
-generations, tiers do not have dedicated ``lrugen->folios[]``. In
-contrast to moving across generations, which requires the LRU lock,
-moving across tiers only involves atomic operations on
-``folio->flags`` and therefore has a negligible cost. A feedback loop
-modeled after the PID controller monitors refaults over all the tiers
-from anon and file types and decides which tiers from which types to
-evict or protect. The desired effect is to balance refault percentages
-between anon and file types proportional to the swappiness level.
+Each generation is divided into multiple tiers. A page's tier is
+derived from its referenced count, which counts the accesses collected
+from both channels above and is capped at ``LRU_REFS_MAX``: pages
+accessed at most once are in the lowest tier, and the tiers above hold
+pages accessed at least twice. Unlike generations, tiers do not have
+dedicated ``lrugen->folios[]``. In contrast to moving across
+generations, which requires the LRU lock, updating the referenced
+count only involves atomic operations on ``folio->flags`` and
+therefore has a negligible cost. A feedback loop modeled after the PID
+controller monitors refaults over all the tiers from anon and file
+types and decides which tiers from which types to evict or protect.
+The desired effect is to balance refault percentages between anon and
+file types proportional to the swappiness level.
 
 There are two conceptually independent procedures: the aging and the
 eviction. They form a closed-loop system, i.e., the page reclaim.
@@ -122,25 +125,30 @@ and calls ``walk_page_range()`` with each ``mm_struct`` on this list
 to scan PTEs, and after each iteration, it increments ``max_seq``. For
 the latter, when the eviction walks the rmap and finds a young PTE,
 the aging scans the adjacent PTEs. For both, on finding a young PTE,
-the aging clears the accessed bit and updates the gen counter of the
-page mapped by this PTE to ``(max_seq%MAX_NR_GENS)+1``.
+the aging clears the accessed bit and bumps the referenced count of
+the page mapped by this PTE. A second access promotes the page by
+updating its gen counter to ``(max_seq%MAX_NR_GENS)+1``; the first
+access only moves a page out of the oldest generation, so that the
+next time it becomes the oldest one, its accessed bit reflects
+whether it has been used again. Executable file pages are promoted on
+their first access, since reclaiming them causes typical I/O
+thrashing.
 
 Eviction
 --------
 The eviction consumes old generations. Given an ``lruvec``, it
 increments ``min_seq`` when ``lrugen->folios[]`` indexed by
-``min_seq%MAX_NR_GENS`` becomes empty. To select a type and a tier to
-evict from, it first compares ``min_seq[]`` to select the older type.
-If both types are equally old, it selects the one whose first tier has
-a lower refault percentage. The first tier contains single-use
-unmapped clean pages, which are the best bet. The eviction sorts a
-page according to its gen counter if the aging has found this page
-accessed through page tables and updated its gen counter. It also
-moves a page to the next generation, i.e., ``min_seq+1``, if this page
-was accessed multiple times through file descriptors and the feedback
-loop has detected outlying refaults from the tier this page is in. To
-this end, the feedback loop uses the first tier as the baseline, for
-the reason stated earlier.
+``min_seq%MAX_NR_GENS`` becomes empty. To select a type to evict from,
+it first compares ``min_seq[]`` to select the older type. If both
+types are equally old, it compares the refault percentages of all the
+tiers of each type proportional to the swappiness level. To select a
+tier to protect, it compares the refault percentage of each tier
+against that of the tiers below it. The lowest tier contains pages
+accessed at most once, which are the best bet. The eviction sorts a
+page according to its gen counter if the aging or an access has
+updated its gen counter. It also moves a page to the next generation,
+i.e., ``min_seq+1``, if the feedback loop has detected outlying
+refaults from the tier this page is in.
 
 Working set protection
 ----------------------
