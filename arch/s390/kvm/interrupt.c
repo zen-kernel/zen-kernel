@@ -1550,23 +1550,21 @@ static int __inject_set_prefix(struct kvm_vcpu *vcpu, struct kvm_s390_irq *irq)
 }
 
 #define KVM_S390_STOP_SUPP_FLAGS (KVM_S390_STOP_FLAG_STORE_STATUS)
-static int __inject_sigp_stop(struct kvm_vcpu *vcpu, struct kvm_s390_irq *irq)
+static int __inject_sigp_stop(struct kvm_vcpu *vcpu, struct kvm_s390_irq *irq, bool *storestatus)
 {
 	struct kvm_s390_local_interrupt *li = &vcpu->arch.local_int;
 	struct kvm_s390_stop_info *stop = &li->irq.stop;
-	int rc = 0;
 
 	vcpu->stat.inject_stop_signal++;
 	trace_kvm_s390_inject_vcpu(vcpu->vcpu_id, KVM_S390_SIGP_STOP, 0, 0);
 
 	if (irq->u.stop.flags & ~KVM_S390_STOP_SUPP_FLAGS)
 		return -EINVAL;
-
 	if (is_vcpu_stopped(vcpu)) {
-		if (irq->u.stop.flags & KVM_S390_STOP_FLAG_STORE_STATUS)
-			rc = kvm_s390_store_status_unloaded(vcpu,
-						KVM_S390_STORE_STATUS_NOADDR);
-		return rc;
+		if (!(irq->u.stop.flags & KVM_S390_STOP_FLAG_STORE_STATUS))
+			return 0;
+		*storestatus = true;
+		return -EWOULDBLOCK;
 	}
 
 	if (test_and_set_bit(IRQ_PEND_SIGP_STOP, &li->pending_irqs))
@@ -2102,7 +2100,7 @@ void kvm_s390_clear_stop_irq(struct kvm_vcpu *vcpu)
 	spin_unlock(&li->lock);
 }
 
-static int do_inject_vcpu(struct kvm_vcpu *vcpu, struct kvm_s390_irq *irq)
+static int do_inject_vcpu(struct kvm_vcpu *vcpu, struct kvm_s390_irq *irq, bool *storestatus)
 {
 	int rc;
 
@@ -2114,7 +2112,7 @@ static int do_inject_vcpu(struct kvm_vcpu *vcpu, struct kvm_s390_irq *irq)
 		rc = __inject_set_prefix(vcpu, irq);
 		break;
 	case KVM_S390_SIGP_STOP:
-		rc = __inject_sigp_stop(vcpu, irq);
+		rc = __inject_sigp_stop(vcpu, irq, storestatus);
 		break;
 	case KVM_S390_RESTART:
 		rc = __inject_sigp_restart(vcpu);
@@ -2150,11 +2148,16 @@ static int do_inject_vcpu(struct kvm_vcpu *vcpu, struct kvm_s390_irq *irq)
 int kvm_s390_inject_vcpu(struct kvm_vcpu *vcpu, struct kvm_s390_irq *irq)
 {
 	struct kvm_s390_local_interrupt *li = &vcpu->arch.local_int;
+	bool storestatus = false;
 	int rc;
 
 	spin_lock(&li->lock);
-	rc = do_inject_vcpu(vcpu, irq);
+	rc = do_inject_vcpu(vcpu, irq, &storestatus);
 	spin_unlock(&li->lock);
+
+	if (rc == -EWOULDBLOCK && storestatus)
+		rc = kvm_s390_store_status_unloaded(vcpu, KVM_S390_STORE_STATUS_NOADDR);
+
 	if (!rc)
 		kvm_s390_vcpu_wakeup(vcpu);
 	return rc;
@@ -2976,61 +2979,58 @@ static int adapter_indicators_set(struct kvm *kvm,
 				  struct s390_io_adapter *adapter,
 				  struct kvm_s390_adapter_int *adapter_int)
 {
-	unsigned long bit;
-	int summary_set, idx;
 	struct s390_map_info *ind_info, *summary_info;
-	void *map;
 	struct page *ind_page, *summary_page;
-	unsigned long flags;
+	unsigned long bit;
+	int summary_set;
+	void *map;
 
 	ind_page = NULL;
 
-	spin_lock_irqsave(&adapter->maps_lock, flags);
-	ind_info = get_map_info(adapter, adapter_int->ind_addr);
+	scoped_guard(spinlock_irqsave, &adapter->maps_lock) {
+		ind_info = get_map_info(adapter, adapter_int->ind_addr);
+		if (ind_info) {
+			map = page_address(ind_info->page);
+			bit = get_ind_bit(ind_info->addr, adapter_int->ind_offset, adapter->swap);
+			set_bit(bit, map);
+		}
+	}
 	if (!ind_info) {
-		spin_unlock_irqrestore(&adapter->maps_lock, flags);
 		ind_page = pin_map_page(kvm, adapter_int->ind_addr, 0);
 		if (!ind_page)
 			return -1;
-		idx = srcu_read_lock(&kvm->srcu);
 		map = page_address(ind_page);
 		bit = get_ind_bit(adapter_int->ind_addr,
 				  adapter_int->ind_offset, adapter->swap);
 		set_bit(bit, map);
-		mark_page_dirty(kvm, adapter_int->ind_gaddr >> PAGE_SHIFT);
 		set_page_dirty_lock(ind_page);
-		srcu_read_unlock(&kvm->srcu, idx);
 		unpin_user_page(ind_page);
-	} else {
-		map = page_address(ind_info->page);
-		bit = get_ind_bit(ind_info->addr, adapter_int->ind_offset, adapter->swap);
-		set_bit(bit, map);
-		spin_unlock_irqrestore(&adapter->maps_lock, flags);
 	}
+	scoped_guard(srcu, &kvm->srcu)
+		mark_page_dirty(kvm, gpa_to_gfn(adapter_int->ind_gaddr));
 
-	spin_lock_irqsave(&adapter->maps_lock, flags);
-	summary_info = get_map_info(adapter, adapter_int->summary_addr);
+	scoped_guard(spinlock_irqsave, &adapter->maps_lock) {
+		summary_info = get_map_info(adapter, adapter_int->summary_addr);
+		if (summary_info) {
+			map = page_address(summary_info->page);
+			bit = get_ind_bit(summary_info->addr, adapter_int->summary_offset,
+					  adapter->swap);
+			summary_set = test_and_set_bit(bit, map);
+		}
+	}
 	if (!summary_info) {
-		spin_unlock_irqrestore(&adapter->maps_lock, flags);
 		summary_page = pin_map_page(kvm, adapter_int->summary_addr, 0);
 		if (WARN_ON_ONCE(!summary_page))
 			return -1;
-		idx = srcu_read_lock(&kvm->srcu);
 		map = page_address(summary_page);
 		bit = get_ind_bit(adapter_int->summary_addr,
 				  adapter_int->summary_offset, adapter->swap);
 		summary_set = test_and_set_bit(bit, map);
-		mark_page_dirty(kvm, adapter_int->summary_gaddr >> PAGE_SHIFT);
 		set_page_dirty_lock(summary_page);
-		srcu_read_unlock(&kvm->srcu, idx);
 		unpin_user_page(summary_page);
-	} else {
-		map = page_address(summary_info->page);
-		bit = get_ind_bit(summary_info->addr, adapter_int->summary_offset,
-				  adapter->swap);
-		summary_set = test_and_set_bit(bit, map);
-		spin_unlock_irqrestore(&adapter->maps_lock, flags);
 	}
+	scoped_guard(srcu, &kvm->srcu)
+		mark_page_dirty(kvm, gpa_to_gfn(adapter_int->summary_gaddr));
 
 	return summary_set ? 0 : 1;
 }
@@ -3040,26 +3040,29 @@ static int adapter_indicators_set_fast(struct kvm *kvm,
 				       struct kvm_s390_adapter_int *adapter_int,
 				       int setbit)
 {
+	struct s390_map_info *ind_info, *summary_info;
 	unsigned long bit;
 	int summary_set;
-	struct s390_map_info *ind_info, *summary_info;
 	void *map;
 
-	spin_lock(&adapter->maps_lock);
+	guard(srcu)(&kvm->srcu);
+	guard(spinlock)(&adapter->maps_lock);
+
 	ind_info = get_map_info(adapter, adapter_int->ind_addr);
-	if (!ind_info) {
-		spin_unlock(&adapter->maps_lock);
+	if (!ind_info)
 		return -EWOULDBLOCK;
-	}
+
 	map = page_address(ind_info->page);
 	bit = get_ind_bit(ind_info->addr, adapter_int->ind_offset, adapter->swap);
-	if (setbit)
+	if (setbit) {
 		set_bit(bit, map);
-	summary_info = get_map_info(adapter, adapter_int->summary_addr);
-	if (!summary_info) {
-		spin_unlock(&adapter->maps_lock);
-		return -EWOULDBLOCK;
+		mark_page_dirty(kvm, gpa_to_gfn(adapter_int->ind_gaddr));
 	}
+
+	summary_info = get_map_info(adapter, adapter_int->summary_addr);
+	if (!summary_info)
+		return -EWOULDBLOCK;
+
 	map = page_address(summary_info->page);
 	bit = get_ind_bit(summary_info->addr, adapter_int->summary_offset,
 			  adapter->swap);
@@ -3069,7 +3072,8 @@ static int adapter_indicators_set_fast(struct kvm *kvm,
 		summary_set = test_and_set_bit(bit, map);
 	else
 		summary_set = test_and_clear_bit(bit, map);
-	spin_unlock(&adapter->maps_lock);
+	mark_page_dirty(kvm, gpa_to_gfn(adapter_int->summary_gaddr));
+
 	return summary_set ? 0 : 1;
 }
 
@@ -3189,7 +3193,8 @@ int kvm_set_msi(struct kvm_kernel_irq_routing_entry *e, struct kvm *kvm,
 int kvm_s390_set_irq_state(struct kvm_vcpu *vcpu, void __user *irqstate, int len)
 {
 	struct kvm_s390_local_interrupt *li = &vcpu->arch.local_int;
-	struct kvm_s390_irq *buf;
+	struct kvm_s390_irq *buf __free(kvfree) = NULL;
+	bool tmp, storestatus = false;
 	int r = 0;
 	int n;
 
@@ -3197,31 +3202,33 @@ int kvm_s390_set_irq_state(struct kvm_vcpu *vcpu, void __user *irqstate, int len
 	if (!buf)
 		return -ENOMEM;
 
-	if (copy_from_user((void *) buf, irqstate, len)) {
-		r = -EFAULT;
-		goto out_free;
-	}
+	if (copy_from_user((void *)buf, irqstate, len))
+		return -EFAULT;
 
-	/*
-	 * Don't allow setting the interrupt state
-	 * when there are already interrupts pending
-	 */
-	spin_lock(&li->lock);
-	if (li->pending_irqs) {
-		r = -EBUSY;
-		goto out_unlock;
-	}
+	scoped_guard(spinlock, &li->lock) {
+		/*
+		 * Don't allow setting the interrupt state
+		 * when there are already interrupts pending
+		 */
+		if (li->pending_irqs)
+			return -EBUSY;
 
-	for (n = 0; n < len / sizeof(*buf); n++) {
-		r = do_inject_vcpu(vcpu, &buf[n]);
-		if (r)
-			break;
+		for (n = 0; n < len / sizeof(*buf); n++) {
+			tmp = false;
+			r = do_inject_vcpu(vcpu, &buf[n], &tmp);
+			if (r == -EWOULDBLOCK && tmp) {
+				storestatus = true;
+				r = 0;
+			}
+			if (r)
+				break;
+		}
 	}
-
-out_unlock:
-	spin_unlock(&li->lock);
-out_free:
-	vfree(buf);
+	if (storestatus) {
+		scoped_guard(srcu, &vcpu->kvm->srcu)
+			n = kvm_s390_store_status_unloaded(vcpu, KVM_S390_STORE_STATUS_NOADDR);
+		return r ? r : n;
+	}
 
 	return r;
 }
