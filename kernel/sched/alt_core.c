@@ -25,7 +25,6 @@
 #include <linux/sched/stat.h>
 #include <linux/sched/wake_q.h>
 
-#include <linux/blkdev.h>
 #include <linux/context_tracking.h>
 #include <linux/cpuset.h>
 #include <linux/delayacct.h>
