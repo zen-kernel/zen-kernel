@@ -4039,7 +4039,8 @@ void sched_tick(void)
 {
 	int cpu __maybe_unused = smp_processor_id();
 	struct rq *rq = cpu_rq(cpu);
-	struct task_struct *curr = rq->curr;
+	/* scheduler accounting goes to the donor task */
+	struct task_struct *curr;
 	u64 resched_latency;
 
 	if (housekeeping_cpu(cpu, HK_TYPE_KERNEL_NOISE))
@@ -4048,6 +4049,7 @@ void sched_tick(void)
 	sched_clock_tick();
 
 	raw_spin_lock(&rq->lock);
+	curr = rq->curr;
 	update_rq_clock(rq);
 
 	if (dynamic_preempt_lazy() && tif_test_bit(TIF_NEED_RESCHED_LAZY))
