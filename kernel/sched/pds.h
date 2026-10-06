@@ -16,6 +16,7 @@ static const int sched_timeslice_shift = 23;
 static const int sched_boost_shift = 21;
 #define sched_credit_decay \
 	max_t(u64, sysctl_sched_base_slice >> sched_boost_shift, 1)
+DECLARE_STATIC_KEY_MAYBE(CONFIG_SCHED_PDS_SLEEP_CREDIT, sched_pds_sleep_credit);
 
 #define SCHED_NICE_DELTA(p)	(((p)->static_prio - (MAX_PRIO - NICE_WIDTH)) / 2)
 
@@ -169,6 +170,9 @@ static inline void do_sched_yield_type_1(struct task_struct *p, struct rq *rq)
 
 static inline void sched_task_ttwu(struct task_struct *p)
 {
+	if (!static_branch_maybe(CONFIG_SCHED_PDS_SLEEP_CREDIT, &sched_pds_sleep_credit))
+		return;
+
 	const struct rq *rq = this_rq();
 	s64 delta = local_clock() - p->sleep_start;
 	s64 credit;
