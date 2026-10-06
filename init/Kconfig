@@ -245,7 +245,6 @@ config ZEN_INTERACTIVE
 	  --- PDS/BMQ CPU Scheduler ------------------------------
 
 	    Scheduling timeslice...........:   4    ->   2    ms
-	    Yield type.....................:   1    ->   0
 	    PDS sleep credit...............:   0    ->   1
 
 	  --- CPUFreq Settings -----------------------------------
