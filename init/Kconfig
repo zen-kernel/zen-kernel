@@ -982,6 +982,7 @@ endchoice
 config SCHED_PDS_SLEEP_CREDIT
 	bool "PDS sleep credit on by default"
 	depends on SCHED_PDS
+	default y if ZEN_INTERACTIVE
 	help
 	  Move a task that slept ahead of CPU-bound tasks of the same nice
 	  level when it wakes up.  This favours interactivity over fairness.
