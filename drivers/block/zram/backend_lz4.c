@@ -34,8 +34,7 @@ static int lz4_setup_params(struct zcomp_params *params)
 	if (!dict_stream)
 		return -ENOMEM;
 
-	ret = LZ4_loadDict(dict_stream,
-			   params->dict, params->dict_sz);
+	ret = LZ4_loadDict(dict_stream, params->dict, params->dict_sz);
 	if (ret != params->dict_sz) {
 		vfree(dict_stream);
 		return -EINVAL;
@@ -98,8 +97,8 @@ static int lz4_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx,
 const struct zcomp_ops backend_lz4 = {
 	.compress	= lz4_compress,
 	.decompress	= lz4_decompress,
-	.create_ctx	= lz4_create,
-	.destroy_ctx	= lz4_destroy,
+	.create_cctx	= lz4_create,
+	.destroy_cctx	= lz4_destroy,
 	.setup_params	= lz4_setup_params,
 	.release_params	= lz4_release_params,
 	.name		= "lz4",

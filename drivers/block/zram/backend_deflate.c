@@ -13,11 +13,6 @@
 #define DEFLATE_DEF_WINBITS		(-11)
 #define DEFLATE_DEF_MEMLEVEL		MAX_MEM_LEVEL
 
-struct deflate_ctx {
-	struct z_stream_s cctx;
-	struct z_stream_s dctx;
-};
-
 static void deflate_release_params(struct zcomp_params *params)
 {
 }
@@ -40,70 +35,98 @@ static int deflate_setup_params(struct zcomp_params *params)
 	return 0;
 }
 
-static void deflate_destroy(struct zcomp_ctx *ctx)
+static void deflate_destroy_cctx(struct zcomp_ctx *ctx)
 {
-	struct deflate_ctx *zctx = ctx->context;
+	struct z_stream_s *cctx = ctx->context;
 
-	if (!zctx)
+	if (!cctx)
 		return;
 
-	if (zctx->cctx.workspace) {
-		zlib_deflateEnd(&zctx->cctx);
-		vfree(zctx->cctx.workspace);
+	if (cctx->workspace) {
+		zlib_deflateEnd(cctx);
+		vfree(cctx->workspace);
 	}
-	if (zctx->dctx.workspace) {
-		zlib_inflateEnd(&zctx->dctx);
-		vfree(zctx->dctx.workspace);
-	}
-	kfree(zctx);
+	kfree(cctx);
 }
 
-static int deflate_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
+static int deflate_create_cctx(struct zcomp_params *params,
+			       struct zcomp_ctx *ctx)
 {
-	struct deflate_ctx *zctx;
+	struct z_stream_s *cctx;
 	size_t sz;
 	int ret;
 
-	zctx = kzalloc_obj(*zctx);
-	if (!zctx)
+	cctx = kzalloc_obj(*cctx);
+	if (!cctx)
 		return -ENOMEM;
 
-	ctx->context = zctx;
+	ctx->context = cctx;
 	sz = zlib_deflate_workspacesize(params->deflate.winbits, MAX_MEM_LEVEL);
-	zctx->cctx.workspace = vzalloc(sz);
-	if (!zctx->cctx.workspace)
+	cctx->workspace = vzalloc(sz);
+	if (!cctx->workspace)
 		goto error;
 
-	ret = zlib_deflateInit2(&zctx->cctx, params->level, Z_DEFLATED,
+	ret = zlib_deflateInit2(cctx, params->level, Z_DEFLATED,
 				params->deflate.winbits, DEFLATE_DEF_MEMLEVEL,
 				Z_DEFAULT_STRATEGY);
-	if (ret != Z_OK)
-		goto error;
-
-	sz = zlib_inflate_workspacesize();
-	zctx->dctx.workspace = vzalloc(sz);
-	if (!zctx->dctx.workspace)
-		goto error;
-
-	ret = zlib_inflateInit2(&zctx->dctx, params->deflate.winbits);
 	if (ret != Z_OK)
 		goto error;
 
 	return 0;
 
 error:
-	deflate_destroy(ctx);
+	deflate_destroy_cctx(ctx);
+	return -EINVAL;
+}
+
+static void deflate_destroy_dctx(struct zcomp_ctx *ctx)
+{
+	struct z_stream_s *dctx = ctx->context;
+
+	if (!dctx)
+		return;
+
+	if (dctx->workspace) {
+		zlib_inflateEnd(dctx);
+		vfree(dctx->workspace);
+	}
+	kfree(dctx);
+}
+
+static int deflate_create_dctx(struct zcomp_params *params,
+			       struct zcomp_ctx *ctx)
+{
+	struct z_stream_s *dctx;
+	size_t sz;
+	int ret;
+
+	dctx = kzalloc_obj(*dctx);
+	if (!dctx)
+		return -ENOMEM;
+
+	ctx->context = dctx;
+	sz = zlib_inflate_workspacesize();
+	dctx->workspace = vzalloc(sz);
+	if (!dctx->workspace)
+		goto error;
+
+	ret = zlib_inflateInit2(dctx, params->deflate.winbits);
+	if (ret != Z_OK)
+		goto error;
+
+	return 0;
+
+error:
+	deflate_destroy_dctx(ctx);
 	return -EINVAL;
 }
 
 static int deflate_compress(struct zcomp_params *params, struct zcomp_ctx *ctx,
 			    struct zcomp_req *req)
 {
-	struct deflate_ctx *zctx = ctx->context;
-	struct z_stream_s *deflate;
+	struct z_stream_s *deflate = ctx->context;
 	int ret;
 
-	deflate = &zctx->cctx;
 	ret = zlib_deflateReset(deflate);
 	if (ret != Z_OK)
 		return -EINVAL;
@@ -125,11 +148,8 @@ static int deflate_decompress(struct zcomp_params *params,
 			      struct zcomp_ctx *ctx,
 			      struct zcomp_req *req)
 {
-	struct deflate_ctx *zctx = ctx->context;
-	struct z_stream_s *inflate;
+	struct z_stream_s *inflate = ctx->context;
 	int ret;
-
-	inflate = &zctx->dctx;
 
 	ret = zlib_inflateReset(inflate);
 	if (ret != Z_OK)
@@ -150,8 +170,10 @@ static int deflate_decompress(struct zcomp_params *params,
 const struct zcomp_ops backend_deflate = {
 	.compress	= deflate_compress,
 	.decompress	= deflate_decompress,
-	.create_ctx	= deflate_create,
-	.destroy_ctx	= deflate_destroy,
+	.create_cctx	= deflate_create_cctx,
+	.destroy_cctx	= deflate_destroy_cctx,
+	.create_dctx	= deflate_create_dctx,
+	.destroy_dctx	= deflate_destroy_dctx,
 	.setup_params	= deflate_setup_params,
 	.release_params	= deflate_release_params,
 	.name		= "deflate",
