@@ -1446,6 +1446,7 @@ struct task_struct {
 
 #ifdef CONFIG_SCHED_CACHE
 	struct callback_head		cache_work;
+	struct sched_cache_group __rcu	*sched_cache_grp;
 	int				preferred_llc;
 	/* 1: task was enqueued to its preferred LLC, 0 otherwise */
 	int				pref_llc_queued;
@@ -2448,9 +2449,22 @@ struct sched_cache_group {
 	struct rcu_head rcu;
 } ____cacheline_aligned_in_smp;
 
+struct sched_cache_group *sched_cache_group_get(struct sched_cache_group *grp);
+struct sched_cache_group *task_cache_group_get(struct task_struct *p);
+
+void sched_cache_fork(struct task_struct *p);
+void sched_cache_fork_cleanup(struct task_struct *p);
+void sched_cache_exec_mmap(struct task_struct *p, struct mm_struct *mm);
+void sched_cache_exit_mm(struct task_struct *p);
+
 #else
 
 struct sched_cache_group { };
+
+static inline void sched_cache_fork(struct task_struct *p) { }
+static inline void sched_cache_fork_cleanup(struct task_struct *p) { }
+static inline void sched_cache_exec_mmap(struct task_struct *p, struct mm_struct *mm) { }
+static inline void sched_cache_exit_mm(struct task_struct *p) { }
 
 #endif
 

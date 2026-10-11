@@ -53,6 +53,10 @@ enum scx_consts {
  * over [0, nr_cores_at_init) with no gaps. No-topo cids have all fields set
  * to -1.
  *
+ * New fields are appended, never inserted: scx_bpf_cid_topo() copies this
+ * struct out sized by the program's own layout, and an older program's copy
+ * must stay a prefix of the kernel's.
+ *
  * @core_cid: first cid of this cid's core (smt-sibling group)
  * @core_idx: global index of that core, in [0, nr_cores_at_init)
  * @llc_cid: first cid of this cid's LLC

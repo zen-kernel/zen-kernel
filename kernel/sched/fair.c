@@ -1452,7 +1452,7 @@ static inline int get_sched_cache_scale(int mul)
 	return (1 + (tol - 1) * mul);
 }
 
-static bool exceed_llc_capacity(struct mm_struct *mm, int cpu)
+static bool exceed_llc_capacity(struct sched_cache_group *grp, int cpu)
 {
 #ifdef CONFIG_NUMA_BALANCING
 	unsigned long llc, footprint;
@@ -1466,11 +1466,6 @@ static bool exceed_llc_capacity(struct mm_struct *mm, int cpu)
 		return true;
 
 	if (static_branch_likely(&sched_numa_balancing)) {
-		struct sched_cache_group *grp = READ_ONCE(mm->sched_cache_grp);
-
-		if (!grp)
-			return true;
-
 		/*
 		 * TBD: RDT exclusive LLC ways reserved should be
 		 * excluded.
@@ -1505,10 +1500,9 @@ static bool exceed_llc_capacity(struct mm_struct *mm, int cpu)
 	return false;
 }
 
-static bool invalid_llc_nr(struct mm_struct *mm, struct task_struct *p,
+static bool invalid_llc_nr(struct sched_cache_group *grp, struct task_struct *p,
 			   int cpu)
 {
-	struct sched_cache_group *grp;
 	int scale;
 
 	if (get_nr_threads(p) <= 1)
@@ -1522,12 +1516,30 @@ static bool invalid_llc_nr(struct mm_struct *mm, struct task_struct *p,
 	if (scale == INT_MAX)
 		return false;
 
-	grp = READ_ONCE(mm->sched_cache_grp);
-	if (!grp)
-		return true;
-
 	return !fits_capacity((READ_ONCE(grp->nr_running_avg) * cpu_smt_num_threads),
 			(scale * per_cpu(sd_llc_size, cpu)));
+}
+
+/*
+ * A task counts in nr_pref_llc_running while it is queued on its preferred
+ * LLC (pref_llc_queued) and runnable (!sched_delayed), keeping the counter in
+ * the runnable domain so alb_break_llc() can compare it with h_nr_runnable.
+ */
+static bool task_pref_llc_runnable(struct task_struct *p)
+{
+	return p->pref_llc_queued && !p->se.sched_delayed;
+}
+
+static void pref_llc_running_inc(struct rq *rq, struct task_struct *p)
+{
+	if (task_pref_llc_runnable(p))
+		rq->nr_pref_llc_running++;
+}
+
+static void pref_llc_running_dec(struct rq *rq, struct task_struct *p)
+{
+	if (task_pref_llc_runnable(p))
+		rq->nr_pref_llc_running--;
 }
 
 static void account_llc_enqueue(struct rq *rq, struct task_struct *p)
@@ -1541,7 +1553,6 @@ static void account_llc_enqueue(struct rq *rq, struct task_struct *p)
 
 	pref_llc_queued = (pref_llc == task_llc(p));
 	rq->nr_llc_running++;
-	rq->nr_pref_llc_running += pref_llc_queued;
 
 	/*
 	 * Record whether p is enqueued on its preferred
@@ -1559,6 +1570,9 @@ static void account_llc_enqueue(struct rq *rq, struct task_struct *p)
 	 */
 	p->pref_llc_queued = pref_llc_queued;
 
+	/* Skipped while delayed; clear_delayed() adds it back on wake. */
+	pref_llc_running_inc(rq, p);
+
 	sd = rcu_dereference_all(rq->sd);
 	if (sd && (unsigned int)pref_llc < sd->llc_max)
 		sd->llc_counts[pref_llc]++;
@@ -1575,7 +1589,12 @@ static void account_llc_dequeue(struct rq *rq, struct task_struct *p)
 
 	rq->nr_llc_running--;
 	if (p->pref_llc_queued) {
-		rq->nr_pref_llc_running--;
+		/*
+		 * Skipped if still delayed (set_delayed() already removed it);
+		 * clearing pref_llc_queued below also stops clear_delayed()
+		 * from re-adding it.
+		 */
+		pref_llc_running_dec(rq, p);
 		/*
 		 * Update the status in case
 		 * other logic might query
@@ -1668,6 +1687,96 @@ static void sched_cache_group_put(struct sched_cache_group *grp)
 	call_rcu(&grp->rcu, sched_cache_group_free_rcu);
 }
 
+DEFINE_FREE(sched_cache_group_put, struct sched_cache_group *,
+	    sched_cache_group_put(_T));
+
+#define rcu_deref_sched_cache_grp(tsk) \
+	rcu_dereference_check((tsk)->sched_cache_grp, (tsk) == current)
+
+static struct sched_cache_group *sched_cache_replace_grp(struct task_struct *p,
+							 struct sched_cache_group *new)
+{
+	struct sched_cache_group *old;
+
+	old = rcu_deref_sched_cache_grp(p);
+	rcu_assign_pointer(p->sched_cache_grp, new);
+
+	return old;
+}
+
+struct sched_cache_group *sched_cache_group_get(struct sched_cache_group *grp)
+{
+	/*
+	 * refcount_inc_not_zero() is the acquire primitive for lockless
+	 * (RCU) lookups; plain refcount_inc() would scribble the count if
+	 * it already reached zero. Return NULL in that case.
+	 */
+	if (grp && !refcount_inc_not_zero(&grp->refcnt))
+		grp = NULL;
+
+	return grp;
+}
+
+struct sched_cache_group *task_cache_group_get(struct task_struct *p)
+{
+	guard(rcu)();
+	return sched_cache_group_get(rcu_dereference(p->sched_cache_grp));
+}
+
+void sched_cache_fork(struct task_struct *p)
+{
+	/*
+	 * The child takes its own reference on the mm's cache group, separate
+	 * from the reference held by the mm. @p is not yet visible to readers,
+	 * so a plain initializing store is enough.
+	 */
+	RCU_INIT_POINTER(p->sched_cache_grp,
+			 sched_cache_group_get(p->mm->sched_cache_grp));
+}
+
+void sched_cache_fork_cleanup(struct task_struct *p)
+{
+	/*
+	 * A fork that fails after sched_cache_fork() never reaches exit_mm(),
+	 * so drop the reference here. @p never became visible, so there are no
+	 * concurrent readers and the reference we hold keeps the group alive.
+	 */
+	sched_cache_group_put(rcu_access_pointer(p->sched_cache_grp));
+	RCU_INIT_POINTER(p->sched_cache_grp, NULL);
+}
+
+void sched_cache_exec_mmap(struct task_struct *p, struct mm_struct *mm)
+{
+	struct sched_cache_group *old;
+
+	/*
+	 * Acquire the new reference before publishing the pointer, then drop
+	 * the old one. @p is current and the only writer of its own pointer.
+	 */
+	old = sched_cache_replace_grp(p, sched_cache_group_get(mm->sched_cache_grp));
+	sched_cache_group_put(old);
+}
+
+void sched_cache_exit_mm(struct task_struct *p)
+{
+	struct sched_cache_group *grp = sched_cache_replace_grp(p, NULL);
+
+#ifdef CONFIG_NUMA_BALANCING
+	/*
+	 * Subtract this task's footprint from the group before dropping the
+	 * reference, so the group footprint converges as its threads exit.
+	 * Unlocked for performance; clamp to avoid underflow.
+	 */
+	if (grp && p->total_numa_faults) {
+		unsigned long fp = READ_ONCE(grp->footprint);
+		unsigned long sub = min(fp, p->total_numa_faults);
+
+		WRITE_ONCE(grp->footprint, fp - sub);
+	}
+#endif
+	sched_cache_group_put(grp);
+}
+
 void mm_destroy_sched(struct mm_struct *mm)
 {
 	sched_cache_group_put(mm->sched_cache_grp);
@@ -1722,15 +1831,10 @@ static unsigned long fraction_mm_sched(struct rq *rq,
 	return div64_u64(NICE_0_LOAD * pcpu_sched->runtime, rq->cpu_runtime + 1);
 }
 
-static int get_pref_llc(struct task_struct *p, struct mm_struct *mm)
+static int get_pref_llc(struct task_struct *p, struct sched_cache_group *grp)
 {
 	int mm_sched_llc = -1, mm_sched_cpu;
-	struct sched_cache_group *grp;
 
-	if (!mm)
-		return -1;
-
-	grp = READ_ONCE(mm->sched_cache_grp);
 	if (!grp)
 		return -1;
 
@@ -1764,9 +1868,8 @@ static unsigned int task_running_on_cpu(int cpu, struct task_struct *p);
 static inline
 void account_mm_sched(struct rq *rq, struct task_struct *p, s64 delta_exec)
 {
+	struct sched_cache_group *grp = rcu_dereference_all(p->sched_cache_grp);
 	struct sched_cache_time *pcpu_sched;
-	struct sched_cache_group *grp;
-	struct mm_struct *mm = p->mm;
 	int mm_sched_llc = -1;
 	unsigned long epoch;
 
@@ -1777,13 +1880,15 @@ void account_mm_sched(struct rq *rq, struct task_struct *p, s64 delta_exec)
 		return;
 	/*
 	 * init_task, kthreads and user thread created
-	 * by user_mode_thread() don't have mm.
+	 * by user_mode_thread() don't have a cache group.
+	 * In theory a kernel thread does not have any valid
+	 * cache group, because sched_cache_fork() is not
+	 * invoked for a kernel thread - !grp should gate the
+	 * kernel thread. Use the PF_KTHREAD check explicitly
+	 * here for safety reasons, to guard against future
+	 * modifications and to pair with task_tick_cache().
 	 */
-	if (!mm)
-		return;
-
-	grp = READ_ONCE(mm->sched_cache_grp);
-	if (!grp || !grp->pcpu_sched)
+	if (p->flags & PF_KTHREAD || !grp || !grp->pcpu_sched)
 		return;
 
 	pcpu_sched = per_cpu_ptr(grp->pcpu_sched, cpu_of(rq));
@@ -1800,13 +1905,13 @@ void account_mm_sched(struct rq *rq, struct task_struct *p, s64 delta_exec)
 	 * its preferred state.
 	 */
 	if ((long)(epoch - READ_ONCE(grp->epoch)) > llc_epoch_affinity_timeout ||
-	    invalid_llc_nr(mm, p, cpu_of(rq)) ||
-	    exceed_llc_capacity(mm, cpu_of(rq))) {
+	    invalid_llc_nr(grp, p, cpu_of(rq)) ||
+	    exceed_llc_capacity(grp, cpu_of(rq))) {
 		if (READ_ONCE(grp->cpu) != -1)
 			WRITE_ONCE(grp->cpu, -1);
 	}
 
-	mm_sched_llc = get_pref_llc(p, mm);
+	mm_sched_llc = get_pref_llc(p, grp);
 
 	/* task not on rq accounted later in account_entity_enqueue() */
 	if (task_running_on_cpu(rq->cpu, p) &&
@@ -1819,19 +1924,15 @@ void account_mm_sched(struct rq *rq, struct task_struct *p, s64 delta_exec)
 
 static void task_tick_cache(struct rq *rq, struct task_struct *p)
 {
+	struct sched_cache_group *grp = rcu_dereference_all(p->sched_cache_grp);
 	struct callback_head *work = &p->cache_work;
-	struct sched_cache_group *grp;
-	struct mm_struct *mm = p->mm;
 	unsigned long epoch;
 
 	if (!sched_cache_enabled())
 		return;
 
-	if (!mm || p->flags & PF_KTHREAD)
-		return;
-
-	grp = READ_ONCE(mm->sched_cache_grp);
-	if (!grp || !grp->pcpu_sched)
+	if (!grp || p->flags & PF_KTHREAD ||
+	    !grp->pcpu_sched)
 		return;
 
 	epoch = rq->cpu_epoch;
@@ -1913,14 +2014,13 @@ static inline void update_avg_scale(u64 *avg, u64 sample)
 
 static void task_cache_work(struct callback_head *work)
 {
+	struct sched_cache_group *grp __free(sched_cache_group_put) = NULL;
+	cpumask_var_t cpus __free(free_cpumask_var) = CPUMASK_VAR_NULL;
 	int cpu, m_a_cpu = -1, nr_running = 0, curr_cpu;
 	unsigned long next_scan, now = jiffies;
 	struct task_struct *p = current, *cur;
 	unsigned long curr_m_a_occ = 0;
-	struct sched_cache_group *grp;
-	struct mm_struct *mm = p->mm;
 	unsigned long m_a_occ = 0;
-	cpumask_var_t cpus;
 
 	WARN_ON_ONCE(work != &p->cache_work);
 
@@ -1929,7 +2029,12 @@ static void task_cache_work(struct callback_head *work)
 	if (p->flags & PF_EXITING)
 		return;
 
-	grp = READ_ONCE(mm->sched_cache_grp);
+	/*
+	 * A reference makes sure grp is not released by others. The rcu
+	 * lock can not be held till after zalloc_cpumask_var() below,
+	 * because the latter might sleep.
+	 */
+	grp = task_cache_group_get(p);
 	if (!grp)
 		return;
 
@@ -1944,8 +2049,8 @@ static void task_cache_work(struct callback_head *work)
 		return;
 
 	curr_cpu = task_cpu(p);
-	if (invalid_llc_nr(mm, p, curr_cpu) ||
-	    exceed_llc_capacity(mm, curr_cpu)) {
+	if (invalid_llc_nr(grp, p, curr_cpu) ||
+	    exceed_llc_capacity(grp, curr_cpu)) {
 		if (READ_ONCE(grp->cpu) != -1)
 			WRITE_ONCE(grp->cpu, -1);
 
@@ -1978,9 +2083,13 @@ static void task_cache_work(struct callback_head *work)
 					m_cpu = i;
 				}
 
+				/*
+				 * rcu_access_pointer() is used because the
+				 * pointer is only compared, never dereferenced.
+				 */
 				cur = rcu_dereference_all(cpu_rq(i)->curr);
 				if (cur && !(cur->flags & (PF_EXITING | PF_KTHREAD)) &&
-				    cur->mm == mm)
+				    rcu_access_pointer(cur->sched_cache_grp) == grp)
 					nr_running++;
 			}
 
@@ -2026,7 +2135,6 @@ static void task_cache_work(struct callback_head *work)
 	}
 
 	update_avg_scale(&grp->nr_running_avg, nr_running);
-	free_cpumask_var(cpus);
 }
 
 void init_sched_mm(struct task_struct *p)
@@ -2036,10 +2144,18 @@ void init_sched_mm(struct task_struct *p)
 	init_task_work(work, task_cache_work);
 	work->next = work;
 	/*
+	 * dup_task_struct() copies the parent's task_struct, including its
+	 * sched_cache_grp, for which the child holds no reference.  Clear it
+	 * here - before copy_mm() runs - so the child never carries a
+	 * borrowed pointer that the fork error path would put.
+	 */
+	RCU_INIT_POINTER(p->sched_cache_grp, NULL);
+	/*
 	 * Reset new task's preference to avoid
 	 * polluting account_llc_enqueue().
 	 */
 	p->preferred_llc = -1;
+	p->pref_llc_queued = 0;
 }
 
 #else /* CONFIG_SCHED_CACHE */
@@ -2060,6 +2176,10 @@ static inline int get_pref_llc(struct task_struct *p,
 static void account_llc_enqueue(struct rq *rq, struct task_struct *p) {}
 
 static void account_llc_dequeue(struct rq *rq, struct task_struct *p) {}
+
+static void pref_llc_running_inc(struct rq *rq, struct task_struct *p) {}
+
+static void pref_llc_running_dec(struct rq *rq, struct task_struct *p) {}
 
 #endif /* CONFIG_SCHED_CACHE */
 
@@ -3824,10 +3944,9 @@ static void task_numa_placement(struct task_struct *p)
 			 * heuristic and occasional lost updates are tolerable.
 			 *
 			 * If a task exits, its corresponding footprint must
-			 * be subtracted from the mm->sched_cache_grp->footprint,
-			 * otherwise the mm->sched_cache_grp->footprint will not
-			 * converge: the exiting thread's footprint remains
-			 * unchanged/undecayed in mm->sched_cache_grp->footprint.
+			 * be subtracted from p->sched_cache_grp->footprint,
+			 * otherwise the footprint will not converge: the
+			 * exiting thread's footprint remains unchanged/undecayed.
 			 * See exit_mm().
 			 *
 			 * Lost updates and unsynchronized subtraction
@@ -3835,12 +3954,14 @@ static void task_numa_placement(struct task_struct *p)
 			 * go negative. Clamp to zero to prevent the
 			 * unsigned footprint from wrapping.
 			 */
-			grp = READ_ONCE(p->mm->sched_cache_grp);
-			if (!grp)
-				continue;
+			scoped_guard(rcu) {
+				grp = rcu_dereference(p->sched_cache_grp);
 
-			new_fp = (long)READ_ONCE(grp->footprint) + diff;
-			WRITE_ONCE(grp->footprint, max(new_fp, 0L));
+				if (grp) {
+					new_fp = (long)READ_ONCE(grp->footprint) + diff;
+					WRITE_ONCE(grp->footprint, max(new_fp, 0L));
+				}
+			}
 #endif
 		}
 
@@ -6291,15 +6412,27 @@ static __always_inline void return_cfs_rq_runtime(struct cfs_rq *cfs_rq);
 
 static void set_delayed(struct sched_entity *se)
 {
-	se->sched_delayed = 1;
-
 	/*
 	 * Delayed se of cfs_rq have no tasks queued on them.
 	 * Do not adjust h_nr_runnable since dequeue_entities()
 	 * will account it for blocked tasks.
+	 *
+	 * This check can be removed because when flat pick
+	 * patches get merged as only task can get delayed,
+	 * same for clear_delayed().
 	 */
-	if (!entity_is_task(se))
+	if (!entity_is_task(se)) {
+		se->sched_delayed = 1;
 		return;
+	}
+
+	/*
+	 * Drop a task leaving the runnable set.
+	 * Needs to be called before sched_delayed is set.
+	 * clear_delayed() mirrors this after clearing the flag.
+	 */
+	pref_llc_running_dec(rq_of(cfs_rq_of(se)), task_of(se));
+	se->sched_delayed = 1;
 
 	for_each_sched_entity(se) {
 		struct cfs_rq *cfs_rq = cfs_rq_of(se);
@@ -6320,6 +6453,13 @@ static void clear_delayed(struct sched_entity *se)
 	 */
 	if (!entity_is_task(se))
 		return;
+
+	/*
+	 * Re-add on wake, after sched_delayed is cleared. On a final delayed
+	 * dequeue account_llc_dequeue() already cleared pref_llc_queued, so
+	 * this does nothing.
+	 */
+	pref_llc_running_inc(rq_of(cfs_rq_of(se)), task_of(se));
 
 	for_each_sched_entity(se) {
 		struct cfs_rq *cfs_rq = cfs_rq_of(se);
@@ -10355,6 +10495,7 @@ enum migration_type {
 #define LBF_SOME_PINNED	0x08
 #define LBF_ACTIVE_LB	0x10
 #define LBF_LLC_PINNED	0x20
+#define LBF_ACTIVE_LB_LLC	0x40
 
 struct lb_env {
 	struct sched_domain	*sd;
@@ -10664,23 +10805,41 @@ static enum llc_mig can_migrate_llc(int src_cpu, int dst_cpu,
 	return mig_llc;
 }
 
+static inline bool task_misfits_asym_cpu(struct lb_env *env, struct task_struct *p)
+{
+	/*
+	 * On asymmetric CPU capacity domains, do not let cache-aware
+	 * balancing pull the task onto a destination CPU that cannot
+	 * accommodate it. Doing so would turn the task into a misfit on
+	 * the destination, trading a cache-locality gain for a capacity
+	 * loss. If the task already does not fit its source CPU, the move
+	 * cannot make things worse, so let the LLC preference decide.
+	 */
+	if ((env->sd->flags & SD_ASYM_CPUCAPACITY) && p &&
+	    !task_fits_cpu(p, env->dst_cpu) &&
+	    task_fits_cpu(p, env->src_cpu))
+		return true;
+
+	return false;
+}
+
 /*
  * Check if task p can migrate from source LLC to
  * destination LLC in terms of cache aware load balance.
  */
-static enum llc_mig can_migrate_llc_task(int src_cpu, int dst_cpu,
+static enum llc_mig can_migrate_llc_task(struct lb_env *env,
 					 struct task_struct *p)
 {
 	struct sched_cache_group *grp;
-	struct mm_struct *mm;
 	bool to_pref;
-	int cpu;
+	int cpu, src_cpu, dst_cpu;
 
-	mm = p->mm;
-	if (!mm)
-		return mig_unrestricted;
+	if (task_misfits_asym_cpu(env, p))
+		return mig_forbid;
 
-	grp = READ_ONCE(mm->sched_cache_grp);
+	src_cpu = env->src_cpu;
+	dst_cpu = env->dst_cpu;
+	grp = rcu_dereference_all(p->sched_cache_grp);
 	if (!grp)
 		return mig_unrestricted;
 
@@ -10689,8 +10848,8 @@ static enum llc_mig can_migrate_llc_task(int src_cpu, int dst_cpu,
 		return mig_unrestricted;
 
 	/* skip cache aware load balance for too many threads */
-	if (invalid_llc_nr(mm, p, dst_cpu) ||
-	    exceed_llc_capacity(mm, dst_cpu)) {
+	if (invalid_llc_nr(grp, p, dst_cpu) ||
+	    exceed_llc_capacity(grp, dst_cpu)) {
 		if (READ_ONCE(grp->cpu) != -1)
 			WRITE_ONCE(grp->cpu, -1);
 		return mig_unrestricted;
@@ -10736,6 +10895,14 @@ alb_break_llc(struct lb_env *env)
 		unsigned long util = 0;
 		struct task_struct *cur;
 
+		/*
+		 * Migrating misfit tasks from current CPU
+		 * to CPU with a better fit.
+		 * Prioritize that over LLC preference.
+		 */
+		if (env->migration_type == migrate_misfit)
+			return false;
+
 		if (env->src_rq->nr_running <= 1)
 			return true;
 
@@ -10743,12 +10910,28 @@ alb_break_llc(struct lb_env *env)
 		if (cur && cur->sched_class == &fair_sched_class)
 			util = task_util(cur);
 
-		if (can_migrate_llc(env->src_cpu, env->dst_cpu,
+		if (task_misfits_asym_cpu(env, cur) ||
+		    can_migrate_llc(env->src_cpu, env->dst_cpu,
 				    util, false) == mig_forbid)
 			return true;
 	}
 
 	return false;
+}
+
+/*
+ * Returns true if p's preferred LLC does not match the destination CPU
+ * under migrate_llc_task semantics. Passive LB passes migrate_llc_task
+ * in env->migration_type, while active LB carries LBF_ACTIVE_LB_LLC in
+ * env->flags to avoid overwriting env->migration_type.
+ */
+static inline bool
+migrate_llc_task_wrong_dst(struct task_struct *p, struct lb_env *env)
+{
+	return sched_cache_enabled() &&
+	       (env->migration_type == migrate_llc_task ||
+		env->flags & LBF_ACTIVE_LB_LLC) &&
+	       READ_ONCE(p->preferred_llc) != llc_id(env->dst_cpu);
 }
 
 /*
@@ -10779,12 +10962,10 @@ static bool migrate_degrades_llc(struct task_struct *p, struct lb_env *env)
 	 * run on env->dst_cpu, skip the tasks do not prefer
 	 * env->dst_cpu, and find the one that prefers.
 	 */
-	if (env->migration_type == migrate_llc_task &&
-	    READ_ONCE(p->preferred_llc) != llc_id(env->dst_cpu))
+	if (migrate_llc_task_wrong_dst(p, env))
 		return true;
 
-	if (can_migrate_llc_task(env->src_cpu,
-				 env->dst_cpu, p) != mig_forbid)
+	if (can_migrate_llc_task(env, p) != mig_forbid)
 		return false;
 
 	return true;
@@ -10799,6 +10980,12 @@ static inline bool get_llc_stats(int cpu, unsigned long *util,
 
 static inline bool
 alb_break_llc(struct lb_env *env)
+{
+	return false;
+}
+
+static inline bool
+migrate_llc_task_wrong_dst(struct task_struct *p, struct lb_env *env)
 {
 	return false;
 }
@@ -10902,7 +11089,7 @@ int can_migrate_task(struct task_struct *p, struct lb_env *env)
 	 * 4) too many balance attempts have failed.
 	 */
 	if (env->flags & LBF_ACTIVE_LB)
-		return 1;
+		return !migrate_llc_task_wrong_dst(p, env);
 
 	degrades = migrate_degrades_locality(p, env);
 	if (!degrades) {
@@ -11845,6 +12032,15 @@ static inline bool llc_balance(struct lb_env *env, struct sg_lb_stats *sgs,
 		return false;
 
 	if (env->sd->flags & SD_SHARE_LLC)
+		return false;
+
+	/*
+	 * On asymmetric domains, group_misfit_task_load
+	 * should be prioritized to move tasks to CPU that fit them
+	 * over aggregating tasks to their preferred LLC.
+	 */
+	if ((env->sd->flags & SD_ASYM_CPUCAPACITY) &&
+	    sgs->group_misfit_task_load)
 		return false;
 
 	/*
@@ -13264,6 +13460,20 @@ static int need_active_balance(struct lb_env *env)
 }
 
 static int active_load_balance_cpu_stop(void *data);
+static int active_load_balance_llc_cpu_stop(void *data);
+
+/*
+ * migration_type is checked elsewhere to decide migration policy, so
+ * it shouldn't be repurposed just to flag an LLC-directed active
+ * balance across the stopper. Pick the callback here instead.
+ */
+static inline cpu_stop_fn_t alb_stop_fn(struct lb_env *env)
+{
+	if (env->migration_type == migrate_llc_task)
+		return active_load_balance_llc_cpu_stop;
+
+	return active_load_balance_cpu_stop;
+}
 
 static int should_we_balance(struct lb_env *env)
 {
@@ -13600,7 +13810,7 @@ more_balance:
 			raw_spin_rq_unlock_irqrestore(busiest, flags);
 			if (active_balance) {
 				stop_one_cpu_nowait(cpu_of(busiest),
-					active_load_balance_cpu_stop, busiest,
+					alb_stop_fn(&env), busiest,
 					&busiest->active_balance_work);
 			}
 			preempt_enable();
@@ -13711,7 +13921,7 @@ update_next_balance(struct sched_domain *sd, unsigned long *next_balance)
  * least 1 task to be running on each physical CPU where possible, and
  * avoids physical / logical imbalances.
  */
-static int active_load_balance_cpu_stop(void *data)
+static int __active_load_balance_cpu_stop(void *data, unsigned int lb_flags)
 {
 	struct rq *busiest_rq = data;
 	int busiest_cpu = cpu_of(busiest_rq);
@@ -13761,7 +13971,7 @@ static int active_load_balance_cpu_stop(void *data)
 			.src_cpu	= busiest_rq->cpu,
 			.src_rq		= busiest_rq,
 			.idle		= CPU_IDLE,
-			.flags		= LBF_ACTIVE_LB,
+			.flags		= LBF_ACTIVE_LB | lb_flags,
 		};
 
 		schedstat_inc(sd->alb_count);
@@ -13787,6 +13997,16 @@ out_unlock:
 	local_irq_enable();
 
 	return 0;
+}
+
+static int active_load_balance_cpu_stop(void *data)
+{
+	return __active_load_balance_cpu_stop(data, 0);
+}
+
+static int active_load_balance_llc_cpu_stop(void *data)
+{
+	return __active_load_balance_cpu_stop(data, LBF_ACTIVE_LB_LLC);
 }
 
 /*
