@@ -203,6 +203,19 @@ static inline bool acomp_is_async(struct crypto_acomp *tfm)
 	       CRYPTO_ALG_ASYNC;
 }
 
+/**
+ * acomp_can_use_stack_req() - check whether a transform can use stack requests
+ * @tfm: ACOMPRESS transform
+ *
+ * Return: true if @tfm completes synchronously and its request context fits
+ * in the storage reserved by ACOMP_REQUEST_ON_STACK(), false otherwise.
+ */
+static inline bool acomp_can_use_stack_req(struct crypto_acomp *tfm)
+{
+	return !acomp_is_async(tfm) &&
+	       crypto_acomp_reqsize(tfm) <= MAX_SYNC_COMP_REQSIZE;
+}
+
 static inline struct crypto_acomp *crypto_acomp_reqtfm(struct acomp_req *req)
 {
 	return __crypto_acomp_tfm(req->base.tfm);
