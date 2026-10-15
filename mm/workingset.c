@@ -188,6 +188,12 @@
 #define EVICTION_SHIFT_ANON	(EVICTION_SHIFT + SWAP_COUNT_SHIFT)
 #define EVICTION_MASK	(~0UL >> EVICTION_SHIFT)
 #define EVICTION_MASK_ANON	(~0UL >> EVICTION_SHIFT_ANON)
+/*
+ * LRU refs uses LRU_REFS_WIDTH + 2 bits, the 2 bits being PG_workingset
+ * and PG_referenced.  The lowest bit is recorded in the workingset field
+ * of the shadow entry (to reuse pack_shadow()).
+ */
+#define LRU_REFS_BITS ((LRU_REFS_WIDTH + 2) - 1)
 
 /*
  * Eviction timestamps need to be able to cover the full range of
@@ -242,13 +248,12 @@ static void *lru_gen_eviction(struct folio *folio)
 	int type = folio_is_file_lru(folio);
 	int delta = folio_nr_pages(folio);
 	int refs = folio_lru_refs(folio);
-	bool workingset = folio_test_workingset(folio);
-	int tier = lru_tier_from_refs(refs, workingset);
+	int tier = lru_tier_from_refs(refs);
 	struct mem_cgroup *memcg;
 	struct pglist_data *pgdat = folio_pgdat(folio);
 	unsigned short memcg_id;
 
-	BUILD_BUG_ON(LRU_GEN_WIDTH + LRU_REFS_WIDTH >
+	BUILD_BUG_ON(LRU_GEN_WIDTH + LRU_REFS_BITS >
 		     BITS_PER_LONG - max(EVICTION_SHIFT, EVICTION_SHIFT_ANON));
 
 	rcu_read_lock();
@@ -256,14 +261,14 @@ static void *lru_gen_eviction(struct folio *folio)
 	lruvec = mem_cgroup_lruvec(memcg, pgdat);
 	lrugen = &lruvec->lrugen;
 	min_seq = READ_ONCE(lrugen->min_seq[type]);
-	token = (min_seq << LRU_REFS_WIDTH) | max(refs - 1, 0);
+	token = (min_seq << LRU_REFS_BITS) | refs >> 1;
 
 	hist = lru_hist_from_seq(min_seq);
 	atomic_long_add(delta, &lrugen->evicted[hist][type][tier]);
 	memcg_id = mem_cgroup_private_id(memcg);
 	rcu_read_unlock();
 
-	return pack_shadow(memcg_id, pgdat, token, workingset, type);
+	return pack_shadow(memcg_id, pgdat, token, refs & 1, type);
 }
 
 /*
@@ -284,9 +289,9 @@ static bool lru_gen_test_recent(void *shadow, struct lruvec **lruvec,
 	*lruvec = mem_cgroup_lruvec(memcg, pgdat);
 
 	max_seq = READ_ONCE((*lruvec)->lrugen.max_seq);
-	max_seq &= (file ? EVICTION_MASK : EVICTION_MASK_ANON) >> LRU_REFS_WIDTH;
+	max_seq &= (file ? EVICTION_MASK : EVICTION_MASK_ANON) >> LRU_REFS_BITS;
 
-	return abs_diff(max_seq, *token >> LRU_REFS_WIDTH) < MAX_NR_GENS;
+	return abs_diff(max_seq, *token >> LRU_REFS_BITS) < MAX_NR_GENS;
 }
 
 static void lru_gen_refault(struct folio *folio, void *shadow)
@@ -314,22 +319,26 @@ static void lru_gen_refault(struct folio *folio, void *shadow)
 	lrugen = &lruvec->lrugen;
 
 	hist = lru_hist_from_seq(READ_ONCE(lrugen->min_seq[type]));
-	refs = (token & (BIT(LRU_REFS_WIDTH) - 1)) + 1;
-	tier = lru_tier_from_refs(refs, workingset);
+	refs = ((token & (BIT(LRU_REFS_BITS) - 1)) << 1) + workingset;
+	tier = lru_tier_from_refs(refs);
 
 	atomic_long_add(delta, &lrugen->refaulted[hist][type][tier]);
 
-	if (workingset) {
-		/*
-		 * see folio_add_lru(), where folio_set_active() is
-		 * called for workingset folios
-		 */
-		if (lru_gen_in_fault())
+	/*
+	 * Activate a fault-driven refault folio, which would have been
+	 * promoted had it stayed in memory.
+	 */
+	if (refs >= LRU_REFS_REFERENCED) {
+		if (lru_gen_in_fault()) {
+			folio_set_active(folio);
 			mod_lruvec_state(lruvec, WORKINGSET_ACTIVATE_BASE + type, delta);
-		folio_set_workingset(folio);
+		}
+		/* Refault is also promotion, cap the refs like folio_inc_lru_refs */
+		folio_set_lru_refs(folio, min(refs, LRU_REFS_PROTECTED));
+	}
+
+	if (refs >= LRU_REFS_WORKINGSET)
 		mod_lruvec_state(lruvec, WORKINGSET_RESTORE_BASE + type, delta);
-	} else
-		set_mask_bits(&folio->flags.f, LRU_REFS_MASK, (refs - 1UL) << LRU_REFS_PGOFF);
 unlock:
 	rcu_read_unlock();
 }

@@ -273,7 +273,6 @@ static void lru_activate(struct lruvec *lruvec, struct folio *folio)
 	if (folio_test_active(folio) || folio_test_unevictable(folio))
 		return;
 
-
 	lruvec_del_folio(lruvec, folio);
 	folio_set_active(folio);
 	lruvec_add_folio(lruvec, folio);
@@ -352,32 +351,6 @@ static void __lru_cache_activate_folio(struct folio *folio)
 
 #ifdef CONFIG_LRU_GEN
 
-static void lru_gen_inc_refs(struct folio *folio)
-{
-	unsigned long new_flags, old_flags = READ_ONCE(*folio_flags(folio, 0));
-	int refs;
-
-	if (folio_test_unevictable(folio))
-		return;
-
-	/* see the comment on LRU_REFS_FLAGS */
-	if (!folio_lru_refs(folio)) {
-		folio_set_lru_refs(folio, 1);
-		return;
-	}
-
-	do {
-		new_flags = old_flags;
-		refs = lru_get_refs_flags(old_flags);
-		if (refs == LRU_REFS_MAX) {
-			if (!folio_test_workingset(folio))
-				folio_set_workingset(folio);
-			return;
-		}
-		lru_set_refs_flags(&new_flags, refs + 1);
-	} while (!try_cmpxchg(folio_flags(folio, 0), &old_flags, new_flags));
-}
-
 static bool lru_gen_clear_refs(struct folio *folio)
 {
 	int gen = folio_lru_gen(folio);
@@ -388,7 +361,6 @@ static bool lru_gen_clear_refs(struct folio *folio)
 		return true;
 
 	folio_set_lru_refs(folio, 0);
-	folio_clear_workingset(folio);
 
 	rcu_read_lock();
 	seq = READ_ONCE(folio_lruvec(folio)->lrugen.min_seq[type]);
@@ -398,10 +370,6 @@ static bool lru_gen_clear_refs(struct folio *folio)
 }
 
 #else /* !CONFIG_LRU_GEN */
-
-static void lru_gen_inc_refs(struct folio *folio)
-{
-}
 
 static bool lru_gen_clear_refs(struct folio *folio)
 {
@@ -428,7 +396,8 @@ void folio_mark_accessed(struct folio *folio)
 	if (folio_test_dropbehind(folio))
 		return;
 	if (lru_gen_enabled()) {
-		lru_gen_inc_refs(folio);
+		if (!folio_test_unevictable(folio))
+			folio_inc_lru_refs(folio, 0);
 		return;
 	}
 
@@ -473,21 +442,6 @@ void folio_add_lru(struct folio *folio)
 	VM_BUG_ON_FOLIO(folio_test_active(folio) &&
 			folio_test_unevictable(folio), folio);
 	VM_BUG_ON_FOLIO(folio_test_lru(folio), folio);
-
-	/*
-	 * For refaulted workingset folios, set PG_active so they
-	 * can be added to active generations.
-	 * For prefaulted file folios, folio_mark_accessed() sets
-	 * PG_referenced so lru_gen_folio_seq() places them into
-	 * the second oldest generation.
-	 */
-	if (lru_gen_enabled() && !folio_test_unevictable(folio) &&
-	    lru_gen_in_fault() && !(current->flags & PF_MEMALLOC)) {
-		if (folio_test_workingset(folio))
-			folio_set_active(folio);
-		else if (!folio_test_referenced(folio))
-			folio_mark_accessed(folio);
-	}
 
 	folio_batch_add_and_move(folio, lru_add);
 }
