@@ -453,15 +453,15 @@ enum lruvec_flags {
  * least twice before handing this folio over to the eviction. The first check
  * clears the accessed bit from the initial fault; the second check makes sure
  * this folio hasn't been used since then. This process, AKA second chance,
- * requires a minimum of two generations, hence MIN_NR_GENS. And to maintain ABI
- * compatibility with the active/inactive LRU, e.g., /proc/vmstat, these two
- * generations are considered active; the rest of generations, if they exist,
- * are considered inactive. See lru_gen_is_active().
+ * requires a minimum of two generations, hence MIN_NR_GENS.
+ *
+ * Active/inactive is per-folio based on the referenced count;
+ * see the comment above MAX_NR_TIERS.
  *
  * PG_active is always cleared while a folio is on one of lrugen->folios[] so
- * that the sliding window needs not to worry about it. And it's set again when
- * a folio considered active is isolated for non-reclaiming purposes, e.g.,
- * migration. See lru_gen_add_folio() and lru_gen_del_folio().
+ * that the sliding window needs not to worry about it.  It is set on a
+ * fault-driven refault (see lru_gen_refault), or isolation (see
+ * lru_gen_del_folio).
  *
  * MAX_NR_GENS is set to 4 so that the multi-gen LRU can support twice the
  * number of categories of the active/inactive LRU when keeping track of
@@ -562,10 +562,14 @@ enum lruvec_flags {
  *
  * A folio's referenced count never goes backwards except upon gen
  * increase as described above, or when explicitly reset by
- * lru_gen_clear_refs().  Refault of a reclaimed folio restores
+ * folio_reset_lru_refs().  Refault of a reclaimed folio restores
  * its referenced count, capped at LRU_REFS_PROTECTED, which aligns with
  * promotion.  Page table refaults of previous workingset folios send
  * them to the latest gen, driving aging faster.
+ *
+ * For the active/inactive LRU ABI (/proc/vmstat), a folio is active
+ * if its referenced count reaches LRU_REFS_ACTIVATED.  The threshold
+ * currently set to LRU_REFS_PROTECTED, which is tier 2.
  *
  * MAX_NR_TIERS is set to 4 so that the multi-gen LRU can support twice
  * the number of categories of the active/inactive LRU.
@@ -581,6 +585,7 @@ enum lruvec_flags {
 #define LRU_REFS_REFERENCED	0x1
 #define LRU_REFS_WORKINGSET	0x2
 #define LRU_REFS_PROTECTED	0x3
+#define LRU_REFS_ACTIVATED	LRU_REFS_PROTECTED
 
 #ifndef __GENERATING_BOUNDS_H
 
@@ -689,6 +694,8 @@ struct lru_gen_mm_walk {
 	unsigned long seq;
 	/* the next address within an mm to scan */
 	unsigned long next_addr;
+	/* to batch activated pages */
+	int nr_activated[ANON_AND_FILE][MAX_NR_ZONES];
 	/* to batch promoted pages */
 	int nr_pages[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
 	/* to batch the mm stats */

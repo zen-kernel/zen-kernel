@@ -349,35 +349,6 @@ static void __lru_cache_activate_folio(struct folio *folio)
 	local_unlock(&cpu_fbatches.lock);
 }
 
-#ifdef CONFIG_LRU_GEN
-
-static bool lru_gen_clear_refs(struct folio *folio)
-{
-	int gen = folio_lru_gen(folio);
-	int type = folio_is_file_lru(folio);
-	unsigned long seq;
-
-	if (gen < 0)
-		return true;
-
-	folio_set_lru_refs(folio, 0);
-
-	rcu_read_lock();
-	seq = READ_ONCE(folio_lruvec(folio)->lrugen.min_seq[type]);
-	rcu_read_unlock();
-	/* whether can do without shuffling under the LRU lock */
-	return gen == lru_gen_from_seq(seq);
-}
-
-#else /* !CONFIG_LRU_GEN */
-
-static bool lru_gen_clear_refs(struct folio *folio)
-{
-	return false;
-}
-
-#endif /* CONFIG_LRU_GEN */
-
 /**
  * folio_mark_accessed - Mark a folio as having seen activity.
  * @folio: The folio to mark.
@@ -554,7 +525,7 @@ static void lru_lazyfree(struct lruvec *lruvec, struct folio *folio)
 	lruvec_del_folio(lruvec, folio);
 	folio_clear_active(folio);
 	if (lru_gen_enabled())
-		lru_gen_clear_refs(folio);
+		__folio_set_lru_refs(folio, 0);
 	else
 		folio_clear_referenced(folio);
 	/*
@@ -627,7 +598,7 @@ void deactivate_file_folio(struct folio *folio)
 	if (folio_test_unevictable(folio) || !folio_test_lru(folio))
 		return;
 
-	if (lru_gen_enabled() && lru_gen_clear_refs(folio))
+	if (lru_gen_enabled() && !folio_reset_lru_refs(folio))
 		return;
 
 	folio_batch_add_and_move(folio, lru_deactivate_file);
@@ -646,7 +617,7 @@ void folio_deactivate(struct folio *folio)
 	if (folio_test_unevictable(folio) || !folio_test_lru(folio))
 		return;
 
-	if (lru_gen_enabled() ? lru_gen_clear_refs(folio) : !folio_test_active(folio))
+	if (lru_gen_enabled() ? !folio_reset_lru_refs(folio) : !folio_test_active(folio))
 		return;
 
 	folio_batch_add_and_move(folio, lru_deactivate);
