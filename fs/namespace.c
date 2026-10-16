@@ -130,7 +130,6 @@ static void mnt_ns_release(struct mnt_namespace *ns)
 {
 	/* keep alive for {list,stat}mount() */
 	if (ns && refcount_dec_and_test(&ns->passive)) {
-		fsnotify_mntns_delete(ns);
 		put_user_ns(ns->user_ns);
 		kfree(ns);
 	}
@@ -249,16 +248,24 @@ void mnt_release_group_id(struct mount *mnt)
 	mnt->mnt_group_id = 0;
 }
 
-/*
- * vfsmount lock must be held for read
- */
-static inline void mnt_add_count(struct mount *mnt, int n)
+static inline void mnt_inc_count(struct mount *mnt)
 {
 #ifdef CONFIG_SMP
-	this_cpu_add(mnt->mnt_pcp->mnt_count, n);
+	this_cpu_inc(mnt->mnt_pcp->mnt_gets);
 #else
 	preempt_disable();
-	mnt->mnt_count += n;
+	mnt->mnt_count++;
+	preempt_enable();
+#endif
+}
+
+static inline void mnt_dec_count(struct mount *mnt)
+{
+#ifdef CONFIG_SMP
+	this_cpu_inc(mnt->mnt_pcp->mnt_puts);
+#else
+	preempt_disable();
+	mnt->mnt_count--;
 	preempt_enable();
 #endif
 }
@@ -269,14 +276,17 @@ static inline void mnt_add_count(struct mount *mnt, int n)
 int mnt_get_count(struct mount *mnt)
 {
 #ifdef CONFIG_SMP
-	int count = 0;
+	unsigned int gets = 0, puts = 0;
 	int cpu;
 
-	for_each_possible_cpu(cpu) {
-		count += per_cpu_ptr(mnt->mnt_pcp, cpu)->mnt_count;
-	}
+	/* puts first, so a put counted here has its get counted below */
+	for_each_possible_cpu(cpu)
+		puts += per_cpu_ptr(mnt->mnt_pcp, cpu)->mnt_puts;
+	smp_mb();	/* pairs with the smp_wmb() in mntput_no_expire() */
+	for_each_possible_cpu(cpu)
+		gets += per_cpu_ptr(mnt->mnt_pcp, cpu)->mnt_gets;
 
-	return count;
+	return gets - puts;
 #else
 	return mnt->mnt_count;
 #endif
@@ -305,7 +315,7 @@ static struct mount *alloc_vfsmnt(const char *name)
 		if (!mnt->mnt_pcp)
 			goto out_free_devname;
 
-		this_cpu_add(mnt->mnt_pcp->mnt_count, 1);
+		this_cpu_inc(mnt->mnt_pcp->mnt_gets);
 #else
 		mnt->mnt_count = 1;
 		mnt->mnt_writers = 0;
@@ -322,6 +332,9 @@ static struct mount *alloc_vfsmnt(const char *name)
 		INIT_HLIST_NODE(&mnt->mnt_mp_list);
 		INIT_HLIST_HEAD(&mnt->mnt_stuck_children);
 		INIT_HLIST_NODE(&mnt->mnt_ns_visible);
+#ifdef CONFIG_FSNOTIFY
+		INIT_LIST_HEAD(&mnt->to_notify);
+#endif
 		RB_CLEAR_NODE(&mnt->mnt_node);
 		mnt->mnt.mnt_idmap = &nop_mnt_idmap;
 	}
@@ -746,13 +759,13 @@ int __legitimize_mnt(struct vfsmount *bastard, unsigned seq)
 	if (bastard == NULL)
 		return 0;
 	mnt = real_mount(bastard);
-	mnt_add_count(mnt, 1);
-	smp_mb();		// see mntput_no_expire() and do_umount()
+	mnt_inc_count(mnt);
+	smp_mb();	/* see mntput_no_expire_slowpath() and do_umount() */
 	if (likely(!read_seqretry(&mount_lock, seq)))
 		return 0;
 	lock_mount_hash();
 	if (unlikely(bastard->mnt_flags & (MNT_SYNC_UMOUNT | MNT_DOOMED))) {
-		mnt_add_count(mnt, -1);
+		mnt_dec_count(mnt);
 		unlock_mount_hash();
 		return 1;
 	}
@@ -1058,7 +1071,10 @@ static void attach_mnt(struct mount *mnt, struct mount *parent,
 void mnt_change_mountpoint(struct mount *parent, struct mountpoint *mp, struct mount *mnt)
 {
 	struct mountpoint *old_mp = mnt->mnt_mp;
+	struct mount *old_parent = mnt->mnt_parent;
 
+	if (old_parent->overmount == mnt)
+		old_parent->overmount = NULL;
 	list_del_init(&mnt->mnt_child);
 	hlist_del_init(&mnt->mnt_mp_list);
 	hlist_del_init_rcu(&mnt->mnt_hash);
@@ -1254,6 +1270,7 @@ static struct mount *clone_mnt(struct mount *old, struct dentry *root,
 
 	mnt->mnt.mnt_flags = READ_ONCE(old->mnt.mnt_flags) &
 			     ~MNT_INTERNAL_FLAGS;
+	mnt->mnt_t_flags = old->mnt_t_flags & T_UNBINDABLE;
 
 	if (flag & (CL_SLAVE | CL_PRIVATE))
 		mnt->mnt_group_id = 0; /* not a peer of original */
@@ -1347,7 +1364,7 @@ static void noinline mntput_no_expire_slowpath(struct mount *mnt)
 	 * mount_lock, we'll see their refcount increment here.
 	 */
 	smp_mb();
-	mnt_add_count(mnt, -1);
+	mnt_dec_count(mnt);
 	count = mnt_get_count(mnt);
 	if (count != 0) {
 		WARN_ON(count < 0);
@@ -1404,7 +1421,8 @@ static void mntput_no_expire(struct mount *mnt)
 		 * non-NULL under rcu_read_lock(), the reference
 		 * we are dropping is not the final one.
 		 */
-		mnt_add_count(mnt, -1);
+		smp_wmb();	/* pairs with the smp_mb() in mnt_get_count() */
+		mnt_dec_count(mnt);
 		rcu_read_unlock();
 		return;
 	}
@@ -1426,7 +1444,7 @@ EXPORT_SYMBOL(mntput);
 struct vfsmount *mntget(struct vfsmount *mnt)
 {
 	if (mnt)
-		mnt_add_count(real_mount(mnt), 1);
+		mnt_inc_count(real_mount(mnt));
 	return mnt;
 }
 EXPORT_SYMBOL(mntget);
@@ -1783,6 +1801,8 @@ static void umount_tree(struct mount *mnt, enum umount_tree_flags how)
 
 	/* Gather the mounts to umount */
 	for (p = mnt; p; p = next_mnt(p, mnt)) {
+		/* A mount is unmounted once. */
+		VFS_WARN_ON_ONCE(p->mnt.mnt_flags & MNT_UMOUNT);
 		p->mnt.mnt_flags |= MNT_UMOUNT;
 		if (mnt_ns_attached(p))
 			move_from_ns(p);
@@ -1976,6 +1996,9 @@ out:
  * detach_mounts allows lazily unmounting those mounts instead of
  * leaking them.
  *
+ * The dentry is unhashed before the mounts go so that no lookup finds
+ * what they covered. The caller removes it for good afterwards.
+ *
  * The caller may hold dentry->d_inode->i_rwsem.
  */
 void __detach_mounts(struct dentry *dentry)
@@ -1989,6 +2012,8 @@ void __detach_mounts(struct dentry *dentry)
 	if (!lookup_mountpoint(dentry, &mp))
 		return;
 
+	/* the name goes first, what covered it goes second */
+	d_drop(dentry);
 	event++;
 	while (mp.node.next) {
 		mnt = hlist_entry(mp.node.next, struct mount, mnt_mp_list);
@@ -2345,6 +2370,18 @@ bool has_locked_children(struct mount *mnt, struct dentry *dentry)
 	return __has_locked_children(mnt, dentry);
 }
 
+/* locks: namespace_shared && pinned(mnt) || mount_locked_reader */
+static bool __has_children(struct mount *mnt, struct dentry *dentry)
+{
+	struct mount *child;
+
+	list_for_each_entry(child, &mnt->mnt_mounts, mnt_child) {
+		if (is_subdir(child->mnt_mountpoint, dentry))
+			return true;
+	}
+	return false;
+}
+
 /*
  * Check that there aren't references to earlier/same mount namespaces in the
  * specified subtree.  Such references can act as pins for mount namespaces
@@ -2564,11 +2601,11 @@ enum mnt_tree_flags_t {
 static int attach_recursive_mnt(struct mount *source_mnt,
 				const struct pinned_mountpoint *dest)
 {
-	struct user_namespace *user_ns = current->nsproxy->mnt_ns->user_ns;
 	struct mount *dest_mnt = dest->parent;
 	struct mountpoint *dest_mp = dest->mp;
 	HLIST_HEAD(tree_list);
 	struct mnt_namespace *ns = dest_mnt->mnt_ns;
+	struct user_namespace *user_ns = ns->user_ns;
 	struct pinned_mountpoint root = {};
 	struct mountpoint *shorter = NULL;
 	struct mount *child, *p;
@@ -2578,12 +2615,30 @@ static int attach_recursive_mnt(struct mount *source_mnt,
 	bool moving = mnt_has_parent(source_mnt);
 
 	/*
+	 * A caller in an unprivileged mount namespaces may trigger an
+	 * automount and propagate locked mounts into privileged mount
+	 * namespaces. Take ownership from the target mount namespace.
+	 * It's equivalent for everything but the automount case.
+	 *
+	 * Detached trees in anonymous mount namespaces by be handed
+	 * over via SCM_RIGHTS or inherited in other ways on purpose
+	 * the attaching task's mount namespace is authoritative, not
+	 * the creator of the detached tree.
+	 */
+	if (is_anon_ns(ns))
+		user_ns = current->nsproxy->mnt_ns->user_ns;
+	else
+		user_ns = ns->user_ns;
+
+	/*
 	 * Preallocate a mountpoint in case the new mounts need to be
 	 * mounted beneath mounts on the same mountpoint.
 	 */
-	for (top = source_mnt; unlikely(top->overmount); top = top->overmount) {
+	for (top = source_mnt; ; top = top->overmount) {
 		if (!shorter && is_mnt_ns_file(top->mnt.mnt_root))
 			shorter = top->mnt_mp;
+		if (likely(!top->overmount))
+			break;
 	}
 	err = get_mountpoint(top->mnt.mnt_root, &root);
 	if (err)
@@ -2654,15 +2709,17 @@ static int attach_recursive_mnt(struct mount *source_mnt,
 			/*
 			 * If @q was locked it was meant to hide
 			 * whatever was under it. Let @child take over
-			 * that job and lock it, then we can unlock @q.
-			 * That'll allow another namespace to shed @q
-			 * and reveal @child. Clearly, that mounter
-			 * consented to this by not severing the mount
-			 * relationship. Otherwise, what's the point.
+			 * that job and lock it. If @child is the mount
+			 * the caller placed we can then unlock @q:
+			 * nothing another namespace does removes it
+			 * again. A propagated copy goes away when the
+			 * mounter of the original unmounts it, so @q
+			 * keeps its lock.
 			 */
 			if (IS_MNT_LOCKED(q)) {
 				child->mnt.mnt_flags |= MNT_LOCKED;
-				q->mnt.mnt_flags &= ~MNT_LOCKED;
+				if (child == source_mnt)
+					q->mnt.mnt_flags &= ~MNT_LOCKED;
 			}
 			mnt_change_mountpoint(r, mp, q);
 		}
@@ -2986,6 +3043,13 @@ static struct mount *__do_loopback(const struct path *old_path,
 	if (!may_copy_tree(old_path))
 		return ERR_PTR(-EINVAL);
 
+	/* a pseudo dentry is freed without an RCU delay, no walk may find it */
+	if (old_path->dentry->d_flags & DCACHE_NORCU)
+		return ERR_PTR(-EINVAL);
+
+	if (recurse && !old->mnt_ns)
+		return ERR_PTR(-EINVAL);
+
 	if (!recurse && __has_locked_children(old, old_path->dentry))
 		return ERR_PTR(-EINVAL);
 
@@ -3025,7 +3089,11 @@ static int do_loopback(const struct path *path, const char *old_name,
 	if (IS_ERR(mnt))
 		return PTR_ERR(mnt);
 
-	err = graft_tree(mnt, &mp);
+	/* the copy may carry mount namespace files from below the source */
+	if (recurse && !check_for_nsfs_mounts(mnt))
+		err = -EINVAL;
+	else
+		err = graft_tree(mnt, &mp);
 	if (err) {
 		lock_mount_hash();
 		umount_tree(mnt, UMOUNT_SYNC);
@@ -3107,12 +3175,18 @@ static struct mnt_namespace *create_new_namespace(struct path *path,
 	struct mount *mnt;
 	unsigned int copy_flags = 0;
 	bool locked = false, recurse = flags & MOUNT_COPY_RECURSIVE;
+	bool foreign = user_ns != ns->user_ns;
 
 	if (unlikely(!d_can_lookup(path->dentry)))
 		return ERR_PTR(-ENOTDIR);
 
-	if (user_ns != ns->user_ns)
-		copy_flags |= CL_SLAVE;
+	/*
+	 * Without privileges over the mount namespace the copy is made from
+	 * nothing mounted below @path may be left out. It would reveal what
+	 * it covers. That's what unshare() gives such a caller as well.
+	 */
+	if (foreign)
+		copy_flags |= CL_SLAVE | CL_COPY_UNBINDABLE;
 
 	new_ns = alloc_mnt_ns(user_ns, false);
 	if (IS_ERR(new_ns))
@@ -3146,10 +3220,14 @@ static struct mnt_namespace *create_new_namespace(struct path *path,
 	/*
 	 * We don't emulate unshare()ing a mount namespace. We stick to
 	 * the restrictions of creating detached bind-mounts. It has a
-	 * lot saner and simpler semantics.
+	 * lot saner and simpler semantics. A caller without privileges
+	 * over the mount namespace can't leave out any child though.
 	 */
 	if (flags & MOUNT_COPY_NEW)
 		mnt = clone_mnt(real_mount(path->mnt), path->dentry, copy_flags);
+	else if (foreign && !recurse &&
+		 __has_children(real_mount(path->mnt), path->dentry))
+		mnt = ERR_PTR(-EINVAL);
 	else
 		mnt = __do_loopback(path, recurse, copy_flags);
 	scoped_guard(mount_writer) {
@@ -3166,7 +3244,7 @@ static struct mnt_namespace *create_new_namespace(struct path *path,
 		 * of the real rootfs we created.
 		 */
 		attach_mnt(mnt, new_ns_root, mp.mp);
-		if (user_ns != ns->user_ns)
+		if (foreign)
 			lock_mnt_tree(new_ns_root);
 	}
 
@@ -3464,7 +3542,7 @@ static int do_set_group(const struct path *from_path, const struct path *to_path
 		return -EINVAL;
 
 	/* Setting sharing groups is only allowed on private mounts */
-	if (IS_MNT_SHARED(to) || IS_MNT_SLAVE(to))
+	if (IS_MNT_SHARED(to) || IS_MNT_SLAVE(to) || IS_MNT_UNBINDABLE(to))
 		return -EINVAL;
 
 	/* From should not be private */
@@ -3736,7 +3814,7 @@ static int do_add_mount(struct mount *newmnt, const struct pinned_mountpoint *mp
 		if (!(mnt_flags & MNT_SHRINKABLE))
 			return -EINVAL;
 		/* ... and for those we'd better have mountpoint still alive */
-		if (!parent->mnt_ns)
+		if (!is_mounted(&parent->mnt))
 			return -EINVAL;
 	}
 
@@ -3946,6 +4024,8 @@ void mark_mounts_for_expiry(struct list_head *mounts)
 	list_for_each_entry_safe(mnt, next, mounts, mnt_expire) {
 		if (!is_mounted(&mnt->mnt))
 			continue;
+		/* lock_mnt_tree() leaves expirable mounts alone */
+		VFS_WARN_ON_ONCE(IS_MNT_LOCKED(mnt));
 		if (!xchg(&mnt->mnt_expiry_mark, 1) ||
 			propagate_mount_busy(mnt, 1))
 			continue;
@@ -3953,6 +4033,11 @@ void mark_mounts_for_expiry(struct list_head *mounts)
 	}
 	while (!list_empty(&graveyard)) {
 		mnt = list_first_entry(&graveyard, struct mount, mnt_expire);
+		/* an earlier umount_tree() may have moved a busy mount here */
+		if (propagate_mount_busy(mnt, 1)) {
+			list_move(&mnt->mnt_expire, mounts);
+			continue;
+		}
 		touch_mnt_namespace(mnt->mnt_ns);
 		umount_tree(mnt, UMOUNT_PROPAGATE|UMOUNT_SYNC);
 	}
@@ -3961,16 +4046,37 @@ void mark_mounts_for_expiry(struct list_head *mounts)
 EXPORT_SYMBOL_GPL(mark_mounts_for_expiry);
 
 /*
+ * Unmount @mnt if it's a shrinkable mount without children that nobody uses.
+ *
+ * mount_lock must be held for write
+ */
+static bool shrink_submount(struct mount *mnt)
+{
+	/* not the kernel's to remove either */
+	if (IS_MNT_LOCKED(mnt) || propagate_mount_busy(mnt, 1))
+		return false;
+	touch_mnt_namespace(mnt->mnt_ns);
+	umount_tree(mnt, UMOUNT_PROPAGATE|UMOUNT_SYNC);
+	return true;
+}
+
+/*
  * Ripoff of 'select_parent()'
  *
- * search the list of submounts for a given mountpoint, and move any
- * shrinkable submounts to the 'graveyard' list.
+ * unmount the shrinkable submounts of @parent that aren't busy, children
+ * before their parent, and say whether anything went
+ *
+ * The cursor into the children of @this_parent survives the umount of a
+ * child mount without child mounts. The mounts that get umounted together with
+ * it are located under receiving mounts of @this_parent and never under
+ * @this_parent itself. The one exception is @this_parent getting unmounted
+ * then the walk starts over.
  */
-static int select_submounts(struct mount *parent, struct list_head *graveyard)
+static bool __shrink_submounts(struct mount *parent)
 {
 	struct mount *this_parent = parent;
 	struct list_head *next;
-	int found = 0;
+	bool shrunk = false;
 
 repeat:
 	next = this_parent->mnt_mounts.next;
@@ -3989,42 +4095,45 @@ resume:
 			this_parent = mnt;
 			goto repeat;
 		}
-
-		if (!propagate_mount_busy(mnt, 1)) {
-			list_move_tail(&mnt->mnt_expire, graveyard);
-			found++;
-		}
+		if (!shrink_submount(mnt))
+			continue;
+		shrunk = true;
+		if (unlikely(this_parent->mnt.mnt_flags & MNT_UMOUNT))
+			return true;
 	}
 	/*
 	 * All done at this level ... ascend and resume the search
 	 */
 	if (this_parent != parent) {
-		next = this_parent->mnt_child.next;
-		this_parent = this_parent->mnt_parent;
+		struct mount *mnt = this_parent;
+
+		next = mnt->mnt_child.next;
+		this_parent = mnt->mnt_parent;
+		/* its children are gone, maybe it can go as well */
+		if (shrink_submount(mnt)) {
+			shrunk = true;
+			if (unlikely(this_parent->mnt.mnt_flags & MNT_UMOUNT))
+				return true;
+		}
 		goto resume;
 	}
-	return found;
+	return shrunk;
 }
 
 /*
- * process a list of expirable mountpoints with the intent of discarding any
- * submounts of a specific parent mountpoint
+ * unmount the shrinkable submounts of @mnt that aren't busy
+ *
+ * The busy check and the umount of a mount are adjacent. An umount can
+ * still empty or move a mount in a part of the tree that was walked
+ * already, so walk again until nothing goes.
  *
  * mount_lock must be held for write
  */
 static void shrink_submounts(struct mount *mnt)
 {
-	LIST_HEAD(graveyard);
-	struct mount *m;
-
-	/* extract submounts of 'mountpoint' from the expiration list */
-	while (select_submounts(mnt, &graveyard)) {
-		while (!list_empty(&graveyard)) {
-			m = list_first_entry(&graveyard, struct mount,
-						mnt_expire);
-			touch_mnt_namespace(m->mnt_ns);
-			umount_tree(m, UMOUNT_PROPAGATE|UMOUNT_SYNC);
-		}
+	for (;;) {
+		if (!__shrink_submounts(mnt))
+			break;
 	}
 }
 
@@ -4189,6 +4298,8 @@ static void free_mnt_ns(struct mnt_namespace *ns)
 	if (!is_anon_ns(ns))
 		ns_common_free(ns);
 	dec_mnt_namespaces(ns->ucounts);
+	/* the last active reference is gone, no mark can show up anymore */
+	fsnotify_mntns_delete(ns);
 	mnt_ns_tree_remove(ns);
 }
 
@@ -4690,13 +4801,14 @@ int path_pivot_root(struct path *new, struct path *old)
 
 	new_mnt = real_mount(new->mnt);
 	root_mnt = real_mount(root.mnt);
+	/* only a mounted mount has a parent that namespace_sem pins */
+	if (!check_mnt(root_mnt) || !check_mnt(new_mnt))
+		return -EINVAL;
 	ex_parent = new_mnt->mnt_parent;
 	root_parent = root_mnt->mnt_parent;
 	if (IS_MNT_SHARED(old_mnt) ||
 		IS_MNT_SHARED(ex_parent) ||
 		IS_MNT_SHARED(root_parent))
-		return -EINVAL;
-	if (!check_mnt(root_mnt) || !check_mnt(new_mnt))
 		return -EINVAL;
 	if (new_mnt->mnt.mnt_flags & MNT_LOCKED)
 		return -EINVAL;
@@ -4948,6 +5060,11 @@ static int do_mount_setattr(const struct path *path, struct mount_kattr *kattr)
 		 * propagation.
 		 */
 		namespace_lock();
+		/* invent_group_ids() walks the tree, only walk a mounted one */
+		if (!anon_ns_root(mnt) && !check_mnt(mnt)) {
+			namespace_unlock();
+			return -EINVAL;
+		}
 		if (kattr->propagation == MS_SHARED) {
 			err = invent_group_ids(mnt, kattr->kflags & MOUNT_KATTR_RECURSE);
 			if (err) {
@@ -4960,6 +5077,7 @@ static int do_mount_setattr(const struct path *path, struct mount_kattr *kattr)
 	err = -EINVAL;
 	lock_mount_hash();
 
+	/* Checked under namespace_sem already if the propagation changes. */
 	if (!anon_ns_root(mnt) && !check_mnt(mnt))
 		goto out;
 
@@ -5312,15 +5430,25 @@ static void statmount_sb_basic(struct kstatmount *s)
 	s->sm.sb_flags = sb->s_flags & (SB_RDONLY|SB_SYNCHRONOUS|SB_DIRSYNC|SB_LAZYTIME);
 }
 
+static void statmount_mnt_parent(struct kstatmount *s, const struct mount *m)
+{
+	s->sm.mnt_parent_id = m->mnt_parent->mnt_id_unique;
+	s->sm.mnt_parent_id_old = m->mnt_parent->mnt_id;
+}
+
 static void statmount_mnt_basic(struct kstatmount *s)
 {
 	struct mount *m = real_mount(s->mnt);
 
 	s->sm.mask |= STATMOUNT_MNT_BASIC;
 	s->sm.mnt_id = m->mnt_id_unique;
-	s->sm.mnt_parent_id = m->mnt_parent->mnt_id_unique;
 	s->sm.mnt_id_old = m->mnt_id;
-	s->sm.mnt_parent_id_old = m->mnt_parent->mnt_id;
+	/* An unmounted mount is cut loose from its parent under mount_lock alone. */
+	if (likely(is_mounted(s->mnt)))
+		statmount_mnt_parent(s, m);
+	else
+		scoped_guard(mount_locked_reader)
+			statmount_mnt_parent(s, m);
 	s->sm.mnt_attr = mnt_to_attr_flags(&m->mnt);
 	s->sm.mnt_propagation = mnt_to_propagation_flags(m);
 	s->sm.mnt_peer_group = m->mnt_group_id;
