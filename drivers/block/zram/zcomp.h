@@ -39,10 +39,15 @@ struct zcomp_ctx {
 	void *context;
 };
 
-struct zcomp_strm {
+struct zcomp_cstrm {
 	struct mutex lock;
 	/* compression buffer */
 	void *buffer;
+	struct zcomp_ctx ctx;
+};
+
+struct zcomp_dstrm {
+	struct mutex lock;
 	/* local copy of handle memory */
 	void *local_copy;
 	struct zcomp_ctx ctx;
@@ -62,8 +67,11 @@ struct zcomp_ops {
 	int (*decompress)(struct zcomp_params *params, struct zcomp_ctx *ctx,
 			  struct zcomp_req *req);
 
-	int (*create_ctx)(struct zcomp_params *params, struct zcomp_ctx *ctx);
-	void (*destroy_ctx)(struct zcomp_ctx *ctx);
+	int (*create_cctx)(struct zcomp_params *params, struct zcomp_ctx *ctx);
+	void (*destroy_cctx)(struct zcomp_ctx *ctx);
+
+	int (*create_dctx)(struct zcomp_params *params, struct zcomp_ctx *ctx);
+	void (*destroy_dctx)(struct zcomp_ctx *ctx);
 
 	int (*setup_params)(struct zcomp_params *params);
 	void (*release_params)(struct zcomp_params *params);
@@ -73,7 +81,8 @@ struct zcomp_ops {
 
 /* dynamic per-device compression frontend */
 struct zcomp {
-	struct zcomp_strm __percpu *stream;
+	struct zcomp_cstrm __percpu *cstream;
+	struct zcomp_dstrm __percpu *dstream;
 	const struct zcomp_ops *ops;
 	struct zcomp_params *params;
 	struct hlist_node node;
@@ -87,12 +96,15 @@ const char *zcomp_lookup_backend_name(const char *comp);
 struct zcomp *zcomp_create(const char *alg, struct zcomp_params *params);
 void zcomp_destroy(struct zcomp *comp);
 
-struct zcomp_strm *zcomp_stream_get(struct zcomp *comp);
-void zcomp_stream_put(struct zcomp_strm *zstrm);
+struct zcomp_cstrm *zcomp_cstrm_get(struct zcomp *comp);
+void zcomp_cstrm_put(struct zcomp_cstrm *zstrm);
 
-int zcomp_compress(struct zcomp *comp, struct zcomp_strm *zstrm,
+struct zcomp_dstrm *zcomp_dstrm_get(struct zcomp *comp);
+void zcomp_dstrm_put(struct zcomp_dstrm *zstrm);
+
+int zcomp_compress(struct zcomp *comp, struct zcomp_cstrm *zstrm,
 		   const void *src, unsigned int *dst_len);
-int zcomp_decompress(struct zcomp *comp, struct zcomp_strm *zstrm,
+int zcomp_decompress(struct zcomp *comp, struct zcomp_dstrm *zstrm,
 		     struct scatterlist *sg, unsigned int src_len, void *dst);
 
 #endif /* _ZCOMP_H_ */
