@@ -35,6 +35,7 @@ extern void sched_online_group(struct task_group *tg,
 			       struct task_group *parent);
 extern void sched_destroy_group(struct task_group *tg);
 extern void sched_release_group(struct task_group *tg);
+static inline void __sched_cgroup_mode_update(int mode) { }
 #endif /* CONFIG_CGROUP_SCHED */
 
 #define MIN_SCHED_NORMAL_PRIO	(32)
