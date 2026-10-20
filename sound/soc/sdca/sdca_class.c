@@ -181,8 +181,10 @@ static int class_sdw_probe(struct sdw_slave *sdw, const struct sdw_device_id *id
 	pm_runtime_get_noresume(dev);
 
 	ret = devm_pm_runtime_enable(dev);
-	if (ret)
+	if (ret) {
+		pm_runtime_put_sync(dev);
 		return ret;
+	}
 
 	queue_work(system_long_wq, &drv->boot_work);
 
