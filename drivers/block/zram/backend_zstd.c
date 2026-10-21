@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#define pr_fmt(fmt) "zram: zstd: " fmt
-
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
@@ -10,8 +8,10 @@
 #include "backend_zstd.h"
 
 struct zstd_ctx {
-	void *ctx;
-	void *mem;
+	zstd_cctx *cctx;
+	zstd_dctx *dctx;
+	void *cctx_mem;
+	void *dctx_mem;
 };
 
 struct zstd_params {
@@ -24,17 +24,10 @@ struct zstd_params {
 /*
  * For C/D dictionaries we need to provide zstd with zstd_custom_mem,
  * which zstd uses internally to allocate/free memory when needed.
- *
- * zstd allocations (C/D dictionaries and contexts) are large and
- * long-lived.  Don't use kvzalloc() for them: when enough physically
- * contiguous memory is available it serves them from kmalloc(), which
- * rounds them up to a power-of-two number of pages.
  */
 static void *zstd_custom_alloc(void *opaque, size_t size)
 {
-	if (size <= PAGE_SIZE)
-		return kzalloc(size, GFP_NOIO | __GFP_NOWARN);
-	return __vmalloc(size, GFP_NOIO | __GFP_NOWARN | __GFP_ZERO);
+	return kvzalloc(size, GFP_NOIO | __GFP_NOWARN);
 }
 
 static void zstd_custom_free(void *opaque, void *address)
@@ -76,9 +69,6 @@ static int zstd_setup_params(struct zcomp_params *params)
 	prm = zstd_get_cparams(params->level, PAGE_SIZE,
 			       params->dict_sz);
 
-	if (!params->dict || !params->dict_sz)
-		return 0;
-
 	zp->cdict = zstd_create_cdict_byreference(params->dict,
 						  params->dict_sz,
 						  prm,
@@ -95,10 +85,11 @@ static int zstd_setup_params(struct zcomp_params *params)
 	return 0;
 
 error:
+	zstd_release_params(params);
 	return -EINVAL;
 }
 
-static void zstd_destroy_cctx(struct zcomp_ctx *ctx)
+static void zstd_destroy(struct zcomp_ctx *ctx)
 {
 	struct zstd_ctx *zctx = ctx->context;
 
@@ -106,23 +97,30 @@ static void zstd_destroy_cctx(struct zcomp_ctx *ctx)
 		return;
 
 	/*
-	 * If ->mem was allocated then we didn't use C/D dictionary and
-	 * ->ctx was "embedded" into this buffer.
+	 * If ->cctx_mem and ->dctx_mem were allocated then we didn't use
+	 * C/D dictionary and ->cctx / ->dctx were "embedded" into these
+	 * buffers.
 	 *
-	 * If otherwise then we need to explicitly release ->ctx.
+	 * If otherwise then we need to explicitly release ->cctx / ->dctx.
 	 */
-	if (zctx->mem)
-		vfree(zctx->mem);
+	if (zctx->cctx_mem)
+		vfree(zctx->cctx_mem);
 	else
-		zstd_free_cctx(zctx->ctx);
+		zstd_free_cctx(zctx->cctx);
+
+	if (zctx->dctx_mem)
+		vfree(zctx->dctx_mem);
+	else
+		zstd_free_dctx(zctx->dctx);
 
 	kfree(zctx);
 }
 
-static int zstd_create_cctx(struct zcomp_params *params, struct zcomp_ctx *ctx)
+static int zstd_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
 {
-	struct zstd_params *zp = params->drv_data;
 	struct zstd_ctx *zctx;
+	zstd_parameters prm;
+	size_t sz;
 
 	zctx = kzalloc_obj(*zctx);
 	if (!zctx)
@@ -130,74 +128,41 @@ static int zstd_create_cctx(struct zcomp_params *params, struct zcomp_ctx *ctx)
 
 	ctx->context = zctx;
 	if (params->dict_sz == 0) {
-		zstd_parameters prm = zp->cprm;
-		size_t sz = zstd_cctx_workspace_bound(&prm.cParams);
-
-		zctx->mem = vzalloc(sz);
-		if (!zctx->mem)
+		prm = zstd_get_params(params->level, PAGE_SIZE);
+		sz = zstd_cctx_workspace_bound(&prm.cParams);
+		zctx->cctx_mem = vzalloc(sz);
+		if (!zctx->cctx_mem)
 			goto error;
 
-		zctx->ctx = zstd_init_cctx(zctx->mem, sz);
-		if (!zctx->ctx)
+		zctx->cctx = zstd_init_cctx(zctx->cctx_mem, sz);
+		if (!zctx->cctx)
+			goto error;
+
+		sz = zstd_dctx_workspace_bound();
+		zctx->dctx_mem = vzalloc(sz);
+		if (!zctx->dctx_mem)
+			goto error;
+
+		zctx->dctx = zstd_init_dctx(zctx->dctx_mem, sz);
+		if (!zctx->dctx)
 			goto error;
 	} else {
-		zctx->ctx = zstd_create_cctx_advanced(zp->custom_mem);
-		if (!zctx->ctx)
+		struct zstd_params *zp = params->drv_data;
+
+		zctx->cctx = zstd_create_cctx_advanced(zp->custom_mem);
+		if (!zctx->cctx)
+			goto error;
+
+		zctx->dctx = zstd_create_dctx_advanced(zp->custom_mem);
+		if (!zctx->dctx)
 			goto error;
 	}
 
 	return 0;
 
 error:
-	zstd_destroy_cctx(ctx);
-	return -EINVAL;
-}
-
-static void zstd_destroy_dctx(struct zcomp_ctx *ctx)
-{
-	struct zstd_ctx *zctx = ctx->context;
-
-	if (!zctx)
-		return;
-
-	if (zctx->mem)
-		vfree(zctx->mem);
-	else
-		zstd_free_dctx(zctx->ctx);
-
-	kfree(zctx);
-}
-
-static int zstd_create_dctx(struct zcomp_params *params, struct zcomp_ctx *ctx)
-{
-	struct zstd_params *zp = params->drv_data;
-	struct zstd_ctx *zctx;
-
-	zctx = kzalloc_obj(*zctx);
-	if (!zctx)
-		return -ENOMEM;
-
-	ctx->context = zctx;
-	if (params->dict_sz == 0) {
-		size_t sz = zstd_dctx_workspace_bound();
-
-		zctx->mem = vzalloc(sz);
-		if (!zctx->mem)
-			goto error;
-
-		zctx->ctx = zstd_init_dctx(zctx->mem, sz);
-		if (!zctx->ctx)
-			goto error;
-	} else {
-		zctx->ctx = zstd_create_dctx_advanced(zp->custom_mem);
-		if (!zctx->ctx)
-			goto error;
-	}
-
-	return 0;
-
-error:
-	zstd_destroy_dctx(ctx);
+	zstd_release_params(params);
+	zstd_destroy(ctx);
 	return -EINVAL;
 }
 
@@ -209,10 +174,10 @@ static int zstd_compress(struct zcomp_params *params, struct zcomp_ctx *ctx,
 	size_t ret;
 
 	if (params->dict_sz == 0)
-		ret = zstd_compress_cctx(zctx->ctx, req->dst, req->dst_len,
+		ret = zstd_compress_cctx(zctx->cctx, req->dst, req->dst_len,
 					 req->src, req->src_len, &zp->cprm);
 	else
-		ret = zstd_compress_using_cdict(zctx->ctx, req->dst,
+		ret = zstd_compress_using_cdict(zctx->cctx, req->dst,
 						req->dst_len, req->src,
 						req->src_len,
 						zp->cdict);
@@ -230,10 +195,10 @@ static int zstd_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx,
 	size_t ret;
 
 	if (params->dict_sz == 0)
-		ret = zstd_decompress_dctx(zctx->ctx, req->dst, req->dst_len,
+		ret = zstd_decompress_dctx(zctx->dctx, req->dst, req->dst_len,
 					   req->src, req->src_len);
 	else
-		ret = zstd_decompress_using_ddict(zctx->ctx, req->dst,
+		ret = zstd_decompress_using_ddict(zctx->dctx, req->dst,
 						  req->dst_len, req->src,
 						  req->src_len, zp->ddict);
 	if (zstd_is_error(ret))
@@ -244,10 +209,8 @@ static int zstd_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx,
 const struct zcomp_ops backend_zstd = {
 	.compress	= zstd_compress,
 	.decompress	= zstd_decompress,
-	.create_cctx	= zstd_create_cctx,
-	.destroy_cctx	= zstd_destroy_cctx,
-	.create_dctx	= zstd_create_dctx,
-	.destroy_dctx	= zstd_destroy_dctx,
+	.create_ctx	= zstd_create,
+	.destroy_ctx	= zstd_destroy,
 	.setup_params	= zstd_setup_params,
 	.release_params	= zstd_release_params,
 	.name		= "zstd",

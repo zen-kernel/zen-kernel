@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#define pr_fmt(fmt) "zram: deflate: " fmt
-
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
@@ -12,6 +10,11 @@
 /* Use the same value as crypto API */
 #define DEFLATE_DEF_WINBITS		(-11)
 #define DEFLATE_DEF_MEMLEVEL		MAX_MEM_LEVEL
+
+struct deflate_ctx {
+	struct z_stream_s cctx;
+	struct z_stream_s dctx;
+};
 
 static void deflate_release_params(struct zcomp_params *params)
 {
@@ -27,7 +30,7 @@ static int deflate_setup_params(struct zcomp_params *params)
 		s32 wb = params->deflate.winbits;
 
 		if ((wb < -15 || wb > -9) && (wb < 9 || wb > 15)) {
-			pr_err("invalid winbits %d\n", wb);
+			pr_err("invalid deflate winbits: %d\n", wb);
 			return -EINVAL;
 		}
 	}
@@ -35,98 +38,70 @@ static int deflate_setup_params(struct zcomp_params *params)
 	return 0;
 }
 
-static void deflate_destroy_cctx(struct zcomp_ctx *ctx)
+static void deflate_destroy(struct zcomp_ctx *ctx)
 {
-	struct z_stream_s *cctx = ctx->context;
+	struct deflate_ctx *zctx = ctx->context;
 
-	if (!cctx)
+	if (!zctx)
 		return;
 
-	if (cctx->workspace) {
-		zlib_deflateEnd(cctx);
-		vfree(cctx->workspace);
+	if (zctx->cctx.workspace) {
+		zlib_deflateEnd(&zctx->cctx);
+		vfree(zctx->cctx.workspace);
 	}
-	kfree(cctx);
+	if (zctx->dctx.workspace) {
+		zlib_inflateEnd(&zctx->dctx);
+		vfree(zctx->dctx.workspace);
+	}
+	kfree(zctx);
 }
 
-static int deflate_create_cctx(struct zcomp_params *params,
-			       struct zcomp_ctx *ctx)
+static int deflate_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
 {
-	struct z_stream_s *cctx;
+	struct deflate_ctx *zctx;
 	size_t sz;
 	int ret;
 
-	cctx = kzalloc_obj(*cctx);
-	if (!cctx)
+	zctx = kzalloc_obj(*zctx);
+	if (!zctx)
 		return -ENOMEM;
 
-	ctx->context = cctx;
+	ctx->context = zctx;
 	sz = zlib_deflate_workspacesize(params->deflate.winbits, MAX_MEM_LEVEL);
-	cctx->workspace = vzalloc(sz);
-	if (!cctx->workspace)
+	zctx->cctx.workspace = vzalloc(sz);
+	if (!zctx->cctx.workspace)
 		goto error;
 
-	ret = zlib_deflateInit2(cctx, params->level, Z_DEFLATED,
+	ret = zlib_deflateInit2(&zctx->cctx, params->level, Z_DEFLATED,
 				params->deflate.winbits, DEFLATE_DEF_MEMLEVEL,
 				Z_DEFAULT_STRATEGY);
 	if (ret != Z_OK)
 		goto error;
 
-	return 0;
-
-error:
-	deflate_destroy_cctx(ctx);
-	return -EINVAL;
-}
-
-static void deflate_destroy_dctx(struct zcomp_ctx *ctx)
-{
-	struct z_stream_s *dctx = ctx->context;
-
-	if (!dctx)
-		return;
-
-	if (dctx->workspace) {
-		zlib_inflateEnd(dctx);
-		vfree(dctx->workspace);
-	}
-	kfree(dctx);
-}
-
-static int deflate_create_dctx(struct zcomp_params *params,
-			       struct zcomp_ctx *ctx)
-{
-	struct z_stream_s *dctx;
-	size_t sz;
-	int ret;
-
-	dctx = kzalloc_obj(*dctx);
-	if (!dctx)
-		return -ENOMEM;
-
-	ctx->context = dctx;
 	sz = zlib_inflate_workspacesize();
-	dctx->workspace = vzalloc(sz);
-	if (!dctx->workspace)
+	zctx->dctx.workspace = vzalloc(sz);
+	if (!zctx->dctx.workspace)
 		goto error;
 
-	ret = zlib_inflateInit2(dctx, params->deflate.winbits);
+	ret = zlib_inflateInit2(&zctx->dctx, params->deflate.winbits);
 	if (ret != Z_OK)
 		goto error;
 
 	return 0;
 
 error:
-	deflate_destroy_dctx(ctx);
+	deflate_destroy(ctx);
 	return -EINVAL;
 }
 
 static int deflate_compress(struct zcomp_params *params, struct zcomp_ctx *ctx,
 			    struct zcomp_req *req)
 {
-	struct z_stream_s *deflate = ctx->context;
+	struct deflate_ctx *zctx = ctx->context;
+	struct z_stream_s *deflate;
 	int ret;
 
+	deflate = &zctx->cctx;
 	ret = zlib_deflateReset(deflate);
 	if (ret != Z_OK)
 		return -EINVAL;
@@ -148,8 +123,11 @@ static int deflate_decompress(struct zcomp_params *params,
 			      struct zcomp_ctx *ctx,
 			      struct zcomp_req *req)
 {
-	struct z_stream_s *inflate = ctx->context;
+	struct deflate_ctx *zctx = ctx->context;
+	struct z_stream_s *inflate;
 	int ret;
+
+	inflate = &zctx->dctx;
 
 	ret = zlib_inflateReset(inflate);
 	if (ret != Z_OK)
@@ -170,10 +148,8 @@ static int deflate_decompress(struct zcomp_params *params,
 const struct zcomp_ops backend_deflate = {
 	.compress	= deflate_compress,
 	.decompress	= deflate_decompress,
-	.create_cctx	= deflate_create_cctx,
-	.destroy_cctx	= deflate_destroy_cctx,
-	.create_dctx	= deflate_create_dctx,
-	.destroy_dctx	= deflate_destroy_dctx,
+	.create_ctx	= deflate_create,
+	.destroy_ctx	= deflate_destroy,
 	.setup_params	= deflate_setup_params,
 	.release_params	= deflate_release_params,
 	.name		= "deflate",
