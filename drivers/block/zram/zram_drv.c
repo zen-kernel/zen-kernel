@@ -2202,10 +2202,6 @@ static int zram_read_page(struct zram *zram, struct page *page,
 		ret = read_from_bdev(zram, page, index, blk_idx, parent);
 	}
 
-	/* Should NEVER happen. Return bio error if it does. */
-	if (WARN_ON(ret < 0))
-		pr_err("Decompression failed! err=%d, page=%lu\n", ret, index);
-
 	return ret;
 }
 
