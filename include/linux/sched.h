@@ -891,6 +891,10 @@ struct task_struct {
 #ifdef CONFIG_SCHED_PDS
 	u64				deadline;
 	u64				sleep_credit;
+	u64				wake_sched_time;
+	u64				wake_period;
+	u64				credit_wake;
+	u64				credit_sched_time;
 #endif /* CONFIG_SCHED_PDS */
 	/* sched_clock time spent running */
 	u64				sched_time;

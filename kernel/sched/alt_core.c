@@ -105,9 +105,6 @@ unsigned int sysctl_sched_base_slice __read_mostly	= (4 << 20);
 #include "alt_core.h"
 #include "alt_topology.h"
 
-/* Reschedule if less than this many μs left */
-#define RESCHED_NS		(100 << 10)
-
 /**
  * sched_yield_type - Type of sched_yield() will be performed.
  * 0: No yield.
@@ -228,14 +225,14 @@ static inline void update_sched_preempt_mask(struct rq *rq)
 	int high = set ? prio : last_prio;
 
 	if (IDLE_TASK_SCHED_PRIO == high) {
-		high -= 2;
+		high -= 1;
 		if (set)
 			sched_set_idle_mask(cpu);
 		else
 			sched_clear_idle_mask(cpu);
 	}
 	int pr = atomic_read(&sched_prio_record);
-	if (low < pr && pr <= high) {
+	if (low <= pr && pr < high) {
 		if (set)
 			cpumask_set_cpu(cpu, sched_preempt_mask + pr);
 		else
@@ -2144,10 +2141,17 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 		} while (!cpumask_empty(&mask));
 	}
 
-	if (preempt_mask_check(&mask, &allow_mask, task_sched_prio(p)))
-		new_cpu = best_mask_cpu(prev_cpu, &mask);
-	else
-		new_cpu = best_mask_cpu(prev_cpu, &allow_mask);
+	int prio = task_sched_prio(p);
+
+	if (preempt_mask_check(&mask, &allow_mask, prio)) {
+		do {
+			new_cpu = best_mask_cpu(prev_cpu, &mask);
+			if (prio < cpu_rq(new_cpu)->prio)
+				goto out;
+			__cpumask_clear_cpu(new_cpu, &mask);
+		} while (!cpumask_empty(&mask));
+	}
+	new_cpu = best_mask_cpu(prev_cpu, &allow_mask);
 
 out:
 	if (unlikely(!is_cpu_allowed(p, new_cpu)))

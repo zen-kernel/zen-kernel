@@ -287,6 +287,9 @@ static inline bool is_migration_disabled(struct task_struct *p)
 
 extern unsigned int sysctl_sched_base_slice;
 
+/* Reschedule if less than this many μs left */
+#define RESCHED_NS		(100 << 10)
+
 extern unsigned long rq_load_util(struct rq *rq, unsigned long max);
 
 extern unsigned long calc_load_update;
