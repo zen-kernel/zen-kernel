@@ -104,9 +104,6 @@ unsigned int sysctl_sched_base_slice __read_mostly	= (4 << 20);
 #include "alt_core.h"
 #include "alt_topology.h"
 
-/* Reschedule if less than this many μs left */
-#define RESCHED_NS		(100 << 10)
-
 /**
  * sched_yield_type - Type of sched_yield() will be performed.
  * 0: No yield.

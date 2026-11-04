@@ -135,10 +135,16 @@ static inline void sched_task_deadline_reset(struct task_struct *p, const struct
 		p->deadline = rq->time_edge + SCHED_EDGE_DELTA + SCHED_NICE_DELTA(p);
 }
 
+static inline bool sched_task_used_slice(const struct task_struct *p)
+{
+	return p->sched_time - p->wake_sched_time >=
+		2 * (sysctl_sched_base_slice - RESCHED_NS);
+}
+
 static inline void sched_task_renew(struct task_struct *p, const struct rq *rq)
 {
 	if (p->prio >= MIN_NORMAL_PRIO) {
-		u64 cap = normal_policy(p->policy) ?
+		u64 cap = (normal_policy(p->policy) && !sched_task_used_slice(p)) ?
 			max(SCHED_NICE_DELTA(p) - (NICE_WIDTH / 8 + 1), 0) : 0;
 
 		if (p->sleep_credit > cap)
@@ -159,6 +165,7 @@ static inline void sched_task_sanity_check(struct task_struct *p, struct rq *rq)
 
 static inline void sched_task_fork(struct task_struct *p, struct rq *rq)
 {
+	p->wake_sched_time = 0;
 	sched_task_deadline_reset(p, rq);
 }
 
@@ -177,6 +184,13 @@ static inline void sched_task_ttwu(struct task_struct *p)
 	s64 delta = now - p->sleep_start;
 	s64 credit;
 	u64 boost;
+	bool used_slice = sched_task_used_slice(p);
+
+	p->wake_sched_time = p->sched_time;
+	if (used_slice) {
+		p->deadline += p->sleep_credit;
+		p->sleep_credit = 0;
+	}
 
 	if (p->prio < MIN_NORMAL_PRIO || !normal_policy(p->policy) ||
 	    delta < (1LL << (sched_boost_shift - 2)))
@@ -186,7 +200,7 @@ static inline void sched_task_ttwu(struct task_struct *p)
 		      max_t(u64, 1, (u64)delta >> sched_boost_shift));
 	credit = SCHED_NICE_DELTA(p) - max_t(s64, NICE_WIDTH / 8 + 1,
 					     SCHED_NICE_DELTA(p) - (s64)boost);
-	credit = max_t(s64, credit, 0);
+	credit = used_slice ? 0 : max_t(s64, credit, 0);
 
 	p->deadline = min(p->deadline, (now >> sched_timeslice_shift) + SCHED_EDGE_DELTA +
 				       SCHED_NICE_DELTA(p) - credit);
