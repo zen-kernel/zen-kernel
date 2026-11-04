@@ -2141,10 +2141,17 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 		} while (!cpumask_empty(&mask));
 	}
 
-	if (preempt_mask_check(&mask, &allow_mask, task_sched_prio(p)))
-		new_cpu = best_mask_cpu(prev_cpu, &mask);
-	else
-		new_cpu = best_mask_cpu(prev_cpu, &allow_mask);
+	int prio = task_sched_prio(p);
+
+	if (preempt_mask_check(&mask, &allow_mask, prio)) {
+		do {
+			new_cpu = best_mask_cpu(prev_cpu, &mask);
+			if (prio < cpu_rq(new_cpu)->prio)
+				goto out;
+			__cpumask_clear_cpu(new_cpu, &mask);
+		} while (!cpumask_empty(&mask));
+	}
+	new_cpu = best_mask_cpu(prev_cpu, &allow_mask);
 
 out:
 	if (unlikely(!is_cpu_allowed(p, new_cpu)))
