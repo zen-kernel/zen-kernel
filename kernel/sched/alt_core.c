@@ -225,14 +225,14 @@ static inline void update_sched_preempt_mask(struct rq *rq)
 	int high = set ? prio : last_prio;
 
 	if (IDLE_TASK_SCHED_PRIO == high) {
-		high -= 2;
+		high -= 1;
 		if (set)
 			sched_set_idle_mask(cpu);
 		else
 			sched_clear_idle_mask(cpu);
 	}
 	int pr = atomic_read(&sched_prio_record);
-	if (low < pr && pr <= high) {
+	if (low <= pr && pr < high) {
 		if (set)
 			cpumask_set_cpu(cpu, sched_preempt_mask + pr);
 		else
