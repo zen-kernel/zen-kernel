@@ -149,8 +149,8 @@ generations less than or equal to ``min_gen_nr``.
     ``- memcg_id node_id min_gen_nr [swappiness [nr_to_reclaim]]``
 
 ``min_gen_nr`` should be less than ``max_gen_nr-1``, since
-``max_gen_nr`` and ``max_gen_nr-1`` are not fully aged (equivalent to
-the active list) and therefore cannot be evicted. ``swappiness``
+``max_gen_nr`` and ``max_gen_nr-1`` are not fully aged and therefore
+cannot be evicted. ``swappiness``
 overrides the default value in ``/proc/sys/vm/swappiness`` and the valid
 range is [0-200, max], with max being exclusively used for the reclamation
 of anonymous memory. ``nr_to_reclaim`` limits the number of pages to evict.
