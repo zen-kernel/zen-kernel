@@ -185,6 +185,7 @@ enum tcp_fastopen_client_fail {
 #define TCPI_OPT_SYN_DATA	32 /* SYN-ACK acked data in SYN sent or rcvd */
 #define TCPI_OPT_USEC_TS	64 /* usec timestamps */
 #define TCPI_OPT_TFO_CHILD	128 /* child from a Fast Open option on SYN */
+#define TCPI_OPT_ECN_LOW	256 /* Low-latency ECN enabled at conn init */
 
 /*
  * Sender's congestion state indicating normal or abnormal situations
