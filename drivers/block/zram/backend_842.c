@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#define pr_fmt(fmt) "842: " fmt
+#define pr_fmt(fmt) "zram: 842: " fmt
 
 #include <linux/kernel.h>
 #include <linux/slab.h>
@@ -63,8 +63,8 @@ static int decompress_842(struct zcomp_params *params, struct zcomp_ctx *ctx,
 const struct zcomp_ops backend_842 = {
 	.compress	= compress_842,
 	.decompress	= decompress_842,
-	.create_ctx	= create_842,
-	.destroy_ctx	= destroy_842,
+	.create_cctx	= create_842,
+	.destroy_cctx	= destroy_842,
 	.setup_params	= setup_params_842,
 	.release_params	= release_params_842,
 	.name		= "842",
