@@ -6795,6 +6795,13 @@ Kernel parameters
 			cost of significant additional memory use for tables.
 
 
+	sched_pds_sleep_credit=
+			[KNL] Enable or disable the PDS sleep credit, which
+			moves a task that slept ahead of CPU-bound tasks of
+			the same nice level when it wakes up.
+			Format: <bool>
+			Default: CONFIG_SCHED_PDS_SLEEP_CREDIT
+
 	sched_proxy_exec= [KNL]
 			Enables or disables "proxy execution" style
 			solution to mutex-based priority inversion.
