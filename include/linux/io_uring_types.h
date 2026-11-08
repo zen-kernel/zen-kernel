@@ -161,6 +161,9 @@ struct io_uring_task {
 	/* drains ->task_list once the task can no longer run task_work */
 	struct work_struct		fallback_work;
 
+	/* the tctx is freed after a grace period, see io_put_task() */
+	struct rcu_head			rcu;
+
 	struct { /* task_work */
 		struct mpscq		task_list;
 		struct callback_head	task_work;
@@ -519,8 +522,13 @@ struct io_ring_ctx {
 	u32				iowq_limits[2];
 
 	struct callback_head		poll_wq_task_work;
+	/* deferred ->poll_wq wake up for local task_work */
+	struct rcu_head			poll_wq_rcu;
+	atomic_t			poll_wq_rcu_pending;
 	struct list_head		defer_list;
 	unsigned			nr_drained;
+	/* drain request dispatched from ->defer_list, until it completes */
+	struct io_kiocb			*drain_req;
 
 	/* protected by ->completion_lock */
 	unsigned			nr_req_allocated;

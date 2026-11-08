@@ -330,16 +330,20 @@ static int ath12k_dp_rx_pdev_srng_alloc(struct ath12k *ar)
 {
 	struct ath12k_pdev_dp *dp = &ar->dp;
 	struct ath12k_base *ab = ar->ab;
+	u32 monitor_dst_ring_size;
+	u32 mac_id = dp->mac_id;
 	int i;
 	int ret;
-	u32 mac_id = dp->mac_id;
+
+	monitor_dst_ring_size =
+		ath12k_dp_rxdma_monitor_dst_ring_size(&ab->profile_param->dp_params);
 
 	for (i = 0; i < ab->hw_params->num_rxdma_per_pdev; i++) {
 		ret = ath12k_dp_srng_setup(ar->ab,
 					   &dp->rxdma_mon_dst_ring[i],
 					   HAL_RXDMA_MONITOR_DST,
 					   0, mac_id + i,
-					   DP_RXDMA_MONITOR_DST_RING_SIZE(ab));
+					   monitor_dst_ring_size);
 		if (ret) {
 			ath12k_warn(ar->ab,
 				    "failed to setup HAL_RXDMA_MONITOR_DST\n");
@@ -1692,6 +1696,8 @@ int ath12k_dp_rx_htt_setup(struct ath12k_base *ab)
 
 int ath12k_dp_rx_alloc(struct ath12k_base *ab)
 {
+	const struct ath12k_dp_profile_params *dp_params = &ab->profile_param->dp_params;
+	u32 monitor_buf_ring_size = ath12k_dp_rxdma_monitor_buf_ring_size(dp_params);
 	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
 	struct dp_srng *srng;
 	int i, ret;
@@ -1702,7 +1708,7 @@ int ath12k_dp_rx_alloc(struct ath12k_base *ab)
 	ret = ath12k_dp_srng_setup(ab,
 				   &dp->rx_refill_buf_ring.refill_buf_ring,
 				   HAL_RXDMA_BUF, 0, 0,
-				   DP_RXDMA_BUF_RING_SIZE);
+				   ath12k_dp_rxdma_buf_ring_size(dp_params));
 	if (ret) {
 		ath12k_warn(ab, "failed to setup rx_refill_buf_ring\n");
 		return ret;
@@ -1736,7 +1742,7 @@ int ath12k_dp_rx_alloc(struct ath12k_base *ab)
 		ret = ath12k_dp_srng_setup(ab,
 					   &dp->rxdma_mon_buf_ring.refill_buf_ring,
 					   HAL_RXDMA_MONITOR_BUF, 0, 0,
-					   DP_RXDMA_MONITOR_BUF_RING_SIZE(ab));
+					   monitor_buf_ring_size);
 		if (ret) {
 			ath12k_warn(ab, "failed to setup HAL_RXDMA_MONITOR_BUF\n");
 			return ret;

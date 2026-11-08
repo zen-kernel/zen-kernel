@@ -23,6 +23,16 @@ struct ath12k_ext_irq_grp;
 struct ath12k_dp_rx_tid;
 struct ath12k_dp_rx_tid_rxq;
 
+struct ath12k_dp_profile_params {
+	u32 tx_comp_ring_size;
+	u32 rxdma_monitor_buf_ring_size;
+	u32 rxdma_monitor_dst_ring_size;
+	u32 num_pool_tx_desc;
+	u32 rx_desc_count;
+	u32 rx_release_ring_size;
+	u32 rxdma_buf_ring_size;
+};
+
 #define DP_MON_PURGE_TIMEOUT_MS     100
 #define DP_MON_SERVICE_BUDGET       128
 
@@ -52,7 +62,7 @@ struct dp_rxdma_ring {
 	int bufs_max;
 };
 
-#define ATH12K_TX_COMPL_NEXT(ab, x)	(((x) + 1) % DP_TX_COMP_RING_SIZE(ab))
+#define ATH12K_TX_COMPL_NEXT(ring_size, x)	(((x) + 1) % (ring_size))
 
 struct dp_tx_ring {
 	u8 tcl_data_ring_id;
@@ -192,28 +202,18 @@ struct ath12k_pdev_dp {
 
 #define DP_WBM_RELEASE_RING_SIZE	64
 #define DP_TCL_DATA_RING_SIZE		512
-#define DP_TX_COMP_RING_SIZE(ab) \
-	((ab)->profile_param->dp_params.tx_comp_ring_size)
-#define DP_TX_IDR_SIZE(ab)		DP_TX_COMP_RING_SIZE(ab)
 #define DP_TCL_CMD_RING_SIZE		32
 #define DP_TCL_STATUS_RING_SIZE		32
 #define DP_REO_DST_RING_MAX		8
 #define DP_REO_DST_RING_SIZE		2048
 #define DP_REO_REINJECT_RING_SIZE	32
-#define DP_RX_RELEASE_RING_SIZE(ab) \
-	((ab)->profile_param->dp_params.rx_release_ring_size)
 #define DP_REO_EXCEPTION_RING_SIZE	128
 #define DP_REO_CMD_RING_SIZE		256
 #define DP_REO_STATUS_RING_SIZE		2048
-#define DP_RXDMA_BUF_RING_SIZE		4096
 #define DP_RX_MAC_BUF_RING_SIZE		4096
 #define DP_RXDMA_REFILL_RING_SIZE	2048
 #define DP_RXDMA_ERR_DST_RING_SIZE	1024
 #define DP_RXDMA_MON_STATUS_RING_SIZE	1024
-#define DP_RXDMA_MONITOR_BUF_RING_SIZE(ab) \
-	((ab)->profile_param->dp_params.rxdma_monitor_buf_ring_size)
-#define DP_RXDMA_MONITOR_DST_RING_SIZE(ab) \
-	((ab)->profile_param->dp_params.rxdma_monitor_dst_ring_size)
 #define DP_RXDMA_MONITOR_DESC_RING_SIZE	4096
 #define DP_TX_MONITOR_BUF_RING_SIZE	4096
 #define DP_TX_MONITOR_DEST_RING_SIZE	2048
@@ -247,12 +247,6 @@ struct ath12k_pdev_dp {
 #define ATH12K_SHADOW_DP_TIMER_INTERVAL 20
 #define ATH12K_SHADOW_CTRL_TIMER_INTERVAL 10
 
-#define ATH12K_NUM_POOL_TX_DESC(ab) \
-	((ab)->profile_param->dp_params.num_pool_tx_desc)
-/* TODO: revisit this count during testing */
-#define ATH12K_RX_DESC_COUNT(ab) \
-	((ab)->profile_param->dp_params.rx_desc_count)
-
 #define ATH12K_PAGE_SIZE	PAGE_SIZE
 
 /* Total 1024 entries in PPT, i.e 4K/4 considering 4K aligned
@@ -263,21 +257,7 @@ struct ath12k_pdev_dp {
 /* Total 512 entries in a SPT, i.e 4K Page/8 */
 #define ATH12K_MAX_SPT_ENTRIES	512
 
-#define ATH12K_NUM_RX_SPT_PAGES(ab)	((ATH12K_RX_DESC_COUNT(ab)) / \
-					  ATH12K_MAX_SPT_ENTRIES)
-
-#define ATH12K_TX_SPT_PAGES_PER_POOL(ab) (ATH12K_NUM_POOL_TX_DESC(ab) / \
-					  ATH12K_MAX_SPT_ENTRIES)
-#define ATH12K_NUM_TX_SPT_PAGES(ab)	(ATH12K_TX_SPT_PAGES_PER_POOL(ab) * \
-					 ATH12K_HW_MAX_QUEUES)
-
 #define ATH12K_TX_SPT_PAGE_OFFSET 0
-#define ATH12K_RX_SPT_PAGE_OFFSET(ab) ATH12K_NUM_TX_SPT_PAGES(ab)
-
-/* The SPT pages are divided for RX and TX, first block for RX
- * and remaining for TX
- */
-#define ATH12K_NUM_TX_SPT_PAGE_START(ab) ATH12K_NUM_RX_SPT_PAGES(ab)
 
 #define ATH12K_DP_RX_DESC_MAGIC	0xBABABABA
 
@@ -678,6 +658,72 @@ ath12k_dp_to_pdev_dp(struct ath12k_dp *dp, u8 pdev_idx)
 			 "ath12k dp to dp pdev called without rcu lock");
 
 	return rcu_dereference(dp->dp_pdevs[pdev_idx]);
+}
+
+static inline u32
+ath12k_dp_tx_comp_ring_size(const struct ath12k_dp_profile_params *p)
+{
+	return p->tx_comp_ring_size;
+}
+
+static inline u32
+ath12k_dp_rxdma_monitor_buf_ring_size(const struct ath12k_dp_profile_params *p)
+{
+	return p->rxdma_monitor_buf_ring_size;
+}
+
+static inline u32
+ath12k_dp_rxdma_monitor_dst_ring_size(const struct ath12k_dp_profile_params *p)
+{
+	return p->rxdma_monitor_dst_ring_size;
+}
+
+static inline u32
+ath12k_dp_num_pool_tx_desc(const struct ath12k_dp_profile_params *p)
+{
+	return p->num_pool_tx_desc;
+}
+
+static inline u32
+ath12k_dp_tx_spt_pages_per_pool(const struct ath12k_dp_profile_params *p)
+{
+	return ath12k_dp_num_pool_tx_desc(p) / ATH12K_MAX_SPT_ENTRIES;
+}
+
+static inline u32
+ath12k_dp_num_tx_spt_pages(const struct ath12k_dp_profile_params *p)
+{
+	return ath12k_dp_tx_spt_pages_per_pool(p) * ATH12K_HW_MAX_QUEUES;
+}
+
+static inline u32
+ath12k_dp_rx_spt_page_offset(const struct ath12k_dp_profile_params *p)
+{
+	return ath12k_dp_num_tx_spt_pages(p);
+}
+
+static inline u32
+ath12k_dp_rx_desc_count(const struct ath12k_dp_profile_params *p)
+{
+	return p->rx_desc_count;
+}
+
+static inline u32
+ath12k_dp_num_rx_spt_pages(const struct ath12k_dp_profile_params *p)
+{
+	return ath12k_dp_rx_desc_count(p) / ATH12K_MAX_SPT_ENTRIES;
+}
+
+static inline u32
+ath12k_dp_rx_release_ring_size(const struct ath12k_dp_profile_params *p)
+{
+	return p->rx_release_ring_size;
+}
+
+static inline u32
+ath12k_dp_rxdma_buf_ring_size(const struct ath12k_dp_profile_params *p)
+{
+	return p->rxdma_buf_ring_size;
 }
 
 void ath12k_dp_vdev_tx_attach(struct ath12k *ar, struct ath12k_link_vif *arvif);

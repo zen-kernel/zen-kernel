@@ -187,6 +187,16 @@ static void __handle_ksmbd_work(struct ksmbd_work *work,
 
 	if (conn->ops->is_transform_hdr &&
 	    conn->ops->is_transform_hdr(work->request_buf)) {
+		u64 tr_sess_id;
+
+		if (get_rfc1002_len(work->request_buf) <
+		    sizeof(struct smb2_transform_hdr)) {
+			ksmbd_conn_abort(conn);
+			return;
+		}
+		tr_sess_id = le64_to_cpu(((struct smb2_transform_hdr *)
+				smb_get_msg(work->request_buf))->SessionId);
+
 		rc = conn->ops->decrypt_req(work);
 		if (rc < 0) {
 			ksmbd_conn_abort(conn);
@@ -212,6 +222,12 @@ static void __handle_ksmbd_work(struct ksmbd_work *work,
 		if (((struct smb2_hdr *)smb_get_msg(work->request_buf))->ProtocolId !=
 			SMB2_PROTO_NUMBER ||
 		    get_rfc1002_len(work->request_buf) < sizeof(struct smb2_pdu)) {
+			ksmbd_conn_abort(conn);
+			return;
+		}
+
+		rc = ksmbd_check_transform_session(work, tr_sess_id);
+		if (rc < 0) {
 			ksmbd_conn_abort(conn);
 			return;
 		}
@@ -382,6 +398,7 @@ static void handle_ksmbd_work(struct work_struct *wk)
 static int queue_ksmbd_work(struct ksmbd_conn *conn)
 {
 	struct ksmbd_work *work;
+	bool wait_for_neg = ksmbd_conn_new(conn) || ksmbd_conn_need_negotiate(conn);
 	int err;
 
 	err = ksmbd_init_smb_server(conn);
@@ -404,6 +421,10 @@ static int queue_ksmbd_work(struct ksmbd_conn *conn)
 	conn->last_active = jiffies;
 	INIT_WORK(&work->work, handle_ksmbd_work);
 	ksmbd_queue_work(work);
+	/* Negotiation can change conn->ops, finish it before reading another PDU. */
+	if (wait_for_neg)
+		wait_event(conn->req_running_q,
+			   atomic_read(&conn->req_running) == 0);
 	return 0;
 }
 
@@ -451,6 +472,8 @@ static int server_conf_init(void)
 				KSMBD_AUTH_MSKRB5;
 #endif
 	server_conf.max_inflight_req = SMB2_MAX_CREDITS;
+	server_conf.max_sessions_per_connection =
+		KSMBD_DEFAULT_MAX_SESSIONS_PER_CONNECTION;
 	return 0;
 }
 

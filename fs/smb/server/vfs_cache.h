@@ -102,6 +102,8 @@ struct ksmbd_file {
 	struct oplock_info __rcu	*f_opinfo;
 	struct ksmbd_conn		*conn;
 	struct ksmbd_tree_connect	*tcon;
+	/* Own a share reference independently of tcon; rebind under f_lock. */
+	struct ksmbd_share_config	*share_conf;
 
 	atomic_t			refcount;
 	__le32				daccess;
@@ -196,6 +198,8 @@ static inline bool ksmbd_stream_fd(struct ksmbd_file *fp)
 int ksmbd_init_file_table(struct ksmbd_file_table *ft);
 void ksmbd_destroy_file_table(struct ksmbd_session *sess);
 int ksmbd_close_fd(struct ksmbd_work *work, u64 id);
+void ksmbd_unpublish_reopened_fd(struct ksmbd_work *work,
+				 struct ksmbd_file *fp);
 struct ksmbd_file *ksmbd_lookup_fd_fast(struct ksmbd_work *work, u64 id);
 struct ksmbd_file *ksmbd_lookup_foreign_fd(struct ksmbd_work *work, u64 id);
 struct ksmbd_file *ksmbd_lookup_fd_slow(struct ksmbd_work *work, u64 id,
@@ -213,8 +217,12 @@ void ksmbd_put_durable_fd(struct ksmbd_file *fp);
 int ksmbd_invalidate_durable_fd(unsigned long long id);
 bool ksmbd_has_other_active_fd(struct ksmbd_file *fp);
 bool ksmbd_has_stream_without_delete_share(struct ksmbd_file *fp);
-struct ksmbd_file *ksmbd_lookup_fd_app_instance_id(char *app_instance_id);
-int ksmbd_close_fd_app_instance_id(char *app_instance_id);
+bool ksmbd_app_instance_id_matches(struct ksmbd_work *work,
+				   struct ksmbd_file *fp);
+struct ksmbd_file *
+ksmbd_lookup_fd_app_instance_id_next(char *app_instance_id, int *cursor);
+int ksmbd_close_fd_app_instance_id(struct ksmbd_work *work,
+				 struct ksmbd_file *fp, bool *closed);
 struct ksmbd_file *ksmbd_lookup_fd_cguid(char *cguid);
 struct ksmbd_file *ksmbd_lookup_fd_inode(struct dentry *dentry);
 bool ksmbd_has_other_nonposix_open(struct dentry *dentry);
