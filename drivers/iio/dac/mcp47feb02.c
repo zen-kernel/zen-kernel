@@ -36,7 +36,6 @@
 #define MCP47FEB02_DAC_CTRL_MASK			GENMASK(1, 0)
 
 #define MCP47FEB02_GAIN_CTRL_STATUS_REG_ADDR		0x50
-#define MCP47FEB02_GAIN_BIT_MASK			BIT(0)
 #define MCP47FEB02_GAIN_BIT_STATUS_EEWA_MASK		BIT(6)
 #define MCP47FEB02_GAIN_BITS_MASK			GENMASK(15, 8)
 
@@ -448,7 +447,7 @@ static int mcp47feb02_write_to_eeprom(struct mcp47feb02_data *data, unsigned int
 	ret = regmap_read_poll_timeout(data->regmap, MCP47FEB02_GAIN_CTRL_STATUS_REG_ADDR,
 				       eewa_val,
 				       !(eewa_val & MCP47FEB02_GAIN_BIT_STATUS_EEWA_MASK),
-				       USEC_PER_MSEC, USEC_PER_MSEC * 5);
+				       1 * USEC_PER_MSEC, 150 * USEC_PER_MSEC);
 	if (ret)
 		return ret;
 
@@ -468,7 +467,7 @@ static ssize_t store_eeprom_store(struct device *dev, struct device_attribute *a
 		return ret;
 
 	if (!state)
-		return 0;
+		return len;
 
 	/*
 	 * Verify DAC Wiper and DAC Configuration are unlocked. If both are disabled,
@@ -508,7 +507,7 @@ static ssize_t store_eeprom_store(struct device *dev, struct device_attribute *a
 
 	ret = regmap_read_poll_timeout(data->regmap, MCP47FEB02_GAIN_CTRL_STATUS_REG_ADDR, eewa_val,
 				       !(eewa_val & MCP47FEB02_GAIN_BIT_STATUS_EEWA_MASK),
-				       USEC_PER_MSEC, USEC_PER_MSEC * 5);
+				       1 * USEC_PER_MSEC, 150 * USEC_PER_MSEC);
 	if (ret)
 		return ret;
 
@@ -922,7 +921,10 @@ static int mcp47feb02_read_label(struct iio_dev *indio_dev, struct iio_chan_spec
 {
 	struct mcp47feb02_data *data = iio_priv(indio_dev);
 
-	return sysfs_emit(label, "%s\n", data->labels[ch->address]);
+	if (data->labels[ch->address])
+		return sysfs_emit(label, "%s\n", data->labels[ch->address]);
+
+	return -ENOENT;
 }
 
 static const struct iio_info mcp47feb02_info = {
@@ -975,10 +977,11 @@ static int mcp47feb02_parse_fw(struct iio_dev *indio_dev,
 
 		set_bit(reg, &data->active_channels_mask);
 
-		ret = fwnode_property_read_string(child, "label", &data->labels[reg]);
-		if (ret)
-			return dev_err_probe(dev, ret, "%pfw: invalid label\n",
-					     fwnode_get_name(child));
+		if (fwnode_property_present(child, "label")) {
+			ret = fwnode_property_read_string(child, "label", &data->labels[reg]);
+			if (ret)
+				dev_warn_probe(dev, ret, "%pfw: invalid label\n", child);
+		}
 
 		chanspec.address = reg;
 		chanspec.channel = reg;
@@ -1016,13 +1019,17 @@ static int mcp47feb02_init_ctrl_regs(struct mcp47feb02_data *data)
 	if (ret)
 		return ret;
 
-	gain_ch = gain_ch & MCP47FEB02_GAIN_BITS_MASK;
 	for_each_set_bit(i, &data->active_channels_mask, data->phys_channels) {
 		struct device *dev = regmap_get_device(data->regmap);
-		unsigned int pd_tmp;
+		unsigned int pd_tmp, dac_val;
+
+		ret = regmap_read(data->regmap, REG_ADDR(i), &dac_val);
+		if (ret)
+			return ret;
+		data->chdata[i].dac_data = dac_val;
 
 		data->chdata[i].ref_mode = (vref_ch >> (2 * i)) & MCP47FEB02_DAC_CTRL_MASK;
-		data->chdata[i].use_2x_gain = (gain_ch >> i)  & MCP47FEB02_GAIN_BIT_MASK;
+		data->chdata[i].use_2x_gain = field_get(DAC_GAIN_MASK(i), gain_ch);
 
 		/*
 		 * Inform the user that the current voltage reference read from the volatile

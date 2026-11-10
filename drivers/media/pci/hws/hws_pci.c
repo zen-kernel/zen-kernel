@@ -441,7 +441,7 @@ static int hws_probe(struct pci_dev *pdev, const struct pci_device_id *pci_id)
 	hws_init_video_sys(hws, false);
 
 	/* 5) Init channels (video state, locks, vb2, ctrls) */
-	for (i = 0; i < hws->max_channels; i++) {
+	for (i = 0; i < hws->cur_max_video_ch; i++) {
 		ret = hws_video_init_channel(hws, i);
 		if (ret) {
 			dev_err(&pdev->dev, "video channel init failed (ch=%d)\n", i);

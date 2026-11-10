@@ -639,10 +639,8 @@ static int acpi_sbs_probe(struct platform_device *pdev)
 		return -ENODEV;
 
 	sbs = kzalloc_obj(struct acpi_sbs);
-	if (!sbs) {
-		result = -ENOMEM;
-		goto end;
-	}
+	if (!sbs)
+		return -ENOMEM;
 
 	mutex_init(&sbs->lock);
 

@@ -981,6 +981,8 @@ static int ntfs_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 	if (err) {
 		return err;
 	}
+	if (!clen)
+		return -EINVAL;
 
 	if (lcn == EOF_LCN) {
 		/* request out of file. */
@@ -1014,11 +1016,6 @@ static int ntfs_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 		iomap->offset = 0;
 		iomap->length = clen; /* resident size in bytes. */
 		return 0;
-	}
-
-	if (!clen) {
-		/* broken file? */
-		return -EINVAL;
 	}
 
 	iomap->bdev = inode->i_sb->s_bdev;

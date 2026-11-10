@@ -155,7 +155,7 @@ static int fuse_notify_store(struct fuse_conn *fc, unsigned int size,
 
 	nodeid = outarg.nodeid;
 	pos = outarg.offset;
-	num = min(outarg.size, MAX_LFS_FILESIZE - pos);
+	num = umin(outarg.size, MAX_LFS_FILESIZE - pos);
 
 	down_read(&fc->killsb);
 

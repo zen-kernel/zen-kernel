@@ -1034,6 +1034,21 @@ again:
 
 	if (!attr_b->non_res) {
 		u32 data_size = le32_to_cpu(attr_b->res.data_size);
+
+		/*
+		 * A resident attribute is copied into a single page below
+		 * (alloc_page() + memcpy()) and mapped as a one-page
+		 * IOMAP_INLINE extent by ntfs_iomap_begin().  mi_enum_attr()
+		 * only bounds the resident value length against the MFT record
+		 * size, so a corrupted volume whose records are larger than a
+		 * page can report data_size > PAGE_SIZE; copying that many bytes
+		 * would overflow the single destination page.  Reject it.
+		 */
+		if (data_size > PAGE_SIZE) {
+			err = -EINVAL;
+			goto out;
+		}
+
 		*lcn = RESIDENT_LCN;
 		*len = data_size;
 		if (res) {

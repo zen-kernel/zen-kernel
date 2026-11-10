@@ -805,6 +805,8 @@ static int ntfs_read_locked_inode(struct inode *vi)
 			goto unm_err_out;
 		}
 	} else {
+		s64 attr_list_size;
+
 		if (vi->i_ino == FILE_MFT)
 			goto skip_attr_list_load;
 		ntfs_debug("Attribute list found in inode 0x%llx.", ni->mft_no);
@@ -827,11 +829,14 @@ static int ntfs_read_locked_inode(struct inode *vi)
 				ni->mft_no);
 		}
 		/* Now allocate memory for the attribute list. */
-		ni->attr_list_size = (u32)ntfs_attr_size(a);
-		if (!ni->attr_list_size) {
-			ntfs_error(vi->i_sb, "Attr_list_size is zero");
+		attr_list_size = ntfs_attr_size(a);
+		if (attr_list_size <= 0 ||
+		    attr_list_size > NTFS_MAX_ATTR_LIST_SIZE) {
+			ntfs_error(vi->i_sb, "Invalid attribute list size %lld (mft_no 0x%llx).",
+				   (long long)attr_list_size, ni->mft_no);
 			goto unm_err_out;
 		}
+		ni->attr_list_size = (u32)attr_list_size;
 		ni->attr_list = kvzalloc(ni->attr_list_size, GFP_NOFS);
 		if (!ni->attr_list) {
 			ntfs_error(vi->i_sb,
@@ -1955,6 +1960,7 @@ int ntfs_read_inode_mount(struct inode *vi)
 	} else /* if (!err) */ {
 		struct attr_list_entry *al_entry, *next_al_entry;
 		u8 *al_end;
+		s64 attr_list_size;
 		static const char *es = "  Not allowed.  $MFT is corrupt.  You should run chkdsk.";
 
 		ntfs_debug("Attribute list attribute found in $MFT.");
@@ -1978,11 +1984,14 @@ int ntfs_read_inode_mount(struct inode *vi)
 				"Resident attribute list attribute in $MFT system file is marked encrypted/sparse which is not true.  However, Windows allows this and chkdsk does not detect or correct it so we will just ignore the invalid flags and pretend they are not set.");
 		}
 		/* Now allocate memory for the attribute list. */
-		ni->attr_list_size = (u32)ntfs_attr_size(a);
-		if (!ni->attr_list_size) {
-			ntfs_error(sb, "Attr_list_size is zero");
+		attr_list_size = ntfs_attr_size(a);
+		if (attr_list_size <= 0 ||
+		    attr_list_size > NTFS_MAX_ATTR_LIST_SIZE) {
+			ntfs_error(sb, "Invalid attribute list size %lld (mft_no 0x%llx).%s",
+				   (long long)attr_list_size, ni->mft_no, es);
 			goto put_err_out;
 		}
+		ni->attr_list_size = (u32)attr_list_size;
 		ni->attr_list = kvzalloc(round_up(ni->attr_list_size, SECTOR_SIZE),
 					 GFP_NOFS);
 		if (!ni->attr_list) {
@@ -2071,6 +2080,11 @@ int ntfs_read_inode_mount(struct inode *vi)
 	/* Now load all attribute extents. */
 	a = NULL;
 	next_vcn = last_vcn = highest_vcn = 0;
+	/*
+	 * Reading one of $MFT's own extent records in this loop can re-enter
+	 * ntfs_map_runlist_nolock() for $MFT; see the check there.
+	 */
+	NVolSetMftBootstrap(vol);
 	while (!(err = ntfs_attr_lookup(AT_DATA, NULL, 0, 0, next_vcn, NULL, 0,
 			ctx))) {
 		struct runlist_element *nrl;
@@ -2123,6 +2137,16 @@ int ntfs_read_inode_mount(struct inode *vi)
 			ni->initialized_size = le64_to_cpu(a->data.non_resident.initialized_size);
 			ni->allocated_size = le64_to_cpu(a->data.non_resident.allocated_size);
 			/*
+			 * Records between allocated_size and data_size are not
+			 * on disk, and would be read as zeros.
+			 */
+			if (vi->i_size > ni->allocated_size) {
+				ntfs_error(sb,
+					   "$MFT data size %lld exceeds its allocated size %lld. $MFT is corrupt. Run chkdsk.",
+					   vi->i_size, ni->allocated_size);
+				goto put_err_out;
+			}
+			/*
 			 * Verify the number of mft records does not exceed
 			 * 2^32 - 1.
 			 */
@@ -2153,6 +2177,7 @@ int ntfs_read_inode_mount(struct inode *vi)
 			err = ntfs_read_locked_inode(vi);
 			if (err) {
 				ntfs_error(sb, "ntfs_read_inode() of $MFT failed.\n");
+				NVolClearMftBootstrap(vol);
 				ntfs_attr_put_search_ctx(ctx);
 				/* Revert to the safe super operations. */
 				kfree(m);
@@ -2186,6 +2211,7 @@ int ntfs_read_inode_mount(struct inode *vi)
 			goto put_err_out;
 		}
 	}
+	NVolClearMftBootstrap(vol);
 	if (err != -ENOENT) {
 		ntfs_error(sb, "Failed to lookup $MFT/$DATA attribute extent. Run chkdsk.\n");
 		goto put_err_out;
@@ -2220,6 +2246,8 @@ em_put_err_out:
 put_err_out:
 	ntfs_attr_put_search_ctx(ctx);
 err_out:
+	/* Also reached from inside the $DATA loop. */
+	NVolClearMftBootstrap(vol);
 	ntfs_error(sb, "Failed. Marking inode as bad.");
 	kfree(m);
 	return -1;
@@ -3739,6 +3767,8 @@ static s64 __ntfs_inode_non_resident_attr_pwrite(struct inode *vi,
 			folio_lock(folio);
 		}
 
+		folio_wait_writeback(folio);
+
 		if (count == PAGE_SIZE) {
 			offset = 0;
 			attr_len = count;
@@ -3758,7 +3788,9 @@ static s64 __ntfs_inode_non_resident_attr_pwrite(struct inode *vi,
 			struct runlist_element *rl;
 			int bio_err;
 
-			lcn_count = max_t(s64, 1, ntfs_bytes_to_cluster(vol, attr_len));
+			lcn_count = max_t(s64, 1,
+					  ntfs_bytes_to_cluster(vol, attr_len +
+								vol->cluster_size - 1));
 			vcn = ntfs_pidx_to_cluster(vol, folio->index);
 
 			do {

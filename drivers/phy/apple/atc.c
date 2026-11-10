@@ -1121,7 +1121,7 @@ static int atcphy_configure_pipehandler_dummy(struct apple_atcphy *atcphy)
 
 static int atcphy_configure_pipehandler(struct apple_atcphy *atcphy, bool host)
 {
-	int ret;
+	int ret = -EINVAL;
 
 	lockdep_assert_held(&atcphy->lock);
 
@@ -1136,8 +1136,10 @@ static int atcphy_configure_pipehandler(struct apple_atcphy *atcphy, bool host)
 		ret = atcphy_configure_pipehandler_dummy(atcphy);
 		atcphy->pipehandler_up = false;
 		break;
-	default:
-		ret = -EINVAL;
+	case ATCPHY_PIPEHANDLER_STATE_DUMMY:
+		ret = atcphy_configure_pipehandler_dummy(atcphy);
+		atcphy->pipehandler_up = false;
+		break;
 	}
 
 	return ret;

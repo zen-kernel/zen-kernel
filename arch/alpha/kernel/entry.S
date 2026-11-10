@@ -603,6 +603,14 @@ ret_to_kernel:
 
 	.align 3
 $syscall_error:
+	/*
+	 * force_successful_syscall_return() zeroes the saved r0 (the
+	 * syscall number): the negative return value is data, not an
+	 * error number.
+	 */
+	ldq	$18, 0($sp)
+	beq	$18, $ret_success
+
         /* Restart syscall nr comes from saved r2 (preserved even if r0 overwritten). */
 	ldq	$18, 16($sp)	/* old syscall nr for restart */
 
@@ -700,9 +708,11 @@ ret_from_straced:
 $strace_success:
 	stq	$31, 72($sp)		/* a3=0 => no error */
 	stq	$0, 0($sp)		/* save return value */
+	br	$strace_leave
 
 $strace_skip_call:
 	SYSCALL_SKIP_RETURN_RESTART_GATE
+$strace_leave:
 	DO_SWITCH_STACK
 	jsr	$26, syscall_trace_leave
 	UNDO_SWITCH_STACK
@@ -710,6 +720,10 @@ $strace_skip_call:
 
 	.align	3
 $strace_error:
+	/* See $syscall_error. */
+	ldq	$18, 0($sp)
+	beq	$18, $strace_success
+
 	ldq	$18, 16($sp)	/* restart syscall nr */
 	ldq	$19, 72($sp)	/* .. and this a3 */
 

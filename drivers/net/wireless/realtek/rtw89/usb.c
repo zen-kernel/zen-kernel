@@ -819,10 +819,15 @@ static void rtw89_usb_rx_agg_cfg_v2(struct rtw89_dev *rtwdev)
 
 static void rtw89_usb_rx_agg_cfg_v3(struct rtw89_dev *rtwdev)
 {
-	const u32 rxagg_0 = FIELD_PREP_CONST(B_BE_RXAGG_0_EN, 1) |
-			    FIELD_PREP_CONST(B_BE_RXAGG_0_NUM_TH, 255) |
-			    FIELD_PREP_CONST(B_BE_RXAGG_0_TIME_32US_TH, 32) |
-			    FIELD_PREP_CONST(B_BE_RXAGG_0_BUF_SZ_1K, 20);
+	struct rtw89_usb *rtwusb = rtw89_usb_priv(rtwdev);
+	u32 rxagg_0 = FIELD_PREP_CONST(B_BE_RXAGG_0_EN, 1) |
+		      FIELD_PREP_CONST(B_BE_RXAGG_0_NUM_TH, 255) |
+		      FIELD_PREP_CONST(B_BE_RXAGG_0_BUF_SZ_1K, 20);
+
+	if (rtwusb->udev->speed == USB_SPEED_SUPER)
+		rxagg_0 |= FIELD_PREP_CONST(B_BE_RXAGG_0_TIME_32US_TH, 1);
+	else
+		rxagg_0 |= FIELD_PREP_CONST(B_BE_RXAGG_0_TIME_32US_TH, 32);
 
 	rtw89_write32(rtwdev, R_BE_RXAGG_0_V1, rxagg_0);
 	rtw89_write32(rtwdev, R_BE_RXAGG_1_V1, 0x1F);

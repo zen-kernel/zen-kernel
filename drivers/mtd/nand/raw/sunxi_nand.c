@@ -2012,7 +2012,7 @@ static int sunxi_nand_ooblayout_free(struct mtd_info *mtd, int section,
 		return 0;
 	}
 
-	oobregion->offset = sunxi_get_ecc_offset(sunxi_nand, ecc, section);
+	oobregion->offset = sunxi_get_oob_offset(sunxi_nand, ecc, section);
 	oobregion->length = user_data_sz;
 
 	return 0;
@@ -2076,6 +2076,9 @@ static int sunxi_nand_hw_ecc_ctrl_init(struct nand_chip *nand,
 
 	if (nanddev->ecc.user_conf.flags & NAND_ECC_MAXIMIZE_STRENGTH) {
 		int bytes = mtd->oobsize;
+
+		if (mtd->writesize < 1024)
+			return -EINVAL;
 
 		ecc->size = 1024;
 		nsectors = mtd->writesize / ecc->size;

@@ -404,8 +404,10 @@ loongson2_cmc_dma_prep_slave_sg(struct dma_chan *chan, struct scatterlist *sgl, 
 
 	for_each_sg(sgl, sg, sg_len, i) {
 		ret = loongson2_cmc_dma_set_xfer_param(lchan, direction, &buswidth, sg_dma_len(sg));
-		if (ret)
+		if (ret) {
+			kfree(desc);
 			return ERR_PTR(ret);
+		}
 
 		num_items = DIV_ROUND_UP(sg_dma_len(sg), buswidth);
 		if (num_items >= LOONSON2_CMCDMA_MAX_DATA_ITEMS) {
