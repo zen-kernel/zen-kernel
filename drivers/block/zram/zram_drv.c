@@ -32,6 +32,7 @@
 #include <linux/debugfs.h>
 #include <linux/cpuhotplug.h>
 #include <linux/part_stat.h>
+#include <linux/scatterlist.h>
 #include <linux/kernel_read_file.h>
 #include <linux/rcupdate.h>
 
@@ -693,6 +694,7 @@ static void reset_bdev(struct zram *zram)
 	zram->disk->fops = &zram_devops;
 	kvfree(zram->bitmap);
 	zram->bitmap = NULL;
+	zram->nr_pages = 0;
 }
 
 static ssize_t backing_dev_show(struct device *dev,
@@ -1346,10 +1348,10 @@ out:
 static int decompress_bdev_page(struct zram *zram, struct page *page,
 				unsigned long index)
 {
-	struct zcomp_strm *zstrm;
+	struct zcomp_dstrm *zstrm;
+	struct scatterlist sg[1];
 	unsigned int size;
 	int ret, prio;
-	void *src;
 
 	slot_lock(zram, index);
 	/* Since slot was unlocked we need to make sure it's still ZRAM_WB */
@@ -1368,14 +1370,19 @@ static int decompress_bdev_page(struct zram *zram, struct page *page,
 	size = get_slot_size(zram, index);
 	prio = get_slot_comp_priority(zram, index);
 
-	zstrm = zcomp_stream_get(zram->comps[prio]);
-	src = kmap_local_page(page);
-	ret = zcomp_decompress(zram->comps[prio], zstrm, src, size,
+	sg_init_table(sg, 1);
+	sg_set_page(sg, page, size, 0);
+
+	zstrm = zcomp_dstrm_get(zram->comps[prio], ZCOMP_DSTRM_EXCLUSIVE);
+	ret = zcomp_decompress(zram->comps[prio], zstrm, sg, size,
 			       zstrm->local_copy);
-	if (!ret)
-		copy_page(src, zstrm->local_copy);
-	kunmap_local(src);
-	zcomp_stream_put(zstrm);
+	if (!ret) {
+		void *dst = kmap_local_page(page);
+
+		copy_page(dst, zstrm->local_copy);
+		kunmap_local(dst);
+	}
+	zcomp_dstrm_put(zram->comps[prio], zstrm, ZCOMP_DSTRM_EXCLUSIVE);
 	slot_unlock(zram, index);
 
 	return ret;
@@ -2093,15 +2100,19 @@ static int read_same_filled_page(struct zram *zram, struct page *page,
 static int read_incompressible_page(struct zram *zram, struct page *page,
 				    unsigned long index)
 {
+	struct scatterlist sg[2];
 	unsigned long handle;
 	void *src, *dst;
 
 	handle = get_slot_handle(zram, index);
-	src = zs_obj_read_begin(zram->mem_pool, handle, PAGE_SIZE, NULL);
+	zs_obj_read_sg_begin(zram->mem_pool, handle, sg, PAGE_SIZE);
+	/* an incompressible object never spans two pages */
+	src = kmap_local_page(sg_page(sg));
 	dst = kmap_local_page(page);
 	copy_page(dst, src);
 	kunmap_local(dst);
-	zs_obj_read_end(zram->mem_pool, handle, PAGE_SIZE, src);
+	kunmap_local(src);
+	zs_obj_read_sg_end(zram->mem_pool, handle);
 
 	return 0;
 }
@@ -2109,24 +2120,28 @@ static int read_incompressible_page(struct zram *zram, struct page *page,
 static int read_compressed_page(struct zram *zram, struct page *page,
 				unsigned long index)
 {
-	struct zcomp_strm *zstrm;
+	enum zcomp_dstrm_mode mode = ZCOMP_DSTRM_EXCLUSIVE;
+	struct zcomp_dstrm *zstrm;
+	struct scatterlist sg[2];
 	unsigned long handle;
 	unsigned int size;
-	void *src, *dst;
+	void *dst;
 	int ret, prio;
 
 	handle = get_slot_handle(zram, index);
 	size = get_slot_size(zram, index);
 	prio = get_slot_comp_priority(zram, index);
 
-	zstrm = zcomp_stream_get(zram->comps[prio]);
-	src = zs_obj_read_begin(zram->mem_pool, handle, size,
-				zstrm->local_copy);
+	zs_obj_read_sg_begin(zram->mem_pool, handle, sg, size);
+	if (zcomp_shared_decomp(zram->comps[prio]))
+		mode = ZCOMP_DSTRM_SHARED;
+
+	zstrm = zcomp_dstrm_get(zram->comps[prio], mode);
 	dst = kmap_local_page(page);
-	ret = zcomp_decompress(zram->comps[prio], zstrm, src, size, dst);
+	ret = zcomp_decompress(zram->comps[prio], zstrm, sg, size, dst);
 	kunmap_local(dst);
-	zs_obj_read_end(zram->mem_pool, handle, size, src);
-	zcomp_stream_put(zstrm);
+	zcomp_dstrm_put(zram->comps[prio], zstrm, mode);
+	zs_obj_read_sg_end(zram->mem_pool, handle);
 
 	return ret;
 }
@@ -2135,25 +2150,23 @@ static int read_compressed_page(struct zram *zram, struct page *page,
 static int read_from_zspool_raw(struct zram *zram, struct page *page,
 				unsigned long index)
 {
-	struct zcomp_strm *zstrm;
+	struct scatterlist sg[2];
 	unsigned long handle;
 	unsigned int size;
-	void *src;
+	void *dst;
 
 	handle = get_slot_handle(zram, index);
 	size = get_slot_size(zram, index);
 
 	/*
-	 * We need to get stream just for ->local_copy buffer, in
-	 * case if object spans two physical pages. No decompression
-	 * takes place here, as we read raw compressed data.
+	 * No decompression takes place here, we copy out raw compressed
+	 * data directly into the destination page.
 	 */
-	zstrm = zcomp_stream_get(zram->comps[ZRAM_PRIMARY_COMP]);
-	src = zs_obj_read_begin(zram->mem_pool, handle, size,
-				zstrm->local_copy);
-	memcpy_to_page(page, 0, src, size);
-	zs_obj_read_end(zram->mem_pool, handle, size, src);
-	zcomp_stream_put(zstrm);
+	zs_obj_read_sg_begin(zram->mem_pool, handle, sg, size);
+	dst = kmap_local_page(page);
+	sg_copy_to_buffer(sg, sg_nents(sg), dst, size);
+	kunmap_local(dst);
+	zs_obj_read_sg_end(zram->mem_pool, handle);
 
 	memzero_page(page, size, PAGE_SIZE - size);
 
@@ -2184,6 +2197,7 @@ static int zram_read_page(struct zram *zram, struct page *page,
 	int ret;
 
 	slot_lock(zram, index);
+	mark_slot_accessed(zram, index);
 	if (!test_slot_flag(zram, index, ZRAM_WB)) {
 		/* Slot should be locked through out the function call */
 		ret = read_from_zspool(zram, page, index);
@@ -2198,10 +2212,6 @@ static int zram_read_page(struct zram *zram, struct page *page,
 		slot_unlock(zram, index);
 		ret = read_from_bdev(zram, page, index, blk_idx, parent);
 	}
-
-	/* Should NEVER happen. Return bio error if it does. */
-	if (WARN_ON(ret < 0))
-		pr_err("Decompression failed! err=%d, page=%lu\n", ret, index);
 
 	return ret;
 }
@@ -2240,6 +2250,7 @@ static int write_same_filled_page(struct zram *zram, unsigned long fill,
 	slot_free(zram, index);
 	set_slot_flag(zram, index, ZRAM_SAME);
 	set_slot_handle(zram, index, fill);
+	mark_slot_accessed(zram, index);
 	slot_unlock(zram, index);
 
 	atomic64_inc(&zram->stats.same_pages);
@@ -2279,6 +2290,7 @@ static int write_incompressible_page(struct zram *zram, struct page *page,
 	set_slot_flag(zram, index, ZRAM_HUGE);
 	set_slot_handle(zram, index, handle);
 	set_slot_size(zram, index, PAGE_SIZE);
+	mark_slot_accessed(zram, index);
 	slot_unlock(zram, index);
 
 	atomic64_add(PAGE_SIZE, &zram->stats.compr_data_size);
@@ -2296,7 +2308,7 @@ static int zram_write_page(struct zram *zram, struct page *page,
 	unsigned long handle;
 	unsigned int comp_len;
 	void *mem;
-	struct zcomp_strm *zstrm;
+	struct zcomp_cstrm *zstrm;
 	unsigned long element;
 	bool same_filled;
 
@@ -2306,20 +2318,20 @@ static int zram_write_page(struct zram *zram, struct page *page,
 	if (same_filled)
 		return write_same_filled_page(zram, element, index);
 
-	zstrm = zcomp_stream_get(zram->comps[ZRAM_PRIMARY_COMP]);
+	zstrm = zcomp_cstrm_get(zram->comps[ZRAM_PRIMARY_COMP]);
 	mem = kmap_local_page(page);
 	ret = zcomp_compress(zram->comps[ZRAM_PRIMARY_COMP], zstrm,
 			     mem, &comp_len);
 	kunmap_local(mem);
 
 	if (unlikely(ret)) {
-		zcomp_stream_put(zstrm);
+		zcomp_cstrm_put(zstrm);
 		pr_err("Compression failed! err=%d\n", ret);
 		return ret;
 	}
 
 	if (comp_len >= huge_class_size) {
-		zcomp_stream_put(zstrm);
+		zcomp_cstrm_put(zstrm);
 		return write_incompressible_page(zram, page, index);
 	}
 
@@ -2327,23 +2339,24 @@ static int zram_write_page(struct zram *zram, struct page *page,
 			   GFP_NOIO | __GFP_NOWARN |
 			   __GFP_HIGHMEM | __GFP_MOVABLE, page_to_nid(page));
 	if (IS_ERR_VALUE(handle)) {
-		zcomp_stream_put(zstrm);
+		zcomp_cstrm_put(zstrm);
 		return PTR_ERR((void *)handle);
 	}
 
 	if (!zram_can_store_page(zram)) {
-		zcomp_stream_put(zstrm);
+		zcomp_cstrm_put(zstrm);
 		zs_free(zram->mem_pool, handle);
 		return -ENOMEM;
 	}
 
 	zs_obj_write(zram->mem_pool, handle, zstrm->buffer, comp_len);
-	zcomp_stream_put(zstrm);
+	zcomp_cstrm_put(zstrm);
 
 	slot_lock(zram, index);
 	slot_free(zram, index);
 	set_slot_handle(zram, index, handle);
 	set_slot_size(zram, index, comp_len);
+	mark_slot_accessed(zram, index);
 	slot_unlock(zram, index);
 
 	/* Update stats */
@@ -2447,7 +2460,7 @@ static int recompress_slot(struct zram *zram, unsigned long index,
 			   struct page *page, u64 *num_recomp_pages,
 			   u32 threshold, u32 prio)
 {
-	struct zcomp_strm *zstrm = NULL;
+	struct zcomp_cstrm *zstrm = NULL;
 	unsigned long handle_old;
 	unsigned long handle_new;
 	unsigned int comp_len_old;
@@ -2479,7 +2492,7 @@ static int recompress_slot(struct zram *zram, unsigned long index,
 	 */
 	clear_slot_flag(zram, index, ZRAM_IDLE);
 
-	zstrm = zcomp_stream_get(zram->comps[prio]);
+	zstrm = zcomp_cstrm_get(zram->comps[prio]);
 	src = kmap_local_page(page);
 	ret = zcomp_compress(zram->comps[prio], zstrm, src, &comp_len_new);
 	kunmap_local(src);
@@ -2494,7 +2507,7 @@ static int recompress_slot(struct zram *zram, unsigned long index,
 		*num_recomp_pages -= 1;
 
 	if (ret) {
-		zcomp_stream_put(zstrm);
+		zcomp_cstrm_put(zstrm);
 		return ret;
 	}
 
@@ -2503,7 +2516,7 @@ static int recompress_slot(struct zram *zram, unsigned long index,
 
 	if (class_index_new >= class_index_old ||
 	    (threshold && comp_len_new >= threshold)) {
-		zcomp_stream_put(zstrm);
+		zcomp_cstrm_put(zstrm);
 
 		/*
 		 * Secondary algorithms failed to re-compress the page
@@ -2518,7 +2531,7 @@ static int recompress_slot(struct zram *zram, unsigned long index,
 	}
 
 	/*
-	 * We are holding per-CPU stream mutex and entry lock so better
+	 * We are holding compression stream mutex and entry lock so better
 	 * avoid direct reclaim.  Allocation error is not fatal since
 	 * we still have the old object in the mem_pool.
 	 *
@@ -2532,12 +2545,12 @@ static int recompress_slot(struct zram *zram, unsigned long index,
 			       __GFP_HIGHMEM | __GFP_MOVABLE,
 			       page_to_nid(page));
 	if (IS_ERR_VALUE(handle_new)) {
-		zcomp_stream_put(zstrm);
+		zcomp_cstrm_put(zstrm);
 		return PTR_ERR((void *)handle_new);
 	}
 
 	zs_obj_write(zram->mem_pool, handle_new, zstrm->buffer, comp_len_new);
-	zcomp_stream_put(zstrm);
+	zcomp_cstrm_put(zstrm);
 
 	slot_free(zram, index);
 	set_slot_handle(zram, index, handle_new);
@@ -2752,10 +2765,6 @@ static void zram_bio_read(struct zram *zram, struct bio *bio)
 		}
 		flush_dcache_page(bv.bv_page);
 
-		slot_lock(zram, index);
-		mark_slot_accessed(zram, index);
-		slot_unlock(zram, index);
-
 		bio_advance_iter_single(bio, &iter, bv.bv_len);
 	} while (iter.bi_size);
 
@@ -2781,10 +2790,6 @@ static void zram_bio_write(struct zram *zram, struct bio *bio)
 			bio->bi_status = BLK_STS_IOERR;
 			break;
 		}
-
-		slot_lock(zram, index);
-		mark_slot_accessed(zram, index);
-		slot_unlock(zram, index);
 
 		bio_advance_iter_single(bio, &iter, bv.bv_len);
 	} while (iter.bi_size);
@@ -2878,6 +2883,12 @@ static void zram_reset_device(struct zram *zram)
 	zram_destroy_comps(zram);
 	memset(&zram->stats, 0, sizeof(zram->stats));
 	reset_bdev(zram);
+#ifdef CONFIG_ZRAM_WRITEBACK
+	zram->wb_limit_enable = false;
+	zram->bd_wb_limit = 0;
+	zram->wb_batch_size = 32;
+	zram->compressed_wb = false;
+#endif
 }
 
 static ssize_t disksize_store(struct device *dev, struct device_attribute *attr,
@@ -2914,7 +2925,8 @@ static ssize_t disksize_store(struct device *dev, struct device_attribute *attr,
 			continue;
 
 		comp = zcomp_create(zram->comp_algs[prio],
-				    &zram->params[prio]);
+				    &zram->params[prio],
+				    prio != ZRAM_PRIMARY_COMP);
 		if (IS_ERR(comp)) {
 			pr_err("Cannot initialise %s compressing backend\n",
 			       zram->comp_algs[prio]);
@@ -3294,6 +3306,7 @@ static int __init zram_init(void)
 	if (zram_major <= 0) {
 		pr_err("Unable to get major number\n");
 		class_unregister(&zram_control_class);
+		zram_debugfs_destroy();
 		cpuhp_remove_multi_state(CPUHP_ZCOMP_PREPARE);
 		return -EBUSY;
 	}

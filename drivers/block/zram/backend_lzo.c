@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#define pr_fmt(fmt) "lzo: " fmt
+#define pr_fmt(fmt) "zram: lzo: " fmt
 
 #include <linux/kernel.h>
 #include <linux/slab.h>
@@ -61,8 +61,8 @@ static int lzo_decompress(struct zcomp_params *params, struct zcomp_ctx *ctx,
 const struct zcomp_ops backend_lzo = {
 	.compress	= lzo_compress,
 	.decompress	= lzo_decompress,
-	.create_ctx	= lzo_create,
-	.destroy_ctx	= lzo_destroy,
+	.create_cctx	= lzo_create,
+	.destroy_cctx	= lzo_destroy,
 	.setup_params	= lzo_setup_params,
 	.release_params	= lzo_release_params,
 	.name		= "lzo",
