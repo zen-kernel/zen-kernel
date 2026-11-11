@@ -3329,7 +3329,6 @@ __acquires(&pool->lock)
 		worker->current_at = worker->task->sched_time;
 #else
 		worker->current_at = READ_ONCE(worker->task->se.sum_exec_runtime);
-		worker->current_at = worker->task->se.sum_exec_runtime;
 #endif
 	worker->current_start = jiffies;
 	work_data = *work_data_bits(work);
