@@ -2119,8 +2119,10 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 		if (affine_cpu >= nr_cpu_ids)
 			affine_cpu = wake_affine_idle(cpu, prev_cpu, sync);
 		else if (!available_idle_cpu(affine_cpu) &&
-			 cpu_rq(cpu)->nr_running + cpu_rq(affine_cpu)->nr_running > 3 &&
-			 cpumask_intersects(&allow_mask, sched_idle_mask))
+			 ((affine_cpu != cpu &&
+			   task_sched_prio(p) >= cpu_rq(affine_cpu)->prio) ||
+			  (cpu_rq(cpu)->nr_running + cpu_rq(affine_cpu)->nr_running > 3 &&
+			   cpumask_intersects(&allow_mask, sched_idle_mask))))
 			affine_cpu = nr_cpu_ids;
 		if (affine_cpu < nr_cpu_ids &&
 		    cpumask_test_cpu(affine_cpu, &allow_mask)) {
