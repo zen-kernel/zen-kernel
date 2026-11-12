@@ -209,8 +209,8 @@ static bool zcomp_dstrm_excl_trylock(struct zcomp_dstrm *zstrm)
 
 static struct zcomp_dstrm *zcomp_dstrm_excl_tryget(struct zcomp *comp)
 {
-	struct zcomp_dstrm *zstrm;
 	unsigned int cpu, start = raw_smp_processor_id();
+	struct zcomp_dstrm *zstrm;
 
 	/* Best-effort start CPU hint; migration during the scan is fine */
 	for_each_online_cpu_wrap(cpu, start) {
