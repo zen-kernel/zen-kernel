@@ -99,6 +99,11 @@ static inline void sched_task_ttwu(struct task_struct *p)
 		boost_task(p, delta  >> 22);
 }
 
+static inline bool sched_task_has_credit(const struct task_struct *p)
+{
+	return false;
+}
+
 static inline void sched_task_deactivate(struct task_struct *p, struct rq *rq)
 {
 	boost_task(p, 1);

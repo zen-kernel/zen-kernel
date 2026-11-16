@@ -217,6 +217,11 @@ static inline void sched_task_ttwu(struct task_struct *p)
 	p->sleep_credit = credit;
 }
 
+static inline bool sched_task_has_credit(const struct task_struct *p)
+{
+	return p->sleep_credit;
+}
+
 static inline void sched_task_deactivate(struct task_struct *p, struct rq *rq)
 {
 	p->sleep_start = rq->clock;
