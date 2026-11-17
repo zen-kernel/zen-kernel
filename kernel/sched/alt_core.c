@@ -2154,7 +2154,8 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 			if (prio < cpu_rq(new_cpu)->prio) {
 				struct task_struct *curr = rcu_dereference(cpu_rq(new_cpu)->curr);
 
-				if (!rt_task(curr) && !sched_task_has_credit(curr))
+				if (!rt_task(curr) && !sched_task_has_credit(curr) &&
+				    !test_tsk_need_resched(curr))
 					goto out;
 				if (preempt_cpu >= nr_cpu_ids)
 					preempt_cpu = new_cpu;
