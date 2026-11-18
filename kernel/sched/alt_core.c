@@ -2067,6 +2067,17 @@ wake_affine_idle(int this_cpu, int prev_cpu, int sync)
 	return nr_cpu_ids;
 }
 
+static inline bool sched_preempt_victim(int cpu)
+{
+	struct task_struct *curr;
+
+	guard(rcu)();
+	curr = rcu_dereference(cpu_rq(cpu)->curr);
+
+	return !rt_task(curr) && !sched_task_has_credit(curr) &&
+	       !test_tsk_need_resched(curr);
+}
+
 static inline int select_task_rq(struct task_struct *p, int wake_flags)
 {
 	int sync = (wake_flags & WF_SYNC) && !(current->flags & PF_EXITING);
@@ -2121,7 +2132,8 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 		else if (!available_idle_cpu(affine_cpu) &&
 			 ((affine_cpu != cpu &&
 			   (rt_task(p) || sched_task_has_credit(p)) &&
-			   task_sched_prio(p) >= cpu_rq(affine_cpu)->prio) ||
+			   (task_sched_prio(p) >= cpu_rq(affine_cpu)->prio ||
+			    !sched_preempt_victim(affine_cpu))) ||
 			  (cpu_rq(cpu)->nr_running + cpu_rq(affine_cpu)->nr_running > 3 &&
 			   cpumask_intersects(&allow_mask, sched_idle_mask))))
 			affine_cpu = nr_cpu_ids;
@@ -2148,14 +2160,10 @@ static inline int select_task_rq(struct task_struct *p, int wake_flags)
 	if (preempt_mask_check(&mask, &allow_mask, prio)) {
 		int preempt_cpu = nr_cpu_ids;
 
-		guard(rcu)();
 		do {
 			new_cpu = best_mask_cpu(prev_cpu, &mask);
 			if (prio < cpu_rq(new_cpu)->prio) {
-				struct task_struct *curr = rcu_dereference(cpu_rq(new_cpu)->curr);
-
-				if (!rt_task(curr) && !sched_task_has_credit(curr) &&
-				    !test_tsk_need_resched(curr))
+				if (sched_preempt_victim(new_cpu))
 					goto out;
 				if (preempt_cpu >= nr_cpu_ids)
 					preempt_cpu = new_cpu;
