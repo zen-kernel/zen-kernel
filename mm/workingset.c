@@ -247,7 +247,7 @@ static void *lru_gen_eviction(struct folio *folio)
 	struct lru_gen_folio *lrugen;
 	int type = folio_is_file_lru(folio);
 	int delta = folio_nr_pages(folio);
-	int refs = folio_lru_refs(folio);
+	unsigned int refs = folio_lru_refs(folio);
 	int tier = lru_tier_from_refs(refs);
 	struct mem_cgroup *memcg;
 	struct pglist_data *pgdat = folio_pgdat(folio);
@@ -337,7 +337,7 @@ static void lru_gen_refault(struct folio *folio, void *shadow)
 		__folio_set_lru_refs(folio, min(refs, LRU_REFS_PROTECTED));
 	}
 
-	if (refs >= LRU_REFS_WORKINGSET)
+	if (lru_refs_is_workingset(refs))
 		mod_lruvec_state(lruvec, WORKINGSET_RESTORE_BASE + type, delta);
 unlock:
 	rcu_read_unlock();

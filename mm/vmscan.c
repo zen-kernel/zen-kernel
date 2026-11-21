@@ -899,7 +899,8 @@ enum folio_references {
 void folio_inc_lru_refs(struct folio *folio, unsigned int flags)
 {
 	int max_gen;
-	int file, old_refs, refs, old_gen, gen;
+	unsigned int refs, old_refs;
+	int file, old_gen, gen;
 	unsigned long new_flags, old_flags, max_seq;
 	long nr_pages = folio_nr_pages(folio);
 	struct lru_gen_folio *lrugen;
@@ -931,18 +932,19 @@ retry:
 		if (old_gen == max_gen)
 			goto out;
 		if (flags & (LRU_REF_MAPPED | LRU_REF_EXEC | LRU_REF_FORCE)) {
-			if (refs > LRU_REFS_REFERENCED ||
+			if (lru_refs_is_workingset(refs) ||
 			    flags & (LRU_REF_EXEC | LRU_REF_FORCE))
 				gen = max_gen;
-			/* First access only defers eviction of a tail gen */
-			else if (lru_gen_at_tail(lruvec, file, old_gen))
+			/* First access only defers eviction of an old generation */
+			else if (lru_gen_is_old(lruvec, file, old_gen))
 				gen = (old_gen + 1) % MAX_NR_GENS;
 			refs = min(refs, LRU_REFS_PROTECTED);
 		} else if (refs > LRU_REFS_MAX) {
 			/* LRU refs counting overflow, bump the gen */
 			gen = (old_gen + 1) % MAX_NR_GENS;
 			refs = LRU_REFS_PROTECTED;
-		} else if (lru_gen_at_tail(lruvec, file, old_gen) && refs >= LRU_REFS_WORKINGSET) {
+		} else if (lru_gen_is_old(lruvec, file, old_gen) &&
+			   lru_refs_is_workingset(refs)) {
 			/* Defer eviction of just accessed workingset */
 			gen = (old_gen + 1) % MAX_NR_GENS;
 			refs = min(refs, LRU_REFS_PROTECTED);
@@ -990,7 +992,8 @@ out:
  */
 bool folio_reset_lru_refs(struct folio *folio)
 {
-	int type, gen, refs;
+	unsigned int refs;
+	int type, gen;
 	unsigned long seq, new_flags, old_flags;
 	long nr_pages = folio_nr_pages(folio);
 	struct lruvec *lruvec;
@@ -1039,7 +1042,8 @@ static int folio_inc_lru_refs_walk(struct folio *folio, struct lruvec *lruvec,
 				   int *old_refs, int *new_refs, int *type)
 {
 	unsigned long new_flags, old_flags = READ_ONCE(*folio_flags(folio, 0));
-	int refs, old_gen, max_gen;
+	unsigned int refs;
+	int old_gen, max_gen;
 	unsigned long max_seq;
 
 	do {
@@ -1053,10 +1057,10 @@ static int folio_inc_lru_refs_walk(struct folio *folio, struct lruvec *lruvec,
 		if (old_gen >= 0 && old_gen != max_gen) {
 			*new_refs = min(refs, LRU_REFS_PROTECTED);
 			/* Promote second page table access or executable */
-			if (refs > LRU_REFS_REFERENCED || is_exec_file_folio(folio, vma_flags))
+			if (lru_refs_is_workingset(refs) || is_exec_file_folio(folio, vma_flags))
 				*new_gen = max_gen;
-			/* First access only defers eviction of a tail gen */
-			else if (lru_gen_at_tail(lruvec, *type, old_gen))
+			/* First access only defers eviction of an old generation */
+			else if (lru_gen_is_old(lruvec, *type, old_gen))
 				*new_gen = (old_gen + 1) % MAX_NR_GENS;
 			else
 				*new_gen = old_gen;
@@ -1088,7 +1092,7 @@ static int folio_inc_lru_refs_walk(struct folio *folio, struct lruvec *lruvec,
 static bool folio_inc_lru_refs_isolated(struct folio *folio, const vma_flags_t *vma_flags)
 {
 	unsigned long new_flags, old_flags = READ_ONCE(*folio_flags(folio, 0));
-	int refs;
+	unsigned int refs;
 
 	do {
 		new_flags = old_flags;
@@ -1097,7 +1101,7 @@ static bool folio_inc_lru_refs_isolated(struct folio *folio, const vma_flags_t *
 	} while (!try_cmpxchg(folio_flags(folio, 0), &old_flags, new_flags));
 
 	/* Promote second page table access or executable */
-	return refs > LRU_REFS_REFERENCED || is_exec_file_folio(folio, vma_flags);
+	return lru_refs_is_workingset(refs) || is_exec_file_folio(folio, vma_flags);
 }
 #else
 static bool folio_inc_lru_refs_isolated(struct folio *folio, const vma_flags_t *vma_flags)
@@ -3514,7 +3518,8 @@ static int __folio_inc_gen(struct lruvec *lruvec, struct folio *folio,
 		int old_gen, bool *increased)
 {
 	unsigned long new_flags, old_flags = READ_ONCE(*folio_flags(folio, 0));
-	int file, refs, old_refs, new_gen;
+	unsigned int refs, old_refs;
+	int file, new_gen;
 
 	do {
 		new_gen = lru_get_gen_flags(old_flags);
@@ -4202,7 +4207,7 @@ static bool inc_min_seq(struct lruvec *lruvec, int type, int swappiness)
 		while (pos != head) {
 			struct folio *folio = list_entry(pos, struct folio, lru);
 			long nr_pages = folio_nr_pages(folio);
-			int refs = folio_lru_refs(folio);
+			unsigned int refs = folio_lru_refs(folio);
 			int tier = lru_tier_from_refs(refs);
 			bool gen_increased;
 
@@ -4920,7 +4925,7 @@ static bool sort_folio(struct lruvec *lruvec, struct folio *folio, struct scan_c
 	int type = folio_is_file_lru(folio);
 	int zone = folio_zonenum(folio);
 	int delta = folio_nr_pages(folio);
-	int refs = folio_lru_refs(folio);
+	unsigned int refs = folio_lru_refs(folio);
 	int tier = lru_tier_from_refs(refs);
 	struct lru_gen_folio *lrugen = &lruvec->lrugen;
 

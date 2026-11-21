@@ -551,6 +551,11 @@ static inline bool mem_cgroup_disabled(void)
 	return !cgroup_subsys_enabled(memory_cgrp_subsys);
 }
 
+static inline bool memcg_is_dying(struct mem_cgroup *memcg)
+{
+	return memcg ? css_is_dying(&memcg->css) : false;
+}
+
 static inline void mem_cgroup_protection(struct mem_cgroup *root,
 					 struct mem_cgroup *memcg,
 					 unsigned long *min,
@@ -1343,6 +1348,11 @@ static inline bool mem_cgroup_online(struct mem_cgroup *memcg)
 	return true;
 }
 
+static inline bool memcg_is_dying(struct mem_cgroup *memcg)
+{
+	return false;
+}
+
 static inline
 unsigned long mem_cgroup_get_zone_lru_size(struct lruvec *lruvec,
 		enum lru_list lru, int zone_idx)
@@ -1508,67 +1518,41 @@ static inline void lruvec_lock_irq(struct lruvec *lruvec)
 	spin_lock_irq(&lruvec->lru_lock);
 }
 
-/**
- * folio_lruvec_live_get - get a live lruvec for a folio under RCU
- * @folio: the folio
- *
- * Computes @folio's lruvec and walks up to the nearest live ancestor
- * if the folio's memcg is dying.  Paired with folio_lruvec_live_put().
- * The result may be stale: RCU keeps it alive but does not pin @folio
- * to it.  That is fine as the counters are fixed up on reparenting.
- *
- * Return: the live lruvec, with rcu_read_lock held.
+/*
+ * Reparenting moves a dying memcg's LRU state to its parent at any time,
+ * so anything added to that LRU afterwards would be lost.  This helper
+ * walks up to the nearest live ancestor while the caller must hold the
+ * RCU read lock: reparenting of a memcg that starts dying waits for a
+ * grace period, so it cannot race with the caller until the lock is
+ * released.
  */
-static inline struct lruvec *folio_lruvec_live_get(struct folio *folio)
-{
-#ifdef CONFIG_MEMCG
-	struct lruvec *lruvec;
-	struct pglist_data *pgdat;
-	struct mem_cgroup *memcg;
-
-	rcu_read_lock();
-	lruvec = folio_lruvec(folio);
-	pgdat = lruvec_pgdat(lruvec);
-	memcg = lruvec_memcg(lruvec);
-	while (unlikely(memcg && css_is_dying(&memcg->css))) {
-		memcg = parent_mem_cgroup(memcg);
-		lruvec = mem_cgroup_lruvec(memcg, pgdat);
-	}
-	return lruvec;
-#else
-	return folio_lruvec(folio);
-#endif
-}
-
-static inline void folio_lruvec_live_put(struct lruvec *lruvec)
-{
-#ifdef CONFIG_MEMCG
-	rcu_read_unlock();
-#endif
-}
-
-static inline struct lruvec *lruvec_live_lock_irq(struct lruvec *lruvec)
+static inline struct lruvec *__lruvec_get_live(struct lruvec *lruvec)
 {
 #ifdef CONFIG_MEMCG
 	struct pglist_data *pgdat = lruvec_pgdat(lruvec);
 	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
 
-	rcu_read_lock();
-
 	/*
 	 * The memcg can be NULL when the memory controller is disabled.
 	 * Otherwise, the caller keeps the memcg owning @lruvec alive.
 	 */
-	while (unlikely(memcg && css_is_dying(&memcg->css))) {
+	while (unlikely(memcg_is_dying(memcg))) {
 		memcg = parent_mem_cgroup(memcg);
 		lruvec = mem_cgroup_lruvec(memcg, pgdat);
 	}
+#endif
+	return lruvec;
+}
 
+static inline struct lruvec *lruvec_live_lock_irq(struct lruvec *lruvec)
+{
+#ifdef CONFIG_MEMCG
+	rcu_read_lock();
+	lruvec = __lruvec_get_live(lruvec);
 	spin_lock_irq(&lruvec->lru_lock);
 #else
 	lruvec_lock_irq(lruvec);
 #endif
-
 	return lruvec;
 }
 
@@ -1596,6 +1580,34 @@ static inline bool folio_matches_lruvec(struct folio *folio,
 {
 	return lruvec_pgdat(lruvec) == folio_pgdat(folio) &&
 	       lruvec_memcg(lruvec) == folio_memcg(folio);
+}
+
+/**
+ * folio_lruvec_live_get - get a live lruvec for a folio under RCU
+ * @folio: the folio
+ *
+ * Same as folio_lruvec(), except that a folio whose memcg is dying is
+ * accounted to the nearest live ancestor, which is where reparenting
+ * would put it anyway.
+ *
+ * Return: the live lruvec, with rcu_read_lock() held.  Pair it with
+ * folio_lruvec_live_put().
+ */
+static inline struct lruvec *folio_lruvec_live_get(struct folio *folio)
+{
+#ifdef CONFIG_MEMCG
+	rcu_read_lock();
+	return __lruvec_get_live(folio_lruvec(folio));
+#else
+	return folio_lruvec(folio);
+#endif
+}
+
+static inline void folio_lruvec_live_put(struct lruvec *lruvec)
+{
+#ifdef CONFIG_MEMCG
+	rcu_read_unlock();
+#endif
 }
 
 /* Don't lock again iff page's lruvec locked */
@@ -1862,11 +1874,6 @@ void mem_cgroup_node_filter_allowed(struct mem_cgroup *memcg, nodemask_t *mask);
 
 void mem_cgroup_show_protected_memory(struct mem_cgroup *memcg);
 
-static inline bool memcg_is_dying(struct mem_cgroup *memcg)
-{
-	return memcg ? css_is_dying(&memcg->css) : false;
-}
-
 #else
 static inline bool mem_cgroup_kmem_disabled(void)
 {
@@ -1936,11 +1943,6 @@ static inline void mem_cgroup_node_filter_allowed(struct mem_cgroup *memcg,
 
 static inline void mem_cgroup_show_protected_memory(struct mem_cgroup *memcg)
 {
-}
-
-static inline bool memcg_is_dying(struct mem_cgroup *memcg)
-{
-	return false;
 }
 #endif /* CONFIG_MEMCG */
 
