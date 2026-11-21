@@ -3304,6 +3304,7 @@ static void cpuset_cancel_attach(struct cgroup_taskset *tset)
 	dec_attach_in_progress_locked();
 	clear_attach_data(&src_cs_head, true);
 	clear_attach_data(&dst_cs_head, true);
+	mutex_unlock(&cpuset_mutex);
 }
 
 /*
