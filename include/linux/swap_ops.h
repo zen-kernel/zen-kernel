@@ -17,6 +17,16 @@ struct swap_iocb {
 struct swap_io_ctx {
 	struct swap_iocb	*sio;
 	struct swap_info_struct	*sis;
+
+	/*
+	 * Pressure window: opened by swap_read_folio() on the first folio
+	 * of a batch, closed by swap_read_submit(). Mirrors per-task
+	 * state, so the task that opened it must be the one to close it.
+	 */
+	bool			workingset;
+	bool			in_delayacct;
+	bool			in_thrashing;
+	unsigned long		in_memstall;
 };
 
 /*
