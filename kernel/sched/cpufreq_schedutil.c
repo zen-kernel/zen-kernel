@@ -426,7 +426,7 @@ static inline void ignore_dl_rate_limit(struct sugov_cpu *sg_cpu)
 {
 #ifndef CONFIG_SCHED_ALT
 	if (cpu_bw_dl(cpu_rq(sg_cpu->cpu)) > sg_cpu->bw_min)
-		sg_cpu->sg_policy->limits_changed = true;
+		sg_cpu->sg_policy->need_freq_update = true;
 #endif
 }
 
