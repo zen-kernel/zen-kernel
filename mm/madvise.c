@@ -385,7 +385,7 @@ static void madvise_cold_prep_folio(struct folio *folio)
 
 static void madvise_pageout_prep_folio(struct folio *folio)
 {
-	int refs = folio_lru_refs(folio);
+	unsigned int refs = folio_lru_refs(folio);
 
 	/*
 	 * For MGLRU, drop the count below LRU_REFS_WORKINGSET and cap
@@ -395,7 +395,7 @@ static void madvise_pageout_prep_folio(struct folio *folio)
 	 * the workingset classification is preserved for PSI.
 	 */
 	if (lru_gen_enabled())
-		__folio_set_lru_refs(folio, refs >= LRU_REFS_WORKINGSET ? LRU_REFS_WORKINGSET : 0);
+		__folio_set_lru_refs(folio, lru_refs_is_workingset(refs) ? LRU_REFS_WORKINGSET : 0);
 }
 
 static int madvise_cold_or_pageout_pte_range(pmd_t *pmd,

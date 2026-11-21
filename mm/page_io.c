@@ -225,7 +225,17 @@ int swap_writeout(struct swap_io_ctx *ctx, struct folio *folio)
 	 * acquired internally by swap_zeromap_folio_set/clear.
 	 */
 	if (is_folio_zero_filled(folio)) {
+		unsigned int i;
+
 		swap_zeromap_folio_set(folio);
+
+		/*
+		 * The folio may have been stored in zswap before and dirtied
+		 * again while it stayed in the swap cache. Drop the old copy,
+		 * or zswap writeback would bring it back into the swap cache.
+		 */
+		for (i = 0; i < folio_nr_pages(folio); i++)
+			zswap_invalidate(page_swap_entry(folio_page(folio, i)));
 		goto out_unlock;
 	}
 
@@ -335,13 +345,11 @@ static void swap_add_folio(struct swap_io_ctx *ctx, struct folio *folio, int rw)
 	struct swap_info_struct *sis = __swap_entry_to_info(folio->swap);
 	struct swap_iocb *sio = ctx->sio;
 
-	if (sio && !swap_can_merge(ctx, folio, rw)) {
-		if (rw == WRITE)
-			swap_write_submit(ctx);
-		else
-			swap_read_submit(ctx);
-		sio = ctx->sio;
-	}
+	/*
+	 * Callers flush a batch this folio can't join before adding it,
+	 * see swap_read_folio() and __swap_writeout().
+	 */
+	VM_WARN_ON_ONCE(sio && !swap_can_merge(ctx, folio, rw));
 
 	if (!sio) {
 		ctx->sis = sis;
@@ -384,6 +392,14 @@ void __swap_writepage(struct swap_io_ctx *ctx, struct folio *folio)
 
 	folio_start_writeback(folio);
 	folio_unlock(folio);
+
+	/*
+	 * Flush a batch this folio can't join before adding it, as in
+	 * swap_read_folio(). But the write path opens no pressure window,
+	 * so there is nothing to order this against.
+	 */
+	if (ctx->sio && !swap_can_merge(ctx, folio, WRITE))
+		swap_write_submit(ctx);
 	swap_add_folio(ctx, folio, WRITE);
 }
 
@@ -455,42 +471,55 @@ void swap_read_folio(struct swap_io_ctx *ctx, struct folio *folio)
 	struct swap_info_struct *sis = __swap_entry_to_info(folio->swap);
 	bool synchronous = sis->flags & SWP_SYNCHRONOUS_IO;
 	bool workingset = folio_test_workingset(folio);
-	unsigned long pflags;
-	bool in_thrashing;
 
 	VM_BUG_ON_FOLIO(!folio_test_swapcache(folio) && !synchronous, folio);
 	VM_BUG_ON_FOLIO(!folio_test_locked(folio), folio);
 	VM_BUG_ON_FOLIO(folio_test_uptodate(folio), folio);
 
 	/*
+	 * A batch this folio can't join is submitted before the pressure
+	 * window opens, so that each batch is billed for its own read
+	 * rather than for the next folio's lookup and decompression.
+	 */
+	if (ctx->sio && !swap_can_merge(ctx, folio, READ))
+		swap_read_submit(ctx);
+
+	/*
 	 * Count submission time as memory stall and delay. When the device
 	 * is congested, or the submitting cgroup IO-throttled, submission
-	 * can be a significant part of overall IO time.
+	 * can be a significant part of overall IO time. Reads are batched and
+	 * submitted later, so both windows stay open on @ctx, and are closed
+	 * by swap_read_submit() after the submission, also when the batch
+	 * ends up with no folio queued.
 	 */
-	if (workingset) {
-		delayacct_thrashing_start(&in_thrashing);
-		psi_memstall_enter(&pflags);
+	if (!ctx->in_delayacct) {
+		delayacct_swapin_start();
+		ctx->in_delayacct = true;
 	}
-	delayacct_swapin_start();
+	if (workingset && !ctx->workingset) {
+		delayacct_thrashing_start(&ctx->in_thrashing);
+		psi_memstall_enter(&ctx->in_memstall);
+		ctx->workingset = true;
+	}
 
 	if (swap_read_folio_zeromap(folio)) {
 		folio_unlock(folio);
-		goto finish;
+		return;
 	}
 
 	if (zswap_load(folio) != -ENOENT)
-		goto finish;
+		return;
 
 	/* We have to read from slower devices. Increase zswap protection. */
 	zswap_folio_swapin(folio);
 	swap_add_folio(ctx, folio, READ);
 
-finish:
-	if (workingset) {
-		delayacct_thrashing_end(&in_thrashing);
-		psi_memstall_leave(&pflags);
-	}
-	delayacct_swapin_end();
+	/*
+	 * Synchronous devices do the whole read at submission time, submit
+	 * it here so that it is accounted as memory stall and delay.
+	 */
+	if (synchronous)
+		swap_read_submit(ctx);
 }
 
 static void swap_write_end(struct swap_iocb *sio, bool failed)
@@ -694,10 +723,19 @@ void swap_write_submit(struct swap_io_ctx *ctx)
 
 void swap_read_submit(struct swap_io_ctx *ctx)
 {
-	if (!ctx->sio)
-		return;
-	count_vm_events(NRSWPIN, 1);
-	ctx->sis->ops->submit_read(ctx);
-	ctx->sio = NULL;
-	ctx->sis = NULL;
+	if (ctx->sio) {
+		count_vm_events(NRSWPIN, 1);
+		ctx->sis->ops->submit_read(ctx);
+		ctx->sio = NULL;
+		ctx->sis = NULL;
+	}
+	if (ctx->workingset) {
+		delayacct_thrashing_end(&ctx->in_thrashing);
+		psi_memstall_leave(&ctx->in_memstall);
+		ctx->workingset = false;
+	}
+	if (ctx->in_delayacct) {
+		delayacct_swapin_end();
+		ctx->in_delayacct = false;
+	}
 }
