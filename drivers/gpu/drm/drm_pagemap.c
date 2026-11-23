@@ -1079,7 +1079,7 @@ static void drm_pagemap_release(struct kref *ref)
 	dpagemap->dev_hold = NULL;
 	drm_pagemap_shrinker_add(dpagemap);
 	llist_add(&dev_hold->link, &drm_pagemap_unhold_list);
-	schedule_work(&drm_pagemap_work);
+	queue_work(system_dfl_wq, &drm_pagemap_work);
 	/*
 	 * Here, either the provider device is still alive, since if called from
 	 * page_free(), the caller is holding a reference on the dev_pagemap,
@@ -1106,6 +1106,7 @@ static void drm_pagemap_dev_unhold_work(struct work_struct *work)
 		drm_dev_put(drm);
 		module_put(module);
 		kfree(dev_hold);
+		cond_resched();
 	}
 }
 

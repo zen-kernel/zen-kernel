@@ -500,6 +500,7 @@ sector_t iomap_bmap(struct address_space *mapping, sector_t bno,
 struct iomap_ioend {
 	struct list_head	io_list;	/* next ioend in chain */
 	u16			io_flags;	/* IOMAP_IOEND_* */
+	u32			io_bvec_offset;	/* offset into first bvec */
 	struct inode		*io_inode;	/* file being written to */
 	size_t			io_size;	/* size of the extent */
 	atomic_t		io_remaining;	/* completetion defer count */
@@ -515,6 +516,13 @@ struct iomap_ioend {
 static inline struct iomap_ioend *iomap_ioend_from_bio(struct bio *bio)
 {
 	return container_of(bio, struct iomap_ioend, io_bio);
+}
+
+#define BVEC_ITER_IOEND(_ioend)				\
+{							\
+	.bi_sector	= (_ioend)->io_sector,		\
+	.bi_size	= (_ioend)->io_size,		\
+	.bi_offset	= (_ioend)->io_bvec_offset,	\
 }
 
 struct iomap_writeback_ops {
@@ -657,7 +665,8 @@ struct iomap_dio_ops {
 #define IOMAP_DIO_PARTIAL		(1 << 2)
 
 /*
- * Ensure each bio is aligned to fs block size.
+ * Ensure every operation, including bio and hole zeroing, is aligned to fs
+ * block size.
  *
  * For filesystems which need to calculate/verify the checksum of each fs
  * block. Otherwise they may not be able to handle unaligned bios.

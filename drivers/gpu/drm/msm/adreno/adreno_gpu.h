@@ -204,6 +204,8 @@ struct adreno_gpu {
 	struct msm_gpu base;
 	const struct adreno_info *info;
 	uint32_t chip_id;
+	/* GMEM size available to userspace, see a8xx_gpu_get_slice_info(): */
+	uint32_t gmem;
 	uint16_t speedbin;
 	const struct adreno_gpu_funcs *funcs;
 
@@ -578,6 +580,11 @@ static inline int adreno_is_a740_family(struct adreno_gpu *gpu)
 static inline int adreno_is_a750_family(struct adreno_gpu *gpu)
 {
 	return gpu->info->family == ADRENO_7XX_GEN3;
+}
+
+static inline int adreno_is_a6xx(struct adreno_gpu *gpu)
+{
+	return (gpu->info->family >= ADRENO_6XX_GEN1) && (gpu->info->family < ADRENO_7XX_GEN1);
 }
 
 static inline int adreno_is_a7xx(struct adreno_gpu *gpu)

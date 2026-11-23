@@ -336,6 +336,18 @@ struct scx_sub_detach_args {
 	char			*cgroup_path;
 };
 
+/*
+ * What a sched sees running on a cid, as reported by
+ * ops.sub_cid_sched_updated(): NONE when the cid is idle or runs a task outside
+ * the sched's subtree, SELF for the sched itself, or a direct child by its
+ * cgroup id. The sentinels lie outside the cgroup id space, whose low 32 bits
+ * are an idr value of at most INT_MAX.
+ */
+enum scx_cid_sched_consts {
+	SCX_CID_SCHED_NONE = (u64)-2,
+	SCX_CID_SCHED_SELF = (u64)-1,
+};
+
 /**
  * struct sched_ext_ops - Operation table for BPF scheduler implementation
  *
@@ -476,6 +488,12 @@ struct sched_ext_ops {
 	 *
 	 * Therefore, always use scx_bpf_task_cpu(@p) to determine the
 	 * target CPU the task is going to use.
+	 *
+	 * Under proxy execution, the BPF scheduler continues to observe the
+	 * donor as the current scheduling context. A blocked donor enters a
+	 * ->running()/->stopping() session while its scheduling context drives
+	 * the lock owner. The lock owner executing on its behalf is intentionally
+	 * not reported through these callbacks.
 	 *
 	 * See ->runnable() for explanation on the task state notifiers.
 	 */
@@ -828,6 +846,11 @@ struct sched_ext_ops {
 	/**
 	 * @sub_detach: Detach a sub-scheduler
 	 * @args: argument container, see the struct definition
+	 *
+	 * The sub-scheduler holds no caps by this point and can no longer
+	 * affect any cid. Its caps went away without a
+	 * sub_child_ecaps_updated() report, so whatever was delegated to it,
+	 * e.g. cpuperf targets, is the parent's to restore here.
 	 */
 	void (*sub_detach)(struct scx_sub_detach_args *args);
 
@@ -863,6 +886,41 @@ struct sched_ext_ops {
 	 * including inserting/moving tasks.
 	 */
 	void (*sub_ecaps_updated)(s32 cid, u64 before, u64 after);
+
+	/**
+	 * @sub_cid_sched_updated: The sched running on a cid changed
+	 * @cid: cid whose running sched changed
+	 * @sched: what this sched now sees running there
+	 *
+	 * Invoked when the sched owning the task running on @cid changes.
+	 * @sched is %SCX_CID_SCHED_NONE when no task of this sched's subtree
+	 * runs there, %SCX_CID_SCHED_SELF for its own task, or the cgroup id of
+	 * the direct child whose subtree the task belongs to. Changes inside a
+	 * child's subtree, whether across tasks or nested sub-scheds, are not
+	 * reported. Every sched for which @sched changes is notified.
+	 *
+	 * Runs with the rq lock held on the context switch path.
+	 */
+	void (*sub_cid_sched_updated)(s32 cid, u64 sched);
+
+	/**
+	 * @sub_child_ecaps_updated: A child's effective caps on a cid changed
+	 * @cgroup_id: cgroup id of the direct child
+	 * @cid: the cid whose effective caps changed
+	 * @before: the child's effective caps as of the last delivery
+	 * @after: the child's effective caps now
+	 *
+	 * Invoked right after the child's sub_ecaps_updated(), once a grant or
+	 * revoke is in effect on the cpu. From here on the parent can act on a
+	 * cap the child lost, e.g. reset the cpuperf target or schedule on the
+	 * cid. A detaching child's caps go away without a report, see
+	 * sub_detach(). A cpu going offline drops caps without a report.
+	 *
+	 * Runs in dispatch context with rq lock held, and can perform all
+	 * operations allowed in ops.dispatch() including inserting/moving
+	 * tasks.
+	 */
+	void (*sub_child_ecaps_updated)(u64 cgroup_id, s32 cid, u64 before, u64 after);
 
 	/*
 	 * All online ops must come before ops.cpu_online().
@@ -911,6 +969,9 @@ struct sched_ext_ops {
 	 * ops.exit() is also called on ops.init() failure, which is a bit
 	 * unusual. This is to allow rich reporting through @info on how
 	 * ops.init() failed.
+	 *
+	 * A sub-scheduler holds no caps by the time ops.exit() runs. Its
+	 * cap-gated kfuncs are denied.
 	 */
 	void (*exit)(struct scx_exit_info *info);
 
@@ -1118,6 +1179,8 @@ struct sched_ext_ops_cid {
 	void (*sub_detach)(struct scx_sub_detach_args *args);
 	void (*sub_caps_updated)(const struct scx_cmask *cmask__arena, u64 caps);
 	void (*sub_ecaps_updated)(s32 cid, u64 before, u64 after);
+	void (*sub_cid_sched_updated)(s32 cid, u64 sched);
+	void (*sub_child_ecaps_updated)(u64 cgroup_id, s32 cid, u64 before, u64 after);
 	void (*cid_online)(s32 cid);
 	void (*cid_offline)(s32 cid);
 	s32 (*init_cids)(void);
@@ -1380,7 +1443,10 @@ struct scx_sched_pcpu {
 	struct llist_node	ecaps_to_sync_node;
 	/* owed a forced update_idle() re-notify on this cpu */
 	bool			idle_renotify;
-	/* effective caps as of the last sub_ecaps_updated() delivery */
+	/*
+	 * ecaps as of the last sub_ecaps_updated() and
+	 * sub_child_ecaps_updated() delivery. See __scx_process_sync_ecaps().
+	 */
 	u64			reported_ecaps;
 
 	/*
@@ -2137,6 +2203,7 @@ void scx_cgroup_unlock(void);
 s32 scx_alloc_kern_arena_objs(struct scx_sched *sch);
 void scx_disable_bypass_dsp(struct scx_sched *sch);
 void scx_bypass(struct scx_sched *sch, bool bypass);
+void scx_bypass_lb_kick(struct scx_sched *sch);
 s32 scx_link_sched(struct scx_sched *sch);
 void scx_unlink_sched(struct scx_sched *sch);
 void scx_disable_dump(struct scx_sched *sch);
@@ -2538,5 +2605,22 @@ static inline struct scx_sched *scx_prog_sched(const struct bpf_prog_aux *aux)
 static inline struct scx_sched *scx_parent(struct scx_sched *sch) { return NULL; }
 
 #endif	/* CONFIG_EXT_SUB_SCHED */
+
+/**
+ * scx_exec_sched - Find the sched running @sch's tasks on @cpu
+ * @sch: sched owning the tasks
+ * @cpu: cpu of interest
+ *
+ * A bypassing sched's tasks are run by its nearest ancestor that isn't
+ * bypassing. Return @sch if it isn't bypassing on @cpu, otherwise that
+ * ancestor, or the root if every ancestor is bypassing. Hold @cpu's rq lock for
+ * a stable answer.
+ */
+static inline struct scx_sched *scx_exec_sched(struct scx_sched *sch, s32 cpu)
+{
+	while (scx_parent(sch) && scx_bypassing(sch, cpu))
+		sch = scx_parent(sch);
+	return sch;
+}
 
 #endif /* _KERNEL_SCHED_EXT_INTERNAL_H */

@@ -67,6 +67,8 @@ extern const struct nvdimm_security_ops *cxl_security_ops;
 #define   CXL_HDM_DECODER0_CTRL_HOSTONLY BIT(12)
 #define CXL_HDM_DECODER0_TL_LOW(i) (0x20 * (i) + 0x24)
 #define CXL_HDM_DECODER0_TL_HIGH(i) (0x20 * (i) + 0x28)
+/* Target list capacity, i.e. max interleave ways for a non-endpoint decoder */
+#define CXL_HDM_DECODER0_TL_TARGETS 8
 #define CXL_HDM_DECODER0_SKIP_LOW(i) CXL_HDM_DECODER0_TL_LOW(i)
 #define CXL_HDM_DECODER0_SKIP_HIGH(i) CXL_HDM_DECODER0_TL_HIGH(i)
 
@@ -701,6 +703,18 @@ static inline bool is_cxl_root(struct cxl_port *port)
 	return port->uport_dev == port->dev.parent;
 }
 
+/*
+ * Return the owner device of the devm allocations of @port's dports. They
+ * are freed when that device unbinds, so hold device_lock() on the returned
+ * device across any lookup and use of a 'struct cxl_dport'.
+ */
+static inline struct device *cxl_port_dport_host(struct cxl_port *port)
+{
+	if (is_cxl_root(port))
+		return port->uport_dev;
+	return &port->dev;
+}
+
 /* Address translation functions exported to cxl_translate test module only */
 int cxl_validate_translation_params(u8 eiw, u16 eig, int pos);
 u64 cxl_calculate_hpa_offset(u64 dpa_offset, int pos, u8 eiw, u16 eig);
@@ -747,10 +761,12 @@ DEFINE_FREE(put_cxl_dax_region, struct cxl_dax_region *, if (!IS_ERR_OR_NULL(_T)
 int devm_cxl_enumerate_ports(struct cxl_memdev *cxlmd);
 void cxl_bus_rescan(void);
 void cxl_bus_drain(void);
-struct cxl_port *cxl_pci_find_port(struct pci_dev *pdev,
-				   struct cxl_dport **dport);
-struct cxl_port *cxl_mem_find_port(struct cxl_memdev *cxlmd,
-				   struct cxl_dport **dport);
+struct cxl_dport *cxl_pci_find_dport(struct pci_dev *pdev,
+				     struct cxl_port *port);
+struct cxl_dport *cxl_mem_find_dport(struct cxl_memdev *cxlmd,
+				     struct cxl_port *port);
+struct cxl_port *cxl_pci_find_port(struct pci_dev *pdev);
+struct cxl_port *cxl_mem_find_port(struct cxl_memdev *cxlmd);
 bool schedule_cxl_memdev_detach(struct cxl_memdev *cxlmd);
 
 struct cxl_dport *devm_cxl_add_dport(struct cxl_port *port,

@@ -24,6 +24,11 @@
 
 DEFINE_RAW_SPINLOCK(scx_sched_lock);
 
+bool scx_allow_proxy_exec(const struct task_struct *p)
+{
+	return true;
+}
+
 /*
  * NOTE: sched_ext is in the process of growing multiple scheduler support and
  * scx_root usage is in a transitional state. Naked dereferences are safe if the
@@ -322,7 +327,6 @@ static const struct sched_class *scx_setscheduler_class(struct task_struct *p)
 
 static struct scx_dispatch_q *bypass_enq_target_dsq(struct scx_sched *sch, s32 cpu)
 {
-#ifdef CONFIG_EXT_SUB_SCHED
 	/*
 	 * If @sch is a sub-sched which is bypassing, its tasks should go into
 	 * the bypass DSQs of the nearest ancestor which is not bypassing. The
@@ -334,11 +338,7 @@ static struct scx_dispatch_q *bypass_enq_target_dsq(struct scx_sched *sch, s32 c
 	 * are re-enqueued after scx_bypassing() is turned on, guaranteeing that
 	 * all tasks are transferred to the right DSQs.
 	 */
-	while (scx_parent(sch) && scx_bypassing(sch, cpu))
-		sch = scx_parent(sch);
-#endif	/* CONFIG_EXT_SUB_SCHED */
-
-	return scx_bypass_dsq(sch, cpu);
+	return scx_bypass_dsq(scx_exec_sched(sch, cpu), cpu);
 }
 
 /**
@@ -1064,9 +1064,10 @@ static void schedule_deferred_locked(struct rq *rq)
 		return;
 
 	/*
-	 * If in dispatch, the balance callbacks will be called before rq lock
-	 * is released. Schedule one.
-	 *
+	 * If in dispatch without proxy execution, the balance callbacks will
+	 * be called before rq lock is released. Schedule one. With proxy
+	 * execution, proxy resolution can zap the callbacks without another
+	 * SCX dispatch to requeue them, so use irq_work instead.
 	 *
 	 * We can't directly insert the callback into the
 	 * rq's list: The call can drop its lock and make the pending balance
@@ -1074,7 +1075,7 @@ static void schedule_deferred_locked(struct rq *rq)
 	 *
 	 * Just let dispatch_one() know that it must do it itself.
 	 */
-	if (rq->scx.flags & SCX_RQ_IN_DISPATCH) {
+	if ((rq->scx.flags & SCX_RQ_IN_DISPATCH) && !sched_proxy_exec()) {
 		rq->scx.flags |= SCX_RQ_BAL_CB_PENDING;
 		return;
 	}
@@ -1085,6 +1086,10 @@ static void schedule_deferred_locked(struct rq *rq)
 	 * the time to IRQ re-enable shouldn't be long.
 	 */
 	schedule_deferred(rq);
+}
+
+void scx_proxy_reenqueue_retry(struct rq *rq, struct task_struct *next)
+{
 }
 
 void schedule_dsq_reenq(struct scx_sched *sch, struct scx_dispatch_q *dsq,
@@ -2328,10 +2333,10 @@ static bool dequeue_task_scx(struct rq *rq, struct task_struct *p, int core_deq_
 	ops_dequeue(rq, p, deq_flags);
 
 	/*
-	 * A currently running task which is going off @rq first gets dequeued
-	 * and then stops running. As we want running <-> stopping transitions
-	 * to be contained within runnable <-> quiescent transitions, trigger
-	 * ->stopping() early here instead of in put_prev_task_scx().
+	 * A current scheduling context which is going off @rq first gets
+	 * dequeued and then stops running. As we want running <-> stopping
+	 * transitions to be contained within runnable <-> quiescent transitions,
+	 * trigger ->stopping() early here instead of in put_prev_task_scx().
 	 *
 	 * @p may go through multiple stopping <-> running transitions between
 	 * here and put_prev_task_scx() if task attribute changes occur while
@@ -2339,11 +2344,13 @@ static bool dequeue_task_scx(struct rq *rq, struct task_struct *p, int core_deq_
 	 * information meaningful to the BPF scheduler and can be suppressed by
 	 * skipping the callbacks if the task is !QUEUED.
 	 */
-	if (task_current(rq, p) &&
-	    (SCX_HAS_OP(sch, stopping) || unlikely(p == scx_rescuee(rq)))) {
-		update_curr_scx(rq);
-		if (SCX_HAS_OP(sch, stopping))
-			SCX_CALL_OP_TASK(sch, stopping, rq, p, false);
+	if (task_current_donor(rq, p) && (p->scx.flags & SCX_TASK_RUN_TRACKED)) {
+		if (SCX_HAS_OP(sch, stopping) || unlikely(p == scx_rescuee(rq))) {
+			update_curr_scx(rq);
+			if (SCX_HAS_OP(sch, stopping))
+				SCX_CALL_OP_TASK(sch, stopping, rq, p, false);
+		}
+		p->scx.flags &= ~SCX_TASK_RUN_TRACKED;
 	}
 
 	if (SCX_HAS_OP(sch, quiescent) && !task_on_rq_migrating(p))
@@ -3052,17 +3059,39 @@ has_tasks:
 	 *
 	 * - A non-IMMED HEAD task can get queued in front of an IMMED task
 	 *   between the IMMED queueing and the subsequent scheduling event.
+	 *
+	 * - When dispatch keeps @prev, even a lone IMMED task queued during the
+	 *   dispatch can't run right away.
 	 */
-	if (unlikely(rq->scx.local_dsq.nr > 1 && rq->scx.nr_immed))
+	if (unlikely((rq->scx.local_dsq.nr > 1 || verdict == SCX_DSP_PREV) &&
+		     rq->scx.nr_immed))
 		scx_schedule_reenq_local(rq, 0);
 
 	rq->scx.flags &= ~SCX_RQ_IN_DISPATCH;
 	return verdict;
 }
 
-static void set_next_task_scx(struct rq *rq, struct task_struct *p, bool first)
+static void scx_start_task_running(struct rq *rq, struct task_struct *p)
 {
 	struct scx_sched *sch = scx_task_sched(p);
+
+	if (p->scx.flags & SCX_TASK_RUN_TRACKED)
+		return;
+
+	scx_cid_sched_update(rq, sch);
+
+	if (SCX_HAS_OP(sch, running))
+		SCX_CALL_OP_TASK(sch, running, rq, p);
+
+	p->scx.flags |= SCX_TASK_RUN_TRACKED;
+}
+
+static void set_next_task_scx(struct rq *rq, struct task_struct *p, enum snt_e type)
+{
+	bool first = type == SNT_PICK;
+
+	if (type == SNT_REPICK)
+		return;
 
 	if (p->scx.flags & SCX_TASK_QUEUED) {
 		/*
@@ -3075,9 +3104,20 @@ static void set_next_task_scx(struct rq *rq, struct task_struct *p, bool first)
 
 	p->se.exec_start = rq_clock_task(rq);
 
-	/* see dequeue_task_scx() on why we skip when !QUEUED */
-	if (SCX_HAS_OP(sch, running) && (p->scx.flags & SCX_TASK_QUEUED))
-		SCX_CALL_OP_TASK(sch, running, rq, p);
+	/*
+	 * See dequeue_task_scx() for why we skip when !QUEUED.
+	 *
+	 * During a normal switch (@first), a blocked task is only a provisional
+	 * donor. Proxy resolution may fail or migrate the donor to another CPU,
+	 * so defer ops.running() until scx_proxy_donor_start() confirms that
+	 * resolution succeeded.
+	 *
+	 * !@first denotes restoration after a SAVE/RESTORE cycle. The matching
+	 * dequeue already issued ops.stopping(), so restart the session here
+	 * regardless of the donor state.
+	 */
+	if ((p->scx.flags & SCX_TASK_QUEUED) && !(p->is_blocked && first))
+		scx_start_task_running(rq, p);
 
 	clr_task_runnable(p, true);
 
@@ -3119,6 +3159,16 @@ static void set_next_task_scx(struct rq *rq, struct task_struct *p, bool first)
 		if (tick_nohz_full_cpu(cpu_of(rq)))
 			tick_nohz_dep_set_cpu(cpu_of(rq), TICK_DEP_BIT_SCHED);
 	}
+}
+
+void scx_proxy_donor_start(struct rq *rq)
+{
+	struct task_struct *donor = rq->donor;
+
+	lockdep_assert_rq_held(rq);
+
+	if (donor->sched_class == &ext_sched_class && (donor->scx.flags & SCX_TASK_QUEUED))
+		scx_start_task_running(rq, donor);
 }
 
 static enum scx_cpu_preempt_reason
@@ -3194,9 +3244,17 @@ static void put_prev_task_scx(struct rq *rq, struct task_struct *p,
 			scx_task_slice_ended(rq, p);
 	}
 
-	/* see dequeue_task_scx() on why we skip when !QUEUED */
-	if (SCX_HAS_OP(sch, stopping) && (p->scx.flags & SCX_TASK_QUEUED))
-		SCX_CALL_OP_TASK(sch, stopping, rq, p, true);
+	/*
+	 * Preserve the running session when proxy execution refreshes the same
+	 * donor around an execution-context switch on this rq.
+	 */
+	if (next != p && (p->scx.flags & SCX_TASK_QUEUED) &&
+	    (p->scx.flags & SCX_TASK_RUN_TRACKED)) {
+		if (SCX_HAS_OP(sch, stopping))
+			SCX_CALL_OP_TASK(sch, stopping, rq, p, true);
+
+		p->scx.flags &= ~SCX_TASK_RUN_TRACKED;
+	}
 
 	if (p->scx.flags & SCX_TASK_QUEUED) {
 		set_task_runnable(rq, p);
@@ -3270,8 +3328,10 @@ static void put_prev_task_scx(struct rq *rq, struct task_struct *p,
 	}
 
 switch_class:
-	if (next && next->sched_class != &ext_sched_class)
+	if (next && next->sched_class != &ext_sched_class) {
+		scx_cid_sched_update(rq, NULL);
 		switch_class(rq, next);
+	}
 }
 
 static void kick_sync_wait_bal_cb(struct rq *rq)
@@ -4432,6 +4492,13 @@ static void switching_to_scx(struct rq *rq, struct task_struct *p)
 
 static void switched_from_scx(struct rq *rq, struct task_struct *p)
 {
+	/*
+	 * A class change of the running task: sched_change_begin() put @p with
+	 * no successor, which leaves rq->scx.sched set.
+	 */
+	if (task_current_donor(rq, p))
+		scx_cid_sched_update(rq, NULL);
+
 	if (task_dead_and_done(p))
 		return;
 
@@ -5918,6 +5985,110 @@ bool scx_hardlockup(int cpu)
 	return true;
 }
 
+/**
+ * bypass_lb_reenq_home - Reenqueue a task at its home from the balancer
+ * @rq: @p's home rq, locked
+ * @p: task off any DSQ, taken from the bypass DSQ of @dsq_cpu
+ * @dsq_cpu: cpu whose bypass DSQ gave up @p
+ *
+ * @p came off the bypass DSQ of @dsq_cpu with no donee able to take it. A drain
+ * sends a migration-disabled @p here unless the donee picked for it is its
+ * home, as every other cpu refuses it. The enqueue sends @p to rescue when the
+ * host lacks %SCX_CAP_BASE at home and rescue is enabled, and to the home's
+ * bypass DSQ otherwise. When @p must run at home, migration-disabled or with a
+ * migration pending, and the host lacks BASE there, it is admitted to the
+ * home's local DSQ in either case, see bypass_enq_target_dsq(). No DSQ lock may
+ * be held, as the enqueue takes one.
+ */
+static void bypass_lb_reenq_home(struct rq *rq, struct task_struct *p, s32 dsq_cpu)
+{
+	lockdep_assert_rq_held(rq);
+
+	WARN_ON_ONCE(p->scx.flags & SCX_TASK_REENQ_REASON_MASK);
+	p->scx.flags |= SCX_TASK_REENQ_CAP;
+	p->scx.reenq_reason_caps = SCX_CAP_BASE;
+	p->scx.reenq_reason_cid = __scx_cpu_to_cid(dsq_cpu);
+	scx_do_enqueue_task(rq, p, SCX_ENQ_REENQ, -1);
+}
+
+/**
+ * bypass_lb_can_move - Test whether @p can move to the bypass DSQ of @donee
+ * @sch: host sched whose bypass DSQs are balanced
+ * @p: task on a bypass DSQ of @sch, homed anywhere
+ * @donee: cpu whose bypass DSQ would receive @p, -1 for none
+ *
+ * @p's rq lock pins @p's affinity. Without it the answer is a hint. A task
+ * whose donee is its own cpu can always run there, and
+ * task_can_run_on_remote_rq() warns when asked about a task's own cpu.
+ */
+static bool bypass_lb_can_move(struct scx_sched *sch, struct task_struct *p, s32 donee)
+{
+	return donee >= 0 && (donee == task_cpu(p) ||
+			      task_can_run_on_remote_rq(sch, p, cpu_rq(donee), false));
+}
+
+/**
+ * bypass_lb_move - Move one task off a bypass DSQ for the balancer
+ * @sch: host sched whose bypass DSQs are balanced
+ * @donor_rq: rq of the cpu whose bypass DSQ gives up @p, locked
+ * @donor_dsq: @sch's bypass DSQ on @donor_rq's cpu, locked
+ * @p: task on @donor_dsq, homed anywhere
+ * @donee: cpu whose bypass DSQ receives @p, -1 for none
+ *
+ * Take @p off @donor_dsq and insert it into the bypass DSQ of @donee. The
+ * caller tests bypass_lb_can_move() without @p's rq lock for a task homed
+ * elsewhere, and not at all for a drain, so the test is repeated here under
+ * @p's rq lock. A task that fails it is not put back, as the host may no longer
+ * consume @donor_dsq. bypass_lb_reenq_home() reenqueues it at its home instead.
+ *
+ * The insert and the reenqueue run under @p's rq lock. A task homed on
+ * @donor_rq is dequeued in place. unlink_dsq_and_switch_rq_lock() takes one
+ * homed elsewhere off and switches the rq lock from @donor_rq to its own. The
+ * switch can lose to a dequeue, and @p then belongs to the dequeuer.
+ *
+ * @donor_rq and @donor_dsq are locked on entry and on return. @donor_dsq is
+ * unlocked in between, and @donor_rq too while the lock is switched, so the
+ * caller's walk must find its place in @donor_dsq again after the call.
+ *
+ * Return the cpu that received @p, or -1 if @p was lost to a dequeue.
+ */
+static s32 bypass_lb_move(struct scx_sched *sch, struct rq *donor_rq,
+			  struct scx_dispatch_q *donor_dsq, struct task_struct *p, s32 donee)
+{
+	struct rq *rq = task_rq(p);
+	s32 ret;
+
+	lockdep_assert_rq_held(donor_rq);
+	lockdep_assert_held(&donor_dsq->lock);
+
+	if (rq == donor_rq) {
+		scx_wait_dispatching(p);
+		dispatch_dequeue_locked(p, donor_dsq);
+		raw_spin_unlock(&donor_dsq->lock);
+	} else if (!unlink_dsq_and_switch_rq_lock(p, donor_dsq, donor_rq, rq)) {
+		/* lost to a dequeue, @p is the dequeuer's now */
+		ret = -1;
+		goto out;
+	}
+
+	if (bypass_lb_can_move(sch, p, donee)) {
+		scx_dispatch_enqueue(sch, rq, scx_bypass_dsq(sch, donee), p, 0, 0, 0);
+		ret = donee;
+	} else {
+		/*
+		 * No donee, or @p can't run on it. Reenqueue @p at home
+		 * instead, see bypass_lb_reenq_home().
+		 */
+		bypass_lb_reenq_home(rq, p, cpu_of(donor_rq));
+		ret = cpu_of(rq);
+	}
+out:
+	if (rq != donor_rq)
+		switch_rq_lock(rq, donor_rq);
+	raw_spin_lock(&donor_dsq->lock);
+	return ret;
+}
+
 static u32 bypass_lb_cpu(struct scx_sched *sch, s32 donor,
 			 struct cpumask *donee_mask, struct cpumask *resched_mask,
 			 u32 nr_donor_target, u32 nr_donee_target)
@@ -5933,87 +6104,94 @@ static u32 bypass_lb_cpu(struct scx_sched *sch, s32 donor,
 	 * All we want to guarantee is reasonable forward progress. No reason to
 	 * fine tune. Assuming every task on @donor_dsq runs their full slice,
 	 * consider offloading iff the total queued duration is over the
-	 * threshold.
+	 * threshold. A zero target is a drain and empties the DSQ regardless.
 	 */
 	min_delta_us = READ_ONCE(scx_bypass_lb_intv_us) / SCX_BYPASS_LB_MIN_DELTA_DIV;
-	if (delta < DIV_ROUND_UP(min_delta_us, READ_ONCE(scx_slice_bypass_us)))
+	if (nr_donor_target &&
+	    delta < DIV_ROUND_UP(min_delta_us, READ_ONCE(scx_slice_bypass_us)))
 		return 0;
 
 	raw_spin_rq_lock_irq(donor_rq);
 	raw_spin_lock(&donor_dsq->lock);
+	/* bound the walk to the tasks queued now, see the seq test below */
+	cursor.priv = donor_dsq->seq;
 	list_add(&cursor.node, &donor_dsq->list);
 resume:
 	n = container_of(&cursor, struct task_struct, scx.dsq_list);
 	n = nldsq_next_task(donor_dsq, n, false);
 
 	while ((p = n)) {
-		struct scx_dispatch_q *donee_dsq;
-		int donee;
+		s32 donee, cpu;
 
 		n = nldsq_next_task(donor_dsq, n, false);
 
 		if (donor_dsq->nr <= nr_donor_target)
 			break;
 
-		if (cpumask_empty(donee_mask))
+		/*
+		 * Without a donee, a balancing donor has nothing to do. A drain
+		 * still sends its tasks home.
+		 */
+		if (cpumask_empty(donee_mask) && nr_donor_target)
 			break;
 
 		/*
-		 * If an earlier pass placed @p on @donor_dsq from a different
-		 * CPU and the donee hasn't consumed it yet, @p is still on the
-		 * previous CPU and task_rq(@p) != @donor_rq. @p can't be moved
-		 * without its rq locked. Skip.
+		 * A task queued after the walk began, including one the walk
+		 * itself reenqueued, is left for the next pass.
 		 */
-		if (task_rq(p) != donor_rq)
+		if (u32_before(cursor.priv, p->scx.dsq_seq))
 			continue;
 
+		/*
+		 * A balancing donor leaves a task that can't move where it is.
+		 * A home reenqueue would push one homed on the donor to the
+		 * back of @donor_dsq on every pass. A drain sends it home.
+		 */
 		donee = cpumask_any_and_distribute(donee_mask, p->cpus_ptr);
 		if (donee >= nr_cpu_ids)
-			continue;
-
-		donee_dsq = scx_bypass_dsq(sch, donee);
-
-		/*
-		 * $p's rq is not locked but $p's DSQ lock protects its
-		 * scheduling properties making this test safe.
-		 */
-		if (!task_can_run_on_remote_rq(sch, p, cpu_rq(donee), false))
+			donee = -1;
+		if (nr_donor_target && !bypass_lb_can_move(sch, p, donee))
 			continue;
 
 		/*
-		 * Moving $p from one non-local DSQ to another. The source rq
-		 * and DSQ are already locked. Do an abbreviated dequeue and
-		 * then perform enqueue without unlocking $donor_dsq.
-		 *
-		 * We don't want to drop and reacquire the lock on each
-		 * iteration as @donor_dsq can be very long and potentially
-		 * highly contended. Donee DSQs are less likely to be contended.
-		 * The nested locking is safe as only this LB moves tasks
-		 * between bypass DSQs.
+		 * The move drops @donor_dsq's lock, and the rq lock too when
+		 * @p is homed elsewhere. The donor cpu's dispatch and its
+		 * enqueuers can reach @donor_dsq then. Park the cursor behind
+		 * @p and resume from it afterwards. The seq test above keeps a
+		 * task enqueued meanwhile out of the pass.
 		 */
-		dispatch_dequeue_locked(p, donor_dsq);
-		scx_dispatch_enqueue(sch, cpu_rq(donee), donee_dsq, p, 0, 0, SCX_ENQ_NESTED);
+		list_move(&cursor.node, &p->scx.dsq_list.node);
+		cpu = bypass_lb_move(sch, donor_rq, donor_dsq, p, donee);
+		if (cpu >= 0) {
+			/*
+			 * @cpu might have been idle and need to be woken up.
+			 * No need to be clever. Reschedule every cpu that
+			 * receives tasks.
+			 */
+			cpumask_set_cpu(cpu, resched_mask);
 
-		/*
-		 * $donee might have been idle and need to be woken up. No need
-		 * to be clever. Kick every CPU that receives tasks.
-		 */
-		cpumask_set_cpu(donee, resched_mask);
+			if (READ_ONCE(scx_bypass_dsq(sch, cpu)->nr) >= nr_donee_target)
+				cpumask_clear_cpu(cpu, donee_mask);
 
-		if (READ_ONCE(donee_dsq->nr) >= nr_donee_target)
-			cpumask_clear_cpu(donee, donee_mask);
-
-		nr_balanced++;
-		if (!(nr_balanced % SCX_BYPASS_LB_BATCH) && n) {
-			list_move_tail(&cursor.node, &n->scx.dsq_list.node);
-			raw_spin_unlock(&donor_dsq->lock);
-			scx_rq_lock_drop(donor_rq);
-			raw_spin_rq_unlock_irq(donor_rq);
-			cpu_relax();
-			raw_spin_rq_lock_irq(donor_rq);
-			raw_spin_lock(&donor_dsq->lock);
-			goto resume;
+			/*
+			 * The rq lock is held across the walk, not cycled per
+			 * move. @donor_dsq can be very long and contended, and
+			 * the rq lock is what keeps its consumer and enqueuers
+			 * away while the walk cycles the DSQ lock. The rare
+			 * move of a task homed elsewhere does switch it away,
+			 * see the cursor comment above. The walk can still take
+			 * a while, so let the cpu breathe every so often.
+			 */
+			if (!(++nr_balanced % SCX_BYPASS_LB_BATCH)) {
+				raw_spin_unlock(&donor_dsq->lock);
+				scx_rq_lock_drop(donor_rq);
+				raw_spin_rq_unlock_irq(donor_rq);
+				cpu_relax();
+				raw_spin_rq_lock_irq(donor_rq);
+				raw_spin_lock(&donor_dsq->lock);
+			}
 		}
+		goto resume;
 	}
 
 	list_del_init(&cursor.node);
@@ -6029,6 +6207,7 @@ static void bypass_lb_node(struct scx_sched *sch, int node)
 	const struct cpumask *node_mask = cpumask_of_node(node);
 	struct cpumask *donee_mask = sch->bypass_lb_donee_cpumask;
 	struct cpumask *resched_mask = sch->bypass_lb_resched_cpumask;
+	u32 intv_us = READ_ONCE(scx_bypass_lb_intv_us);
 	u32 nr_tasks = 0, nr_cpus = 0, nr_balanced = 0;
 	u32 nr_target, nr_donor_target;
 	u32 before_min = U32_MAX, before_max = 0;
@@ -6040,13 +6219,15 @@ static void bypass_lb_node(struct scx_sched *sch, int node)
 		u32 nr = READ_ONCE(scx_bypass_dsq(sch, cpu)->nr);
 
 		nr_tasks += nr;
-		nr_cpus++;
+		/* only a cpu whose dispatch consumes its DSQ is capacity */
+		if (!scx_missing_caps(sch, cpu, SCX_CAP_BASE))
+			nr_cpus++;
 
 		before_min = min(nr, before_min);
 		before_max = max(nr, before_max);
 	}
 
-	if (!nr_cpus)
+	if (!nr_tasks)
 		return;
 
 	/*
@@ -6054,27 +6235,39 @@ static void bypass_lb_node(struct scx_sched *sch, int node)
 	 * balancing to fill donee CPUs upto $nr_target. Once targets are
 	 * calculated, find the donee CPUs.
 	 */
-	nr_target = DIV_ROUND_UP(nr_tasks, nr_cpus);
+	nr_target = nr_cpus ? DIV_ROUND_UP(nr_tasks, nr_cpus) : 0;
 	nr_donor_target = DIV_ROUND_UP(nr_target * SCX_BYPASS_LB_DONOR_PCT, 100);
 
 	cpumask_clear(donee_mask);
 	for_each_cpu_and(cpu, cpu_online_mask, node_mask) {
-		if (READ_ONCE(scx_bypass_dsq(sch, cpu)->nr) < nr_target)
+		/* a donee's DSQ is consumed only if @sch holds %SCX_CAP_BASE */
+		if (READ_ONCE(scx_bypass_dsq(sch, cpu)->nr) < nr_target &&
+		    !scx_missing_caps(sch, cpu, SCX_CAP_BASE))
 			cpumask_set_cpu(cpu, donee_mask);
 	}
 
-	/* iterate !donee CPUs and see if they should be offloaded */
+	/*
+	 * Offload the !donee cpus. A cpu where the host lost %SCX_CAP_BASE no
+	 * longer consumes its DSQ. Drain it as a donor with a target of zero. A
+	 * zero interval disables the balancing, not the drain.
+	 */
 	cpumask_clear(resched_mask);
 	for_each_cpu_and(cpu, cpu_online_mask, node_mask) {
-		if (cpumask_empty(donee_mask))
-			break;
-		if (cpumask_test_cpu(cpu, donee_mask))
+		u32 target = nr_donor_target;
+
+		if (unlikely(scx_missing_caps(sch, cpu, SCX_CAP_BASE))) {
+			/* the mask may predate the loss, keep this cpu out */
+			cpumask_clear_cpu(cpu, donee_mask);
+			target = 0;
+		} else if (!intv_us || cpumask_empty(donee_mask) ||
+			   cpumask_test_cpu(cpu, donee_mask)) {
 			continue;
-		if (READ_ONCE(scx_bypass_dsq(sch, cpu)->nr) <= nr_donor_target)
+		}
+		if (READ_ONCE(scx_bypass_dsq(sch, cpu)->nr) <= target)
 			continue;
 
 		nr_balanced += bypass_lb_cpu(sch, cpu, donee_mask, resched_mask,
-					     nr_donor_target, nr_target);
+					     target, nr_target);
 	}
 
 	for_each_cpu(cpu, resched_mask)
@@ -6113,9 +6306,28 @@ static void scx_bypass_lb_timerfn(struct timer_list *timer)
 	for_each_node_with_cpus(node)
 		bypass_lb_node(sch, node);
 
+	/*
+	 * A kick during this run can leave the timer pending at now, see
+	 * scx_bypass_lb_kick(). timer_reduce() only brings the expiry forward,
+	 * so that kick is kept.
+	 */
 	intv_us = READ_ONCE(scx_bypass_lb_intv_us);
 	if (intv_us)
-		mod_timer(timer, jiffies + usecs_to_jiffies(intv_us));
+		timer_reduce(timer, jiffies + usecs_to_jiffies(intv_us));
+}
+
+/**
+ * scx_bypass_lb_kick - Run the bypass load balancer now
+ * @sch: sched that lost %SCX_CAP_BASE on a cpu
+ *
+ * @sch no longer consumes its bypass DSQ on that cpu. Have the balancer drain
+ * it without waiting for the next interval, see bypass_lb_node(). A loss during
+ * a run leaves the timer pending at now, and the run that follows sees it.
+ */
+void scx_bypass_lb_kick(struct scx_sched *sch)
+{
+	if (scx_bypass_dsp_enabled(sch))
+		mod_timer(&sch->bypass_lb_timer, jiffies);
 }
 
 static bool inc_bypass_depth(struct scx_sched *sch)
@@ -6184,11 +6396,12 @@ static void enable_bypass_dsp(struct scx_sched *sch)
 
 	/*
 	 * The LB timer will stop running if bypass dispatch is disabled. Start
-	 * after enabling bypass dispatch.
+	 * after enabling bypass dispatch. A kick from a BASE loss can have set
+	 * the timer to expire now in the meantime, see scx_bypass_lb_kick().
+	 * timer_reduce() keeps that expiry.
 	 */
-	if (intv_us && !timer_pending(&host->bypass_lb_timer))
-		mod_timer(&host->bypass_lb_timer,
-			  jiffies + usecs_to_jiffies(intv_us));
+	if (intv_us)
+		timer_reduce(&host->bypass_lb_timer, jiffies + usecs_to_jiffies(intv_us));
 }
 
 /* may be called without holding scx_bypass_lock */
@@ -6361,6 +6574,24 @@ void scx_bypass(struct scx_sched *sch, bool bypass)
 		}
 
 		/*
+		 * Bypass trumps protection. Cycling the queued tasks below
+		 * clears theirs. The current task isn't on the runnable list,
+		 * so strip its protection here.
+		 *
+		 * When bypass lifts, the current task keeps running on its
+		 * slice without a cap check. Evict it if it can't stay on the
+		 * cpu.
+		 */
+		p = rq->curr;
+		if (p->sched_class == &ext_sched_class &&
+		    scx_is_descendant(scx_task_sched(p), sch)) {
+			if (bypass)
+				scx_task_slice_ended(rq, p);
+			else if (!scx_task_can_stay_on_cpu(rq, p))
+				scx_set_task_slice(p, 0);
+		}
+
+		/*
 		 * The use of list_for_each_entry_safe_reverse() is required
 		 * because each task is going to be removed from and added back
 		 * to the runnable_list during iteration. Because they're added
@@ -6371,13 +6602,6 @@ void scx_bypass(struct scx_sched *sch, bool bypass)
 						 scx.runnable_node) {
 			if (!scx_is_descendant(scx_task_sched(p), sch))
 				continue;
-
-			/*
-			 * Bypass trumps protection. Cycling clears for queued
-			 * tasks but current task needs explicit stripping.
-			 */
-			if (bypass && task_current(rq, p))
-				scx_task_slice_ended(rq, p);
 
 			/* cycling deq/enq is enough, see the function comment */
 			scoped_guard (sched_change, p, DEQUEUE_SAVE | DEQUEUE_MOVE) {
@@ -6709,6 +6933,8 @@ static void scx_root_disable(struct scx_sched *sch)
 			}
 		}
 	}
+
+	scx_ops_cid_sched_updated_disable(sch);
 
 	/* no task is on scx, turn off all the switches and flush in-progress calls */
 	static_branch_disable(&__scx_enabled);
@@ -7902,6 +8128,8 @@ static void scx_root_enable_workfn(struct kthread_work *work)
 		if (((void (**)(void))ops)[i])
 			set_bit(i, sch->has_op);
 
+	scx_ops_cid_sched_updated_enable(sch);
+
 	if (sch->ops.cpu_acquire || sch->ops.cpu_release)
 		sch->ops.flags |= SCX_OPS_HAS_CPU_PREEMPT;
 
@@ -8548,6 +8776,8 @@ static void sched_ext_ops_cid__set_cmask(struct task_struct *p, const struct scx
 static void sched_ext_ops_cid__enable(struct task_struct *p, struct scx_enable_args *args) {}
 static void sched_ext_ops__sub_caps_updated(const struct scx_cmask *cmask__arena, u64 caps) {}
 static void sched_ext_ops__sub_ecaps_updated(s32 cid, u64 before, u64 after) {}
+static void sched_ext_ops__sub_cid_sched_updated(s32 cid, u64 sched) {}
+static void sched_ext_ops__sub_child_ecaps_updated(u64 cgroup_id, s32 cid, u64 before, u64 after) {}
 
 static struct sched_ext_ops_cid __bpf_ops_sched_ext_ops_cid = {
 	.select_cid		= sched_ext_ops__select_cpu,
@@ -8582,6 +8812,8 @@ static struct sched_ext_ops_cid __bpf_ops_sched_ext_ops_cid = {
 	.sub_detach		= sched_ext_ops__sub_detach,
 	.sub_caps_updated	= sched_ext_ops__sub_caps_updated,
 	.sub_ecaps_updated	= sched_ext_ops__sub_ecaps_updated,
+	.sub_cid_sched_updated	= sched_ext_ops__sub_cid_sched_updated,
+	.sub_child_ecaps_updated = sched_ext_ops__sub_child_ecaps_updated,
 	.cid_online		= sched_ext_ops__cpu_online,
 	.cid_offline		= sched_ext_ops__cpu_offline,
 	.init_cids		= sched_ext_ops__init_cids,
@@ -10986,6 +11218,31 @@ static const struct btf_kfunc_id_set scx_kfunc_set_any = {
 };
 
 /*
+ * Kfuncs that tracing programs can't call. A tracing program can run in any
+ * kernel context, including with an rq lock held. scx_locked_rq() only tracks
+ * rq locks held across SCX callbacks and returns NULL there.
+ *
+ * scx_bpf_cpuperf_set() and scx_bpf_cidperf_set() take the target cpu's rq lock
+ * when scx_locked_rq() returns NULL. Taking it while the context already holds
+ * an rq lock, the same one or another cpu's, can deadlock.
+ *
+ * Before returning, scx_bpf_sub_grant() and scx_bpf_sub_revoke() invoke
+ * ops.sub_caps_updated() of the sub-schedulers whose caps changed, so those ops
+ * run in the tracing program's context. No SCX op expects to run from an
+ * arbitrary tracing context. One that calls scx_bpf_cidperf_set() hits the
+ * deadlock above.
+ *
+ * Members must also stay in scx_kfunc_ids_any so that struct_ops and syscall
+ * programs keep their access.
+ */
+BTF_KFUNCS_START(scx_kfunc_ids_no_tracing)
+BTF_ID_FLAGS(func, scx_bpf_cpuperf_set, KF_IMPLICIT_ARGS)
+BTF_ID_FLAGS(func, scx_bpf_cidperf_set, KF_IMPLICIT_ARGS)
+BTF_ID_FLAGS(func, scx_bpf_sub_grant, KF_IMPLICIT_ARGS)
+BTF_ID_FLAGS(func, scx_bpf_sub_revoke, KF_IMPLICIT_ARGS)
+BTF_KFUNCS_END(scx_kfunc_ids_no_tracing)
+
+/*
  * cpu-form kfuncs that are forbidden from cid-form schedulers
  * (bpf_sched_ext_ops_cid). Programs targeting the cid struct_ops type must
  * use the cid-form alternative (cid/cmask kfuncs).
@@ -11065,6 +11322,7 @@ static const u32 scx_kf_allow_flags[] = {
 	[SCX_OP_IDX(sub_attach)]	= SCX_KF_ALLOW_UNLOCKED,
 	[SCX_OP_IDX(sub_detach)]	= SCX_KF_ALLOW_UNLOCKED,
 	[SCX_OP_IDX(sub_ecaps_updated)]	= SCX_KF_ALLOW_ENQUEUE | SCX_KF_ALLOW_DISPATCH,
+	[SCX_OP_IDX(sub_child_ecaps_updated)] = SCX_KF_ALLOW_ENQUEUE | SCX_KF_ALLOW_DISPATCH,
 	[SCX_OP_IDX(cpu_online)]	= SCX_KF_ALLOW_UNLOCKED,
 	[SCX_OP_IDX(cpu_offline)]	= SCX_KF_ALLOW_UNLOCKED,
 	[SCX_OP_IDX(init_cids)]		= SCX_KF_ALLOW_UNLOCKED | SCX_KF_ALLOW_INIT_CIDS,
@@ -11092,6 +11350,7 @@ int scx_kfunc_context_filter(const struct bpf_prog *prog, u32 kfunc_id)
 	bool in_any = btf_id_set8_contains(&scx_kfunc_ids_any, kfunc_id);
 	bool in_cpu_only = btf_id_set8_contains(&scx_kfunc_ids_cpu_only, kfunc_id);
 	bool in_cid = btf_id_set8_contains(&scx_kfunc_ids_cid, kfunc_id);
+	bool in_no_tracing = btf_id_set8_contains(&scx_kfunc_ids_no_tracing, kfunc_id);
 	u32 moff, flags;
 
 	/* Not an SCX kfunc - allow. */
@@ -11104,7 +11363,7 @@ int scx_kfunc_context_filter(const struct bpf_prog *prog, u32 kfunc_id)
 		return (in_unlocked || in_select_cpu || in_idle || in_any || in_cid) ? 0 : -EACCES;
 
 	if (prog->type != BPF_PROG_TYPE_STRUCT_OPS)
-		return (in_any || in_idle || in_cid) ? 0 : -EACCES;
+		return (!in_no_tracing && (in_any || in_idle || in_cid)) ? 0 : -EACCES;
 
 	/*
 	 * add_subprog_and_kfunc() collects all kfunc calls, including dead code
@@ -11208,6 +11467,8 @@ static int __init scx_init(void)
 	CID_OFFSET_MATCH(sub_detach, sub_detach);
 	CID_OFFSET_MATCH(sub_caps_updated, sub_caps_updated);
 	CID_OFFSET_MATCH(sub_ecaps_updated, sub_ecaps_updated);
+	CID_OFFSET_MATCH(sub_cid_sched_updated, sub_cid_sched_updated);
+	CID_OFFSET_MATCH(sub_child_ecaps_updated, sub_child_ecaps_updated);
 	CID_OFFSET_MATCH(init_cids, init_cids);
 	CID_OFFSET_MATCH(init, init);
 	CID_OFFSET_MATCH(exit, exit);

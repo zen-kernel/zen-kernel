@@ -1814,8 +1814,11 @@ static inline int bio_split_rw_at(struct bio *bio,
  */
 static inline unsigned int max_integrity_io_size(struct queue_limits *lim)
 {
-	return min_t(unsigned int, lim->max_segment_size,
-		(BLK_INTEGRITY_MAX_SIZE / lim->integrity.metadata_size) <<
+	unsigned int buf_size = min_t(unsigned int, lim->max_segment_size,
+				      BLK_INTEGRITY_MAX_SIZE);
+
+	return min_t(u64, UINT_MAX,
+		(u64)(buf_size / lim->integrity.metadata_size) <<
 			lim->integrity.interval_exp);
 }
 

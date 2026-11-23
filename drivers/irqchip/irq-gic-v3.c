@@ -457,7 +457,7 @@ static int gic_peek_irq(struct irq_data *d, u32 offset)
 	u32 index, mask;
 
 	offset = convert_offset_index(d, offset, &index);
-	mask = 1 << (index % 32);
+	mask = BIT(index % 32);
 
 	if (gic_irq_in_rdist(d))
 		base = gic_data_rdist_sgi_base();
@@ -473,7 +473,7 @@ static void gic_poke_irq(struct irq_data *d, u32 offset)
 	u32 index, mask;
 
 	offset = convert_offset_index(d, offset, &index);
-	mask = 1 << (index % 32);
+	mask = BIT(index % 32);
 
 	if (gic_irq_in_rdist(d))
 		base = gic_data_rdist_sgi_base();
@@ -1728,8 +1728,6 @@ static int gic_irq_get_fwspec_info(struct irq_fwspec *fwspec, struct irq_fwspec_
 
 	/* If the specifier provides an affinity, use it */
 	if (fwspec->param_count == 4 && fwspec->param[3]) {
-		struct fwnode_handle *fw;
-
 		switch (fwspec->param[0]) {
 		case 1:			/* PPI */
 		case 3:			/* EPPI */
@@ -1738,7 +1736,10 @@ static int gic_irq_get_fwspec_info(struct irq_fwspec *fwspec, struct irq_fwspec_
 			return 0;
 		}
 
-		fw = of_fwnode_handle(of_find_node_by_phandle(fwspec->param[3]));
+		struct device_node *np __free(device_node) =
+			of_find_node_by_phandle(fwspec->param[3]);
+		struct fwnode_handle *fw = of_fwnode_handle(np);
+
 		if (!fw)
 			return -ENOENT;
 
@@ -2339,6 +2340,17 @@ gic_acpi_parse_madt_gicc(union acpi_subtable_headers *header,
 		int cpu = get_cpu_for_acpi_id(gicc->uid);
 
 		pr_warn("CPU %u's redistributor is inaccessible: this CPU can't be brought online\n", cpu);
+		if (cpu >= 0)
+			cpumask_set_cpu(cpu, &broken_rdists);
+		return 0;
+	}
+
+	/* Not counted by gic_acpi_match_gicc(), so there is no slot for it */
+	if (!gicc->gicr_base_address) {
+		int cpu = get_cpu_for_acpi_id(gicc->uid);
+
+		pr_warn(FW_BUG "GICC entry with ACPI UID %u has no GICR base address, CPU kept offline\n",
+			gicc->uid);
 		if (cpu >= 0)
 			cpumask_set_cpu(cpu, &broken_rdists);
 		return 0;

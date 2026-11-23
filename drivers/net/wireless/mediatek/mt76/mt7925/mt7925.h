@@ -7,6 +7,11 @@
 #include "../mt792x.h"
 #include "regs.h"
 
+#define MT7925_FILTER_FCSFAIL		BIT(2)
+#define MT7925_FILTER_CONTROL		BIT(5)
+#define MT7925_FILTER_OTHER_BSS	BIT(6)
+#define MT7925_FILTER_ENABLE		BIT(31)
+
 #define MT7925_BEACON_RATES_TBL		25
 
 #define MT7925_TX_RING_SIZE		2048
@@ -286,7 +291,8 @@ int mt7925_mcu_sta_update(struct mt792x_dev *dev,
 			  struct ieee80211_vif *vif,
 			  struct mt792x_link_sta *mlink,
 			  bool enable,
-			  enum mt76_sta_info_state state);
+			  enum mt76_sta_info_state state,
+			  struct mt792x_link_sta *pending);
 int mt7925_mcu_set_chan_info(struct mt792x_phy *phy, u16 tag);
 int mt7925_mcu_set_tx(struct mt792x_dev *dev, struct ieee80211_bss_conf *bss_conf);
 int mt7925_mcu_set_eeprom(struct mt792x_dev *dev);
@@ -361,6 +367,7 @@ void mt7925_mcu_set_suspend_iter(void *priv, u8 *mac,
 void mt7925_connac_mcu_set_suspend_iter(void *priv, u8 *mac,
 					struct ieee80211_vif *vif);
 void mt7925_set_ipv6_ns_work(struct work_struct *work);
+void mt7925_nan_deferred_work(struct work_struct *work);
 
 int mt7925_mcu_set_sniffer(struct mt792x_dev *dev, struct ieee80211_vif *vif,
 			   bool enable);

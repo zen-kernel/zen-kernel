@@ -733,8 +733,12 @@ static bool ntfs_non_resident_attr_value_is_valid(const struct attr_record *a)
 	min_len = offsetof(struct attr_record, data.non_resident.initialized_size) +
 		  sizeof(a->data.non_resident.initialized_size);
 
-	/* Sparse and compressed attributes have the extra compressed_size field */
-	if (a->flags & (ATTR_IS_SPARSE | ATTR_COMPRESSION_MASK))
+	/*
+	 * Only the first extent of sparse and compressed attributes has the
+	 * extra compressed_size field.
+	 */
+	if ((a->flags & (ATTR_IS_SPARSE | ATTR_COMPRESSION_MASK)) &&
+	    !a->data.non_resident.lowest_vcn)
 		min_len += sizeof(a->data.non_resident.compressed_size);
 
 	if (attr_len < min_len)
@@ -5183,6 +5187,8 @@ int ntfs_attr_truncate_i_locked(struct ntfs_inode *ni, const s64 newsize,
 					ni, newsize, locked_ni, false);
 	} else
 		err = ntfs_resident_attr_resize(ni, newsize, 0, holes);
+	if (!err && NInoAttr(ni))
+		i_size_write(VFS_I(ni), newsize);
 	ntfs_debug("Return status %d\n", err);
 	return err;
 }

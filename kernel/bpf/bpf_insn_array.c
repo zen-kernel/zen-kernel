@@ -199,12 +199,16 @@ int bpf_insn_array_init(struct bpf_map *map, const struct bpf_prog *prog)
 		return -EBUSY;
 
 	/*
-	 * Reset all the map indexes to the original values.  This is needed,
-	 * e.g., when a replay of verification with different log level should
-	 * be performed.
+	 * Reset the map to its pre-verification state. The xlated and jitted
+	 * offsets and the jitted target pointers are recomputed by the verifier
+	 * and the JIT for this program, so any values left by a previous owner
+	 * must be cleared here.
 	 */
-	for (i = 0; i < map->max_entries; i++)
+	for (i = 0; i < map->max_entries; i++) {
 		values[i].xlated_off = values[i].orig_off;
+		values[i].jitted_off = 0;
+		insn_array->ips[i] = 0;
+	}
 
 	return 0;
 }
@@ -228,7 +232,8 @@ void bpf_insn_array_release(struct bpf_map *map)
 {
 	struct bpf_insn_array *insn_array = cast_insn_array(map);
 
-	atomic_set(&insn_array->used, 0);
+	/* Paired with atomic_xchg() in bpf_insn_array_init(). */
+	atomic_set_release(&insn_array->used, 0);
 }
 
 void bpf_insn_array_adjust(struct bpf_map *map, u32 off, u32 len)

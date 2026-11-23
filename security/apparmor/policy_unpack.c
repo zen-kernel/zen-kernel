@@ -558,6 +558,9 @@ static int unpack_strs_table(struct aa_ext *e, const char *name, bool multi,
 			/* aa_unpack_strdup verifies that the last character is
 			 * null termination byte.
 			 */
+			/* publish before validating; the error path frees it */
+			table[i].strs = str;
+			table[i].size = size2;
 			c = process_strs_entry(str, size2, multi);
 			if (c <= 0) {
 				AA_DEBUG(DEBUG_UNPACK, "process_strs %d i %d pos %ld",
@@ -570,9 +573,7 @@ static int unpack_strs_table(struct aa_ext *e, const char *name, bool multi,
 				/* fail - all other cases with embedded \0 */
 				goto fail;
 			}
-			table[i].strs = str;
 			table[i].count = c;
-			table[i].size = size2;
 		}
 		if (!aa_unpack_nameX(e, AA_ARRAYEND, NULL))
 			goto fail;
@@ -1052,6 +1053,11 @@ static int unpack_pdb(struct aa_ext *e, struct aa_policydb **policy,
 		u16 tdflags = pdb->dfa->tables[YYTD_ID_ACCEPT]->td_flags;
 		size_t tsize = table_size(noents, tdflags);
 
+		if (!tsize) {
+			*info = "invalid dfa flags table size";
+			error = -EPROTO;
+			goto fail;
+		}
 		pdb->dfa->tables[YYTD_ID_ACCEPT2] = kvzalloc(tsize, GFP_KERNEL);
 		if (!pdb->dfa->tables[YYTD_ID_ACCEPT2]) {
 			*info = "failed to alloc dfa flags table";

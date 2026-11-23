@@ -244,6 +244,7 @@ struct mt7996_sta_link {
 	struct mt76_wcid wcid; /* must be first */
 
 	struct mt7996_sta *sta;
+	bool connected;
 
 	struct list_head rc_list;
 	u32 airtime_ac[8];
@@ -269,6 +270,8 @@ struct mt7996_sta {
 	u8 deflink_id;
 	u8 seclink_id;
 
+	unsigned long wcid_flags;
+
 	struct mt7996_vif *vif;
 };
 
@@ -279,6 +282,7 @@ struct mt7996_vif_link {
 	struct cfg80211_bitrate_mask bitrate_mask;
 
 	u8 mld_idx;
+	u8 bmc_bssid[ETH_ALEN];
 };
 
 struct mt7996_vif_link_info {
@@ -778,6 +782,7 @@ int mt7996_mcu_get_temperature(struct mt7996_phy *phy);
 int mt7996_mcu_set_thermal_throttling(struct mt7996_phy *phy, u8 state);
 int mt7996_mcu_set_thermal_protect(struct mt7996_phy *phy, bool enable);
 int mt7996_mcu_set_txpower_sku(struct mt7996_phy *phy);
+int mt7996_mcu_set_tx_power_ctrl(struct mt7996_phy *phy, u8 power_ctrl_id, u8 data);
 int mt7996_mcu_rdd_resume_tx(struct mt7996_phy *phy);
 int mt7996_mcu_rdd_cmd(struct mt7996_dev *dev, int cmd, u8 rdd_idx, u8 val);
 int mt7996_mcu_rdd_background_enable(struct mt7996_phy *phy,
@@ -893,6 +898,8 @@ void mt7996_mac_twt_teardown_flow(struct mt7996_dev *dev,
 void mt7996_mac_sta_remove_link(struct mt7996_dev *dev,
 				struct ieee80211_sta *sta,
 				unsigned int link_id, bool flush);
+u16 mt7996_mac_sta_links(struct mt7996_dev *dev, struct ieee80211_vif *vif,
+			 struct ieee80211_sta *sta);
 void mt7996_mac_add_twt_setup(struct ieee80211_hw *hw,
 			      struct ieee80211_sta *sta,
 			      struct ieee80211_twt_setup *twt);

@@ -27,29 +27,19 @@ static LIST_HEAD(leds_lookup_list);
 
 static struct workqueue_struct *leds_wq;
 
-static bool led_trigger_is_hw_controlled(struct led_classdev *led_cdev)
-{
-#ifdef CONFIG_LEDS_TRIGGERS
-	guard(rwsem_read)(&led_cdev->trigger_lock);
-	return led_cdev->trigger && led_cdev->trigger->trigger_type;
-#else
-	return false;
-#endif
-}
-
 static ssize_t brightness_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
 	unsigned int brightness;
 
-	if (led_trigger_is_hw_controlled(led_cdev))
-		return -ENODATA;
+	scoped_guard(mutex, &led_cdev->led_access) {
+		if (led_trigger_is_hw_controlled(led_cdev))
+			return -ENODATA;
 
-	mutex_lock(&led_cdev->led_access);
-	led_update_brightness(led_cdev);
-	brightness = led_cdev->brightness;
-	mutex_unlock(&led_cdev->led_access);
+		led_update_brightness(led_cdev);
+		brightness = led_cdev->brightness;
+	}
 
 	return sysfs_emit(buf, "%u\n", brightness);
 }
@@ -74,6 +64,9 @@ static ssize_t brightness_store(struct device *dev,
 
 	if (state == LED_OFF)
 		led_trigger_remove(led_cdev);
+	else
+		led_trigger_remove_hw_control(led_cdev);
+
 	led_set_brightness(led_cdev, state);
 
 	ret = size;

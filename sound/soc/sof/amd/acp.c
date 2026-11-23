@@ -1038,6 +1038,8 @@ skip_soundwire:
 
 free_ipc_irq:
 	free_irq(sdev->ipc_irq, sdev);
+	if (adata->sdw)
+		amd_sof_sdw_exit(sdev);
 unregister_dev:
 	platform_device_unregister(adata->dmic_dev);
 	return ret;
@@ -1048,11 +1050,11 @@ void amd_sof_acp_remove(struct snd_sof_dev *sdev)
 {
 	struct acp_dev_data *adata = sdev->pdata->hw_pdata;
 
-	if (adata->sdw)
-		amd_sof_sdw_exit(sdev);
-
 	if (sdev->ipc_irq)
 		free_irq(sdev->ipc_irq, sdev);
+
+	if (adata->sdw)
+		amd_sof_sdw_exit(sdev);
 
 	if (adata->dmic_dev)
 		platform_device_unregister(adata->dmic_dev);
@@ -1197,7 +1199,8 @@ int amd_sof_acp7x_suspend(struct snd_sof_dev *sdev, u32 target_state)
 		enable = true;
 		break;
 	default:
-		break;
+		dev_err(sdev->dev, "Unexpected PCI revision: 0x%x\n", acp_data->pci_rev);
+		return -EINVAL;
 	}
 	snd_sof_dsp_write(sdev, ACP_DSP_BAR, ACP_CONTROL, enable);
 	snd_sof_dsp_write(sdev, ACP_DSP_BAR, ACP7X_ZSC_DSP_CTRL, 1);

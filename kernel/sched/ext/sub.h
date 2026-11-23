@@ -16,6 +16,9 @@
 
 struct scx_sched *scx_skip_subtree_pre(struct scx_sched *pos, struct scx_sched *root);
 struct scx_sched *scx_next_descendant_pre(struct scx_sched *pos, struct scx_sched *root);
+void scx_cid_sched_update(struct rq *rq, struct scx_sched *sch);
+void scx_ops_cid_sched_updated_enable(struct scx_sched *sch);
+void scx_ops_cid_sched_updated_disable(struct scx_sched *sch);
 void scx_set_task_sched(struct task_struct *p, struct scx_sched *sch);
 struct cgroup *sch_cgroup(struct scx_sched *sch);
 void set_cgroup_sched(struct cgroup *cgrp, struct scx_sched *sch);
@@ -76,6 +79,9 @@ static inline void scx_dec_has_subs(struct scx_sched *sch)
 
 static inline struct scx_sched *scx_next_descendant_pre(struct scx_sched *pos, struct scx_sched *root) { return pos ? NULL : root; }
 static inline struct scx_sched *scx_skip_subtree_pre(struct scx_sched *pos, struct scx_sched *root) { return NULL; }
+static inline void scx_cid_sched_update(struct rq *rq, struct scx_sched *sch) {}
+static inline void scx_ops_cid_sched_updated_enable(struct scx_sched *sch) {}
+static inline void scx_ops_cid_sched_updated_disable(struct scx_sched *sch) {}
 static inline void scx_set_task_sched(struct task_struct *p, struct scx_sched *sch) {}
 static inline struct cgroup *sch_cgroup(struct scx_sched *sch) { return NULL; }
 static inline const char *sch_cgrp_path(struct scx_sched *sch) { return "/"; }
@@ -199,6 +205,8 @@ static inline u64 scx_caps_implied(u64 cap)
 /* may @p keep running on @rq's cpu? requires baseline cpu access */
 static inline bool scx_task_can_stay_on_cpu(struct rq *rq, struct task_struct *p)
 {
+	s32 cpu = cpu_of(rq);
+
 	if (!scx_has_subs())
 		return true;
 
@@ -206,7 +214,9 @@ static inline bool scx_task_can_stay_on_cpu(struct rq *rq, struct task_struct *p
 	if (unlikely(is_migration_disabled(p)))
 		return true;
 
-	return likely(!scx_missing_caps(scx_task_sched(p), cpu_of(rq), SCX_CAP_BASE));
+	/* check caps against the sched running a bypassed task */
+	return likely(!scx_missing_caps(scx_exec_sched(scx_task_sched(p), cpu), cpu,
+					SCX_CAP_BASE));
 }
 
 /* the task admitted for rescue on @rq, NULL if none */

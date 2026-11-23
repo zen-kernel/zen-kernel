@@ -219,7 +219,7 @@ static void smem_dram_parse_v3_data(struct smem_dram *dram, void *data)
 
 		if (freq_entry->freq_khz && freq_entry->enabled) {
 			u32 freq_khz = le32_to_cpu(freq_entry->freq_khz);
-			dram->frequencies[dram->num_frequencies++] = 1000 * freq_khz;
+			dram->frequencies[dram->num_frequencies++] = 1000UL * freq_khz;
 		}
 	}
 }
@@ -231,8 +231,11 @@ static void smem_dram_parse_v3_14freqs_data(struct smem_dram *dram, void *data)
 	for (int i = 0; i < MAX_DDR_FREQ_NUM_V3 + 1; i++) {
 		struct ddr_freq_table *freq_entry = &details->ddr_freq_tbl.ddr_freq[i];
 
-		if (freq_entry->freq_khz && freq_entry->enabled)
-			dram->frequencies[dram->num_frequencies++] = 1000 * freq_entry->freq_khz;
+		if (freq_entry->freq_khz && freq_entry->enabled) {
+			u32 freq_khz = le32_to_cpu(freq_entry->freq_khz);
+
+			dram->frequencies[dram->num_frequencies++] = 1000UL * freq_khz;
+		}
 	}
 }
 
@@ -248,7 +251,7 @@ static void smem_dram_parse_v4_data(struct smem_dram *dram, void *data)
 
 		if (freq_entry->freq_khz && freq_entry->enabled) {
 			u32 freq_khz = le32_to_cpu(freq_entry->freq_khz);
-			dram->frequencies[dram->num_frequencies++] = 1000 * freq_khz;
+			dram->frequencies[dram->num_frequencies++] = 1000UL * freq_khz;
 		}
 	}
 }
@@ -265,7 +268,7 @@ static void smem_dram_parse_v5_data(struct smem_dram *dram, void *data)
 
 		if (freq_entry->freq_khz && freq_entry->enabled) {
 			u32 freq_khz = le32_to_cpu(freq_entry->freq_khz);
-			dram->frequencies[dram->num_frequencies++] = 1000 * freq_khz;
+			dram->frequencies[dram->num_frequencies++] = 1000UL * freq_khz;
 		}
 	}
 }
@@ -282,7 +285,7 @@ static void smem_dram_parse_v7_data(struct smem_dram *dram, void *data)
 
 		if (freq_entry->freq_khz && freq_entry->enabled) {
 			u32 freq_khz = le32_to_cpu(freq_entry->freq_khz);
-			dram->frequencies[dram->num_frequencies++] = 1000 * freq_khz;
+			dram->frequencies[dram->num_frequencies++] = 1000UL * freq_khz;
 		}
 	}
 }
@@ -382,7 +385,7 @@ struct dentry *smem_dram_parse(struct qcom_smem *smem, struct device *dev)
 		return ERR_PTR(-ENODATA);
 
 	ver = smem_dram_infer_struct_version(actual_size);
-	if (ver < 0) {
+	if ((int)ver < 0) {
 		/* Some SoCs don't provide data that's useful for us */
 		return ERR_PTR(-ENODATA);
 	} else if (ver == INFO_UNKNOWN) {

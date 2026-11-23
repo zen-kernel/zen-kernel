@@ -243,55 +243,17 @@ enum bpf_stack_slot_type {
 
 #define BPF_REG_SIZE 8	/* size of eBPF register in bytes */
 
+/*
+ * Largest number of BPF_REG_SIZE stack slots a single frame can have. A frame
+ * may use any part of the MAX_BPF_STACK budget; check_max_stack_depth()
+ * enforces the bound on the combined depth of frames sharing the kernel stack
+ * and on each frame using a private stack.
+ */
+#define MAX_BPF_STACK_SLOTS	(MAX_BPF_STACK / BPF_REG_SIZE)
+
 /* 4-byte stack slot granularity for liveness analysis */
 #define BPF_HALF_REG_SIZE	4
 #define STACK_SLOT_SZ		4
-#define STACK_SLOTS		(MAX_BPF_STACK / BPF_HALF_REG_SIZE)	/* 128 */
-
-typedef struct {
-	u64 v[2];
-} spis_t;
-
-#define SPIS_ZERO	((spis_t){})
-#define SPIS_ALL	((spis_t){{ U64_MAX, U64_MAX }})
-
-static inline bool spis_is_zero(spis_t s)
-{
-	return s.v[0] == 0 && s.v[1] == 0;
-}
-
-static inline bool spis_equal(spis_t a, spis_t b)
-{
-	return a.v[0] == b.v[0] && a.v[1] == b.v[1];
-}
-
-static inline spis_t spis_or(spis_t a, spis_t b)
-{
-	return (spis_t){{ a.v[0] | b.v[0], a.v[1] | b.v[1] }};
-}
-
-static inline spis_t spis_and(spis_t a, spis_t b)
-{
-	return (spis_t){{ a.v[0] & b.v[0], a.v[1] & b.v[1] }};
-}
-
-static inline spis_t spis_not(spis_t s)
-{
-	return (spis_t){{ ~s.v[0], ~s.v[1] }};
-}
-
-static inline bool spis_test_bit(spis_t s, u32 slot)
-{
-	return s.v[slot / 64] & BIT_ULL(slot % 64);
-}
-
-static inline void spis_or_range(spis_t *mask, u32 lo, u32 hi)
-{
-	u32 w;
-
-	for (w = lo; w <= hi && w < STACK_SLOTS; w++)
-		mask->v[w / 64] |= BIT_ULL(w % 64);
-}
 
 #define BPF_REGMASK_ARGS ((1 << BPF_REG_1) | (1 << BPF_REG_2) | \
 			  (1 << BPF_REG_3) | (1 << BPF_REG_4) | \
@@ -375,6 +337,11 @@ struct bpf_func_state {
 	bool in_async_callback_fn;
 	bool in_exception_callback_fn;
 	bool no_stack_arg_load;
+	/*
+	 * The helper invokes this callback under rcu_read_lock(), so the
+	 * callback and its callees run in an RCU read-side critical section.
+	 */
+	bool in_rcu_callback_fn;
 	/* For callback calling functions that limit number of possible
 	 * callback executions (e.g. bpf_loop) keeps track of current
 	 * simulated iteration number.
@@ -425,12 +392,11 @@ struct bpf_jmp_history_entry {
 	/* insn idx can't be bigger than 1 million */
 	u32 idx : 20;
 	u32 frame : 4;	/* stack access frame number */
-	u32 spi : 6;	/* stack slot index (0..63) */
-	u32 : 2;
-	u32 prev_idx : 20;
 	/* special INSN_F_xxx flags */
 	u32 flags : 4;
-	u32 : 8;
+	u32 : 4;
+	u32 prev_idx : 20;
+	u32 spi : 12;	/* stack slot index */
 	/*
 	 * additional registers that need precision tracking when this
 	 * jump is backtracked, vector of five 11-bit records
@@ -439,12 +405,12 @@ struct bpf_jmp_history_entry {
 };
 
 static_assert(MAX_CALL_FRAMES <= (1 << 4));
-static_assert(MAX_BPF_STACK / 8 <= (1 << 6));
+static_assert(MAX_BPF_STACK_SLOTS <= (1 << 12));
 
 /* Maximum number of bpf_reg_state objects that can exist at once */
 #define MAX_STACK_ARG_SLOTS (MAX_BPF_FUNC_ARGS - MAX_BPF_FUNC_REG_ARGS)
-#define BPF_ID_MAP_SIZE ((MAX_BPF_REG + MAX_BPF_STACK / BPF_REG_SIZE + \
-			  MAX_STACK_ARG_SLOTS) * MAX_CALL_FRAMES)
+#define BPF_ID_MAP_SIZE ((MAX_BPF_REG + MAX_BPF_STACK_SLOTS + MAX_STACK_ARG_SLOTS) * \
+			 MAX_CALL_FRAMES)
 struct bpf_verifier_state {
 	/* call stack tracking */
 	struct bpf_func_state *frame[MAX_CALL_FRAMES];
@@ -530,12 +496,31 @@ struct bpf_verifier_state {
 	u32 may_goto_depth;
 };
 
+/* Number of BPF_REG_SIZE stack slots tracked for the frame so far. */
+static inline u32 bpf_stack_nr_slots(const struct bpf_func_state *frame)
+{
+	return frame->allocated_stack / BPF_REG_SIZE;
+}
+
+/*
+ * Stack slot @spi of @frame, covering bytes [fp - (spi + 1) * 8, fp - spi * 8).
+ * The caller must ensure spi < bpf_stack_nr_slots(frame), see grow_stack_state().
+ */
+static inline struct bpf_stack_state *bpf_stack_slot(const struct bpf_func_state *frame, u32 spi)
+{
+	return &frame->stack[spi];
+}
+
 static inline struct bpf_reg_state *
 bpf_get_spilled_reg(int slot, struct bpf_func_state *frame, u32 mask)
 {
-	if (slot < frame->allocated_stack / BPF_REG_SIZE &&
-	    (1 << frame->stack[slot].slot_type[BPF_REG_SIZE - 1]) & mask)
-		return &frame->stack[slot].spilled_ptr;
+	struct bpf_stack_state *ss;
+
+	if (slot >= bpf_stack_nr_slots(frame))
+		return NULL;
+	ss = bpf_stack_slot(frame, slot);
+	if ((1 << ss->slot_type[BPF_REG_SIZE - 1]) & mask)
+		return &ss->spilled_ptr;
 	return NULL;
 }
 
@@ -551,7 +536,7 @@ bpf_get_spilled_stack_arg(int slot, struct bpf_func_state *frame)
 /* Iterate over 'frame', setting 'reg' to either NULL or a spilled register. */
 #define bpf_for_each_spilled_reg(iter, frame, reg, mask)			\
 	for (iter = 0, reg = bpf_get_spilled_reg(iter, frame, mask);		\
-	     iter < frame->allocated_stack / BPF_REG_SIZE;		\
+	     iter < bpf_stack_nr_slots(frame);				\
 	     iter++, reg = bpf_get_spilled_reg(iter, frame, mask))
 
 /* Iterate over 'frame', setting 'reg' to either NULL or a spilled stack arg. */
@@ -576,7 +561,7 @@ bpf_get_spilled_stack_arg(int slot, struct bpf_func_state *frame)
 			bpf_for_each_spilled_reg(___j, __state, __reg, __mask) { \
 				if (!__reg)                              \
 					continue;                        \
-				__stack = &__state->stack[___j];         \
+				__stack = bpf_stack_slot(__state, ___j); \
 				(void)(__expr);                          \
 			}                                                \
 			__stack = NULL;                                  \
@@ -806,7 +791,11 @@ struct bpf_subprog_info {
 	u32 start; /* insn idx of function entry point */
 	u32 linfo_idx; /* The idx to the main_prog->aux->linfo */
 	u32 postorder_start; /* The idx to the env->cfg.insn_postorder */
-	u32 exit_idx; /* Index of one of the BPF_EXIT instructions in this subprogram */
+	/*
+	 * Index of one of the BPF_EXIT instructions in this subprogram, or
+	 * U32_MAX when it has none.
+	 */
+	u32 exit_idx;
 	u16 stack_depth; /* max. stack depth used by this function */
 	u16 stack_extra;
 	u32 insns_total;
@@ -954,6 +943,8 @@ struct bpf_verifier_env {
 	bool bypass_spec_v1;
 	bool bypass_spec_v4;
 	bool seen_direct_write;
+	/* a global function is verified for BPF_FUNC_CTX_NO_RCU_LOCK */
+	bool no_rcu_read_lock;
 	bool seen_exception;
 	bool signature;
 	u32 insn_aux_data_len;
@@ -976,14 +967,16 @@ struct bpf_verifier_env {
 		 * see bpf_subprog_info->postorder_start.
 		 */
 		int *insn_postorder;
+		int *postorder_nums;
 		int cur_stack;
 		/* current position in the insn_postorder vector */
 		int cur_postorder;
+		u32 gotox_edges;
 	} cfg;
 	struct backtrack_state bt;
 	struct bpf_jmp_history_entry *cur_hist_ent;
-	/* Per-callsite copy of parent's converged at_stack_in for cross-frame fills. */
-	struct arg_track **callsite_at_stack;
+	/* Per-callsite snapshot of the parent's tracked spill slots for cross-frame fills. */
+	struct spill_snapshot **callsite_at_stack;
 	u32 pass_cnt; /* number of times do_check() was called */
 	u32 subprog_cnt;
 	/* number of instructions analyzed by the verifier */

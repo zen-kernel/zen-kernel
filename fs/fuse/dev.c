@@ -466,24 +466,27 @@ static bool fuse_dev_install_with_pq(struct fuse_dev *fud, struct fuse_chan *fch
 	struct fuse_chan *old_fch;
 
 	guard(spinlock)(&fch->lock);
-	/*
-	 * Pairs with:
-	 *  - xchg() in fuse_dev_release()
-	 *  - smp_load_acquire() in fuse_dev_fc_get()
-	 */
-	old_fch = cmpxchg(&fud->chan, NULL, fch);
-	if (old_fch) {
+	/* protect fud->pq.processing assignment */
+	scoped_guard(spinlock, &fud->pq.lock) {
 		/*
-		 * failed to set fud->chan because
-		 *  - it was already set to a different fc
-		 *  - it was set to disconneted
+		 * Pairs with:
+		 *  - xchg() in fuse_dev_release()
+		 *  - smp_load_acquire() in fuse_dev_fc_get()
 		 */
-		kfree(pq);
-		return false;
-	}
-	if (pq) {
-		WARN_ON(fud->pq.processing);
-		fud->pq.processing = pq;
+		old_fch = cmpxchg(&fud->chan, NULL, fch);
+		if (old_fch) {
+			/*
+			 * failed to set fud->chan because
+			 *  - it was already set to a different fc
+			 *  - it was set to disconneted
+			 */
+			kfree(pq);
+			return false;
+		}
+		if (pq) {
+			WARN_ON(fud->pq.processing);
+			fud->pq.processing = pq;
+		}
 	}
 	list_add_tail(&fud->entry, &fch->devices);
 	fuse_conn_get(fch->conn);
@@ -1148,32 +1151,32 @@ static int fuse_try_move_folio(struct fuse_copy_state *cs, struct folio **foliop
 	if (cs->len != folio_size(oldfolio))
 		goto out_fallback;
 
-	if (!pipe_buf_try_steal(cs->pipe, buf))
-		goto out_fallback;
-
 	newfolio = page_folio(buf->page);
 
-	folio_clear_uptodate(newfolio);
-	folio_clear_mappedtodisk(newfolio);
-
 	if (folio_test_large(newfolio))
-		goto out_fallback_unlock;
-
-	if (fuse_check_folio(newfolio) != 0)
-		goto out_fallback_unlock;
+		goto out_fallback;
 
 	/*
 	 * This is a new and locked page, it shouldn't be mapped or
 	 * have any special flags on it
 	 */
 	if (WARN_ON(folio_mapped(oldfolio)))
-		goto out_fallback_unlock;
+		goto out_fallback;
 	if (WARN_ON(folio_has_private(oldfolio)))
-		goto out_fallback_unlock;
+		goto out_fallback;
 	if (WARN_ON(folio_test_dirty(oldfolio) ||
 				folio_test_writeback(oldfolio)))
-		goto out_fallback_unlock;
+		goto out_fallback;
 	if (WARN_ON(folio_test_mlocked(oldfolio)))
+		goto out_fallback;
+
+	if (!pipe_buf_try_steal(cs->pipe, buf))
+		goto out_fallback;
+
+	folio_clear_uptodate(newfolio);
+	folio_clear_mappedtodisk(newfolio);
+
+	if (fuse_check_folio(newfolio) != 0)
 		goto out_fallback_unlock;
 
 	err = lock_request(cs->req);
@@ -1253,31 +1256,10 @@ static int fuse_ref_folio(struct fuse_copy_state *cs, struct folio *folio,
  * done atomically
  */
 int fuse_copy_folio(struct fuse_copy_state *cs, struct folio **foliop,
-		    unsigned offset, unsigned count, int zeroing)
+		    unsigned offset, unsigned count)
 {
 	int err;
 	struct folio *folio = *foliop;
-	size_t size;
-
-	if (folio) {
-		size = folio_size(folio);
-		if (zeroing && count < size) {
-			/*
-			 * When the copy is skipped the folio already holds the
-			 * payload, so only the bytes outside [offset, offset +
-			 * count) may be zeroed.
-			 *
-			 * Otherwise, the whole folio is cleared first so that a
-			 * failed copy leaves zeros rather than stale folio
-			 * contents.
-			 */
-			if (cs->skip_folio_copy)
-				folio_zero_segments(folio, 0, offset,
-						    offset + count, size);
-			else
-				folio_zero_range(folio, 0, size);
-		}
-	}
 
 	while (!cs->skip_folio_copy && count) {
 		if (cs->write && cs->pipebufs && folio) {
@@ -1294,7 +1276,7 @@ int fuse_copy_folio(struct fuse_copy_state *cs, struct folio **foliop,
 			}
 		} else if (!cs->len) {
 			if (cs->move_folios && folio &&
-			    offset == 0 && count == size) {
+			    offset == 0 && count == folio_size(folio)) {
 				err = fuse_try_move_folio(cs, foliop);
 				if (err <= 0)
 					return err;
@@ -1335,10 +1317,25 @@ static int fuse_copy_folios(struct fuse_copy_state *cs, unsigned nbytes,
 
 	for (i = 0; i < ap->num_folios && (nbytes || zeroing); i++) {
 		int err;
+		struct folio *folio = ap->folios[i];
 		unsigned int offset = ap->descs[i].offset;
-		unsigned int count = min(nbytes, ap->descs[i].length);
+		unsigned int length = ap->descs[i].length;
+		unsigned int count = min(nbytes, length);
 
-		err = fuse_copy_folio(cs, &ap->folios[i], offset, count, zeroing);
+		/*
+		 * The reply may be shorter than what was asked for. The full
+		 * descs[i].length is reported as read, so the tail bytes the
+		 * server did not send are about to be marked uptodate and need
+		 * to be zeroed.
+		 *
+		 * Only [offset, offset + length) can be touched since the
+		 * rest of the folio can hold blocks that are already uptodate
+		 * or dirty, and clearing those would lose data.
+		 */
+		if (folio && zeroing && count < length)
+			folio_zero_range(folio, offset + count, length - count);
+
+		err = fuse_copy_folio(cs, &ap->folios[i], offset, count);
 		if (err)
 			return err;
 

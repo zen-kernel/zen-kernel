@@ -293,8 +293,7 @@ static int soc_v1_0_common_early_init(struct amdgpu_ip_block *ip_block)
 
 	switch (amdgpu_ip_version(adev, GC_HWIP, 0)) {
 	case IP_VERSION(12, 1, 0):
-		adev->cg_flags = AMD_CG_SUPPORT_GFX_CGCG |
-			AMD_CG_SUPPORT_GFX_CGLS;
+		adev->cg_flags = 0;
 		adev->pg_flags = AMD_PG_SUPPORT_VCN_DPG;
 		adev->external_rev_id = adev->rev_id + 0x50;
 		break;
@@ -848,6 +847,11 @@ int soc_v1_0_init_soc_config(struct amdgpu_device *adev)
 			(i * adev->sdma.num_inst_per_xcc);
 	adev->sdma.sdma_mask = sdma_mask;
 	adev->sdma.num_instances = NUM_XCC(adev->sdma.sdma_mask);
+
+	adev->vcn.harvest_config = 0;
+	adev->vcn.num_inst_per_aid = 1;
+	adev->vcn.inst_mask = 1;
+	adev->vcn.num_vcn_inst = hweight32(adev->vcn.inst_mask);
 
 	ret = soc_v1_0_xcp_mgr_init(adev);
 	if (ret)
